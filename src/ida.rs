@@ -95,6 +95,17 @@ enum IdaError {
     /// IDA_CONV_FAIL
     #[fail(display = "IDACalcIC failed to get convergence of the Newton iterations")]
     ConvergenceFail {},
+
+    ///MSG_BAD_K
+    #[fail(display = "Illegal value for k.")]
+    BadK {},
+    //MSG_NULL_DKY       "dky = NULL illegal."
+    ///MSG_BAD_T          
+    #[fail(
+        display = "Illegal value for t: t = {} is not between tcur - hu = {} and tcur = {}.",
+        t, tdiff, tcurr
+    )]
+    BadTimeValue { t: f64, tdiff: f64, tcurr: f64 },
 }
 
 /// Structure containing the parameters for the numerical integration.
@@ -203,7 +214,7 @@ pub struct Ida<F: IdaModel> {
     /// max number of error test failures
     ida_maxnef: u64,
     /// max value of method order k:
-    ida_maxord: u64,
+    ida_maxord: usize,
     /// value of maxord used when allocating memory
     //ida_maxord_alloc: u64,
     /// max number of internal steps for one user call
@@ -233,7 +244,7 @@ pub struct Ida<F: IdaModel> {
 
 impl<
         F: IdaModel<
-            Scalar = impl num_traits::float::Float
+            Scalar = impl num_traits::Float
                          + num_traits::float::FloatConst
                          + num_traits::NumRef
                          + num_traits::NumAssignRef
@@ -277,7 +288,7 @@ impl<
             //ida_ehfun       = IDAErrHandler;
             //ida_eh_data     = IDA_mem;
             //ida_errfp       = stderr;
-            ida_maxord: MAXORD_DEFAULT as u64,
+            ida_maxord: MAXORD_DEFAULT as usize,
             ida_mxstep: MXSTEP_DEFAULT as u64,
             ida_hmax_inv: F::Scalar::from(HMAX_INV_DEFAULT).unwrap(),
             ida_hin: F::Scalar::zero(),
@@ -803,7 +814,147 @@ impl<
     /// used, makes the final selection of stepsize and order for the next step, and updates the phi
     /// array.
     pub fn complete_step(&mut self, err_k: F::Scalar, err_km1: F::Scalar) -> () {
-        unimplemented!();
+        self.ida_nst += 1;
+        let kdiff = self.ida_kk - self.ida_kused;
+        self.ida_kused = self.ida_kk;
+        self.ida_hused = self.ida_hh;
+
+        if (self.ida_knew == self.ida_kk - 1) || (self.ida_kk == self.ida_maxord) {
+            self.ida_phase = 1;
+        }
+
+        // For the first few steps, until either a step fails, or the order is reduced, or the
+        // order reaches its maximum, we raise the order and double the stepsize. During these
+        // steps, phase = 0. Thereafter, phase = 1, and stepsize and order are set by the usual
+        // local error algorithm.
+        //
+        // Note that, after the first step, the order is not increased, as not all of the
+        // neccessary information is available yet.
+
+        if self.ida_phase == 0 {
+            if self.ida_nst > 1 {
+                self.ida_kk += 1;
+                let mut hnew = F::Scalar::from(2.0).unwrap() * self.ida_hh;
+                let tmp = hnew.abs() * self.ida_hmax_inv;
+                if tmp > F::Scalar::one() {
+                    hnew /= tmp;
+                }
+                self.ida_hh = hnew;
+            }
+        } else {
+            enum Action {
+                None,
+                Lower,
+                Maintain,
+                Raise,
+            }
+
+            let mut action = Action::None;
+
+            // Set action = LOWER/MAINTAIN/RAISE to specify order decision
+
+            if self.ida_knew == (self.ida_kk - 1) {
+                action = Action::Lower;
+            } else if self.ida_kk == self.ida_maxord {
+                action = Action::Maintain;
+            } else if (self.ida_kk + 1) >= self.ida_ns || (kdiff == 1) {
+                action = Action::Maintain;
+            }
+
+            // Estimate the error at order k+1, unless already decided to reduce order, or already using
+            // maximum order, or stepsize has not been constant, or order was just raised.
+
+            if action == Action::None {
+                //N_VLinearSum(ONE, IDA_mem->ida_ee, -ONE, IDA_mem->ida_phi[IDA_mem->ida_kk + 1], IDA_mem->ida_tempv1);
+                let enorm = self.wrms_norm(&self.ida_tempv1, &self.ida_ewt, self.ida_suppressalg);
+                let err_kp1 = enorm / F::Scalar::from(self.ida_kk + 2).unwrap();
+
+                // Choose among orders k-1, k, k+1 using local truncation error norms.
+
+                let terr_k = F::Scalar::from(self.ida_kk + 1).unwrap() * err_k;
+                let terr_kp1 = F::Scalar::from(self.ida_kk + 2).unwrap() * err_kp1;
+
+                if self.ida_kk == 1 {
+                    if terr_kp1 >= F::Scalar::from(0.5).unwrap() * terr_k {
+                        action = Action::Maintain;
+                    } else {
+                        action = Action::Raise;
+                    }
+                } else {
+                    let terr_km1 = F::Scalar::from(self.ida_kk).unwrap() * err_km1;
+                    if terr_km1 <= terr_k.min(terr_kp1) {
+                        action = Action::Lower;
+                    } else if terr_kp1 >= terr_k {
+                        action = Action::Maintain;
+                    } else {
+                        action = Action::Raise;
+                    }
+                }
+            }
+            //takeaction:
+
+            // Set the estimated error norm and, on change of order, reset kk.
+            let err_knew = match action {
+                Action::Raise => {
+                    self.ida_kk += 1;
+                    err_kp1
+                }
+                Action::Lower => {
+                    self.ida_kk -= 1;
+                    err_km1
+                }
+                _ => err_k,
+            };
+
+            // Compute rr = tentative ratio hnew/hh from error norm estimate.
+            // Reduce hh if rr <= 1, double hh if rr >= 2, else leave hh as is.
+            // If hh is reduced, hnew/hh is restricted to be between .5 and .9.
+
+            let mut hnew = self.ida_hh;
+            //self.ida_rr = SUNRpowerR( TWO * err_knew + PT0001, -ONE/(IDA_mem->ida_kk + 1) );
+
+            if self.ida_rr >= F::Scalar::from(2.0).unwrap() {
+                hnew = F::Scalar::from(2.0).unwrap() * self.ida_hh;
+                let tmp = hnew.abs() * self.ida_hmax_inv;
+                if tmp > F::Scalar::one() {
+                    hnew /= tmp;
+                }
+            } else if self.ida_rr <= F::Scalar::one() {
+                self.ida_rr = F::Scalar::from(0.5)
+                    .unwrap()
+                    .max(self.ida_rr.min(F::Scalar::from(0.9).unwrap()));
+                //self.ida_rr = SUNMAX(HALF, SUNMIN(PT9,IDA_mem->ida_rr));
+                hnew = self.ida_hh * self.ida_rr;
+            }
+
+            self.ida_hh = hnew;
+        } /* end of phase if block */
+
+        /* Save ee for possible order increase on next step */
+        if (self.ida_kused < self.ida_maxord) {
+            //N_VScale(ONE, IDA_mem->ida_ee, IDA_mem->ida_phi[IDA_mem->ida_kused + 1]);
+        }
+
+        /* Update phi arrays */
+
+        /* To update phi arrays compute X += Z where                  */
+        /* X = [ phi[kused], phi[kused-1], phi[kused-2], ... phi[1] ] */
+        /* Z = [ ee,         phi[kused],   phi[kused-1], ... phi[0] ] */
+
+        //self.ida_Zvecs[0] = self.ida_ee;
+        //self.ida_Xvecs[0] = self.ida_phi[self.ida_kused];
+        //for (j=1; j<=IDA_mem->ida_kused; j++) {
+        for j in 1..self.ida_kused {
+            //self.ida_Zvecs[j] = self.ida_phi[self.ida_kused-j+1];
+            //self.ida_Xvecs[j] = self.ida_phi[self.ida_kused-j];
+        }
+
+        /*
+        (void) N_VLinearSumVectorArray(IDA_mem->ida_kused+1,
+                                       ONE, IDA_mem->ida_Xvecs,
+                                       ONE, IDA_mem->ida_Zvecs,
+                                       IDA_mem->ida_Xvecs);
+                                       */
     }
 
     /// This routine evaluates y(t) and y'(t) as the value and derivative of the interpolating
@@ -825,16 +976,21 @@ impl<
     ) -> Result<(), failure::Error> {
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
-        let mut tfuzz = F::Scalar::from(100.0).unwrap() * F::Scalar::epsilon() * self.ida_tn.abs()
-            + self.ida_hh.abs();
+        //tfuzz = HUNDRED * IDA_mem->ida_uround * (SUNRabs(IDA_mem->ida_tn) + SUNRabs(IDA_mem->ida_hh));
+
+        let mut tfuzz = F::Scalar::from(100.0).unwrap()
+            * F::Scalar::epsilon()
+            * (self.ida_tn.abs() + self.ida_hh.abs());
         if self.ida_hh < F::Scalar::zero() {
             tfuzz = -tfuzz;
         }
         let tp = self.ida_tn - self.ida_hused - tfuzz;
         if (t - tp) * self.ida_hh < F::Scalar::zero() {
-            unimplemented!();
-            //IDAProcessError(IDA_mem, IDA_BAD_T, "IDA", "IDAGetSolution", MSG_BAD_T, t, IDA_mem->ida_tn-IDA_mem->ida_hused, IDA_mem->ida_tn);
-            //return(IDA_BAD_T);
+            Err(IdaError::BadTimeValue {
+                t: t.to_f64().unwrap(),
+                tdiff: (self.ida_tn - self.ida_hused).to_f64().unwrap(),
+                tcurr: self.ida_tn.to_f64().unwrap(),
+            })?;
         }
 
         // Initialize kord = (kused or 1).
@@ -852,7 +1008,6 @@ impl<
 
         self.ida_cvals[0] = c;
         for j in 1..kord {
-            //for (j=1; j <= kord; j++) {
             d = d * gam + c / self.ida_psi[j - 1];
             c = c * gam;
             gam = (delt + self.ida_psi[j - 1]) / self.ida_psi[j];
@@ -861,6 +1016,7 @@ impl<
             self.ida_dvals[j - 1] = d;
         }
 
+        //retval = N_VLinearCombination(kord+1, IDA_mem->ida_cvals, IDA_mem->ida_phi,  yret);
         ndarray::Zip::from(yret)
             .and(
                 self.ida_phi
@@ -871,21 +1027,17 @@ impl<
                 *z = (&row * &self.ida_cvals.slice(s![0..kord + 1])).sum();
             });
 
+        //retval = N_VLinearCombination(kord, IDA_mem->ida_dvals, IDA_mem->ida_phi+1, ypret);
         ndarray::Zip::from(ypret)
             .and(
                 self.ida_phi
-                    .slice_axis(Axis(0), Slice::from(1..kord+1))
+                    .slice_axis(Axis(0), Slice::from(1..kord + 1))
                     .lanes(Axis(0)),
             )
             .apply(|z, row| {
                 *z = (&row * &self.ida_dvals.slice(s![0..kord])).sum();
             });
 
-        //retval = N_VLinearCombination(kord+1, IDA_mem->ida_cvals, IDA_mem->ida_phi,  yret);
-        //if (retval != IDA_SUCCESS) return(IDA_VECTOROP_ERR);
-
-        //retval = N_VLinearCombination(kord, IDA_mem->ida_dvals, IDA_mem->ida_phi+1, ypret);
-        //if (retval != IDA_SUCCESS) return(IDA_VECTOROP_ERR);
         Ok(())
     }
 
@@ -915,7 +1067,7 @@ impl<
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test1() {
+    fn test_get_solution() {
         use crate::ida::Ida;
         use crate::lorenz63::Lorenz63;
         use ndarray::*;
@@ -927,13 +1079,17 @@ mod tests {
         i.ida_cvals += 2.0;
         i.ida_dvals += 2.0;
         i.ida_phi += 1.0;
+        i.ida_tn = 1e-3;
+        i.ida_hh = 1e-6;
 
         let mut yret = Array::zeros((3));
         let mut ypret = Array::zeros((3));
 
-        i.get_solution(0.0, &mut yret, &mut ypret);
+        i.get_solution(0.0, &mut yret, &mut ypret).unwrap();
 
         dbg!(&yret);
         dbg!(&ypret);
+
+        i.get_solution(10.0, &mut yret, &mut ypret).unwrap();
     }
 }
