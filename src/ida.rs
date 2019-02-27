@@ -238,8 +238,9 @@ pub struct Ida<F: IdaModel> {
     // Arrays for Fused Vector Operations
     ida_cvals: Array1<F::Scalar>,
     ida_dvals: Array1<F::Scalar>,
-    //realtype ida_cvals[MXORDP1];
-    //realtype ida_dvals[MAXORD_DEFAULT];
+
+    ida_Xvecs: Array<F::Scalar, Ix2>,
+    ida_Zvecs: Array<F::Scalar, Ix2>,
 }
 
 impl<
@@ -249,7 +250,8 @@ impl<
                          + num_traits::NumRef
                          + num_traits::NumAssignRef
                          + ScalarOperand
-                         + std::fmt::Debug,
+                         + std::fmt::Debug
+                         + IdaConst,
         >,
     > Ida<F>
 //where
@@ -381,7 +383,10 @@ impl<
             ida_cjlast: F::Scalar::zero(),
 
             ida_cvals: Array::zeros(MXORDP1),
-            ida_dvals: Array::zeros(MXORDP1),
+            ida_dvals: Array::zeros(MAXORD_DEFAULT),
+
+            ida_Xvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
+            ida_Zvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
 
             ida_yypredict: Array::zeros(yy0.raw_dim()),
             ida_yppredict: Array::zeros(yy0.raw_dim()),
@@ -864,10 +869,13 @@ impl<
             // Estimate the error at order k+1, unless already decided to reduce order, or already using
             // maximum order, or stepsize has not been constant, or order was just raised.
 
-            if action == Action::None {
+            let mut err_kp1 = F::Scalar::zero();
+
+            if let Action::None = action {
                 //N_VLinearSum(ONE, IDA_mem->ida_ee, -ONE, IDA_mem->ida_phi[IDA_mem->ida_kk + 1], IDA_mem->ida_tempv1);
-                let enorm = self.wrms_norm(&self.ida_tempv1, &self.ida_ewt, self.ida_suppressalg);
-                let err_kp1 = enorm / F::Scalar::from(self.ida_kk + 2).unwrap();
+                let ida_tempv1 = &self.ida_ee - &self.ida_phi.index_axis(Axis(0), self.ida_kk + 1);
+                let enorm = self.wrms_norm(&ida_tempv1, &self.ida_ewt, self.ida_suppressalg);
+                err_kp1 = enorm / F::Scalar::from(self.ida_kk + 2).unwrap();
 
                 // Choose among orders k-1, k, k+1 using local truncation error norms.
 
@@ -911,7 +919,14 @@ impl<
             // If hh is reduced, hnew/hh is restricted to be between .5 and .9.
 
             let mut hnew = self.ida_hh;
-            //self.ida_rr = SUNRpowerR( TWO * err_knew + PT0001, -ONE/(IDA_mem->ida_kk + 1) );
+            //ida_rr = SUNRpowerR( TWO * err_knew + PT0001, -ONE/(IDA_mem->ida_kk + 1) );
+            self.ida_rr = {
+                let base =
+                    F::Scalar::from(2.0).unwrap() * err_knew + F::Scalar::from(0.0001).unwrap();
+                let arg =
+                    -F::Scalar::one() / (F::Scalar::from(self.ida_kk).unwrap() + F::Scalar::one());
+                base.powf(arg)
+            };
 
             if self.ida_rr >= F::Scalar::from(2.0).unwrap() {
                 hnew = F::Scalar::from(2.0).unwrap() * self.ida_hh;
@@ -920,41 +935,47 @@ impl<
                     hnew /= tmp;
                 }
             } else if self.ida_rr <= F::Scalar::one() {
+                //ida_rr = SUNMAX(HALF, SUNMIN(PT9,IDA_mem->ida_rr));
                 self.ida_rr = F::Scalar::from(0.5)
                     .unwrap()
                     .max(self.ida_rr.min(F::Scalar::from(0.9).unwrap()));
-                //self.ida_rr = SUNMAX(HALF, SUNMIN(PT9,IDA_mem->ida_rr));
                 hnew = self.ida_hh * self.ida_rr;
             }
 
             self.ida_hh = hnew;
-        } /* end of phase if block */
+        }
+        // end of phase if block
 
-        /* Save ee for possible order increase on next step */
-        if (self.ida_kused < self.ida_maxord) {
+        // Save ee for possible order increase on next step
+        if self.ida_kused < self.ida_maxord {
             //N_VScale(ONE, IDA_mem->ida_ee, IDA_mem->ida_phi[IDA_mem->ida_kused + 1]);
+            self.ida_phi
+                .index_axis_mut(Axis(0), self.ida_kused + 1)
+                .assign(&self.ida_ee);
         }
 
-        /* Update phi arrays */
+        // Update phi arrays
 
-        /* To update phi arrays compute X += Z where                  */
-        /* X = [ phi[kused], phi[kused-1], phi[kused-2], ... phi[1] ] */
-        /* Z = [ ee,         phi[kused],   phi[kused-1], ... phi[0] ] */
+        // To update phi arrays compute X += Z where                  */
+        // X = [ phi[kused], phi[kused-1], phi[kused-2], ... phi[1] ] */
+        // Z = [ ee,         phi[kused],   phi[kused-1], ... phi[0] ] */
+        self.ida_Zvecs
+            .index_axis_mut(Axis(0), 0)
+            .assign(&self.ida_ee);
+        self.ida_Zvecs
+            .slice_mut(s![1..self.ida_kused + 1, ..])
+            .assign(&self.ida_phi.slice(s![1..self.ida_kused + 1;-1, ..]));
+        self.ida_Xvecs
+            .slice_mut(s![1..self.ida_kused + 1, ..])
+            .assign(&self.ida_phi.slice(s![0..self.ida_kused;-1, ..]));
 
-        //self.ida_Zvecs[0] = self.ida_ee;
-        //self.ida_Xvecs[0] = self.ida_phi[self.ida_kused];
-        //for (j=1; j<=IDA_mem->ida_kused; j++) {
-        for j in 1..self.ida_kused {
-            //self.ida_Zvecs[j] = self.ida_phi[self.ida_kused-j+1];
-            //self.ida_Xvecs[j] = self.ida_phi[self.ida_kused-j];
-        }
-
-        /*
-        (void) N_VLinearSumVectorArray(IDA_mem->ida_kused+1,
-                                       ONE, IDA_mem->ida_Xvecs,
-                                       ONE, IDA_mem->ida_Zvecs,
-                                       IDA_mem->ida_Xvecs);
-                                       */
+        let mut sliceXvecs = self
+            .ida_Xvecs
+            .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1));
+        let sliceZvecs = self
+            .ida_Zvecs
+            .slice_axis(Axis(0), Slice::from(0..self.ida_kused + 1));
+        sliceXvecs += &sliceZvecs;
     }
 
     /// This routine evaluates y(t) and y'(t) as the value and derivative of the interpolating
@@ -1079,17 +1100,33 @@ mod tests {
         i.ida_cvals += 2.0;
         i.ida_dvals += 2.0;
         i.ida_phi += 1.0;
-        i.ida_tn = 1e-3;
+        //i.ida_tn = 1e-3;
         i.ida_hh = 1e-6;
+        i.ida_ee -= 1.0;
+
+        i.ida_kk = 2;
+        i.ida_kused = 0;
+        i.ida_hused = 0.0;
+        i.ida_psi[0] = i.ida_hh;
+        i.ida_cj = 1.0 / i.ida_hh;
+        i.ida_phase = 0;
+        i.ida_ns = 0;
 
         let mut yret = Array::zeros((3));
         let mut ypret = Array::zeros((3));
 
         i.get_solution(0.0, &mut yret, &mut ypret).unwrap();
 
-        dbg!(&yret);
-        dbg!(&ypret);
+        //dbg!(&yret);
+        //dbg!(&ypret);
 
-        i.get_solution(10.0, &mut yret, &mut ypret).unwrap();
+        //i.get_solution(10.0, &mut yret, &mut ypret).unwrap();
+
+        //dbg!(&i.ida_ee);
+        dbg!(&i.ida_phi);
+
+        i.complete_step(1e-6, 2e-5);
+
+        dbg!(&i);
     }
 }

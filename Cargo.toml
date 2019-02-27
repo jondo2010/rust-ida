@@ -1,14 +1,27 @@
 [package]
-name = "ida-rs"
-version = "0.1.0"
-authors = ["John Hughes <jondo2010@gmail.com>"]
+name = "ida"
 edition = "2018"
+version = "0.0.1"
+authors = ["John Hughes <jondo2010@gmail.com>"]
+license = "BSD3"
+readme = "README.md"
+repository = "https://github.com/jondo2010/ida-rs"
+documentation = "https://docs.rs/ida"
+homepage = "https://github.com/jondo2010/ida-rs"
+description = """
+A pure Rust port of the Implicit Differential-Algebraic solver from the Sundials suite.
+"""
+categories = ["science", "simulation"]
+keywords = ["math", "differential"]
 
-[features]
-default   = ["ndarray-linalg/netlib"]
+[badges]
+travis-ci = { repository = "jondo2010/ida-rs", branch = "master" }
+
+#[features]
+#default   = ["ndarray-linalg/netlib"]
 
 [dependencies]
 failure        = { version = "0.1.5" }
-ndarray        = { version = "0.12.1", default-features = false }
-ndarray-linalg = { version = "0.10.0",  default-features = false, optional = true }
+ndarray        = { version = "0.12.1", default-features = true }
+#ndarray-linalg = { version = "0.10.0",  default-features = false, optional = true }
 num-traits = "0.2.6"
