@@ -250,8 +250,7 @@ impl<
                          + num_traits::NumRef
                          + num_traits::NumAssignRef
                          + ScalarOperand
-                         + std::fmt::Debug
-                         + IdaConst,
+                         + std::fmt::Debug, /*+ IdaConst*/
         >,
     > Ida<F>
 //where
@@ -260,7 +259,7 @@ impl<
 {
     /// Creates a new IdaModel given a ModelSpec, initial Arrays of yy0 and yyp
     ///
-    /// Can throw if ModelSpec::Scalar is unable to convert any constant initialization value.
+    /// *Panics" if ModelSpec::Scalar is unable to convert any constant initialization value.
     pub fn new(f: F, yy0: Array<F::Scalar, Ix1>, yp0: Array<F::Scalar, Ix1>) -> Self {
         // Initialize the phi array
         let mut ida_phi = Array::zeros(f.model_size())
@@ -449,7 +448,7 @@ impl<
             self.ida_kused = 0;
             self.ida_hused = F::Scalar::one();
             self.ida_psi[0] = self.ida_hh;
-            //self.ida_cj = into_scalar(1.0) / self.ida_hh;
+            self.ida_cj = F::Scalar::one() / self.ida_hh;
             self.ida_phase = 0;
             self.ida_ns = 0;
         }
@@ -695,11 +694,7 @@ impl<
 
         if self.ida_kk > 1 {
             // Compute error at order k-1
-            // ida_delta = ida_phi[ida_kk] + self.ida_ee;
-            self.ida_delta
-                .assign(&self.ida_phi.index_axis(Axis(0), self.ida_kk));
-            self.ida_delta.scaled_add(F::Scalar::one(), &self.ida_ee);
-
+            self.ida_delta = &self.ida_phi.index_axis(Axis(0), self.ida_kk) + &self.ida_ee;
             let enorm_km1 = self.wrms_norm(&self.ida_delta, &self.ida_ewt, self.ida_suppressalg);
             err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
             let terr_km1 = err_km1 * F::Scalar::from(self.ida_kk).unwrap();
@@ -736,30 +731,47 @@ impl<
     }
 
     /// IDARestore
-    /// This routine restores tn, psi, and phi in the event of a failure. It changes back phi-star to
-    /// phi (changed in IDASetCoeffs)
+    /// This routine restores tn, psi, and phi in the event of a failure.
+    /// It changes back `phi-star` to `phi` (changed in `set_coeffs()`)
+    /// 
+    /// 
     pub fn restore(&mut self, saved_t: F::Scalar) -> () {
-        //int j;
-
         self.ida_tn = saved_t;
 
-        //for (j = 1; j <= IDA_mem->ida_kk; j++)
-        for j in 1..self.ida_kk {
+        // Restore psi[0 .. kk] = psi[1 .. kk + 1] - hh
+        for j in 1..self.ida_kk + 1 {
             self.ida_psi[j - 1] = self.ida_psi[j] - self.ida_hh;
         }
 
-        if self.ida_ns <= self.ida_kk {
-            //for (j = IDA_mem->ida_ns; j <= IDA_mem->ida_kk; j++)
-            for j in self.ida_ns..self.ida_kk {
-                self.ida_cvals[j - self.ida_ns] = F::Scalar::one() / self.ida_beta[j];
-            }
+        //Zip::from(&mut self.ida_psi.slice_mut(s![0..self.ida_kk]))
+        //.and(&self.ida_psi.slice(s![1..self.ida_kk+1]));
+        //ida_psi -= &self.ida_psi.slice(s![1..self.ida_kk+1]);
 
-            /*
-            N_VScaleVectorArray(IDA_mem->ida_kk-IDA_mem->ida_ns+1,
-                                       IDA_mem->ida_cvals,
-                                       IDA_mem->ida_phi+IDA_mem->ida_ns,
-                                       IDA_mem->ida_phi+IDA_mem->ida_ns);
-                                       */
+        if self.ida_ns <= self.ida_kk {
+            // cvals[0 .. kk-ns+1] = 1 / beta[ns .. kk+1]
+            Zip::from(
+                &mut self
+                    .ida_cvals
+                    .slice_mut(s![0..self.ida_kk - self.ida_ns + 1]),
+            )
+            .and(&self.ida_beta.slice(s![self.ida_ns..self.ida_kk + 1]))
+            .apply(|cvals, &beta| {
+                *cvals = beta.recip();
+            });
+
+            // phi[ns .. (kk + 1)] *= cvals[ns .. (kk + 1)]
+            let mut ida_phi = self
+                .ida_phi
+                .slice_axis_mut(Axis(0), Slice::from(self.ida_ns..self.ida_kk + 1));
+
+            // We manually broadcast cvals here so we can turn it into a column vec
+            let cvals = self.ida_cvals.slice(s![0..self.ida_kk - self.ida_ns + 1]);
+            let cvals = cvals
+                .broadcast((1, ida_phi.len_of(Axis(0))))
+                .unwrap()
+                .reversed_axes();
+
+            ida_phi *= &cvals;
         }
     }
 
@@ -978,7 +990,7 @@ impl<
         sliceXvecs += &sliceZvecs;
     }
 
-    /// This routine evaluates y(t) and y'(t) as the value and derivative of the interpolating
+    /// This routine evaluates `y(t)` and `y'(t)` as the value and derivative of the interpolating
     /// polynomial at the independent variable t, and stores the results in the vectors yret and ypret.
     /// It uses the current independent variable value, tn, and the method order last used, kused.
     /// This function is called by `solve` with `t = tout`, `t = tn`, or `t = tstop`.
@@ -1087,46 +1099,383 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use crate::ida::Ida;
+    use crate::lorenz63::Lorenz63;
+    use ndarray::*;
+    use nearly_eq::*;
+
     #[test]
-    fn test_get_solution() {
-        use crate::ida::Ida;
-        use crate::lorenz63::Lorenz63;
-        use ndarray::*;
+    fn test_test_error1() {
+        let ck = 1.091414141414142;
+        let suppressalg = 0;
+        let kk = 5;
+        let ida_phi = array![
+            [ 3.634565317158998e-05, 1.453878335134203e-10, 0.9999636542014404, ],
+            [ -6.530333550677049e-06, -2.612329458968465e-11, 6.530359673556191e-06, ],
+            [ 1.946442728026142e-06, 7.786687275994346e-12, -1.946450515496441e-06, ],
+            [ -8.097632208221231e-07, -3.239585549038764e-12, 8.097664556005615e-07, ],
+            [ 3.718130977075839e-07, 1.487573462300438e-12, -3.71814615793545e-07, ],
+            [ -3.24421895454213e-07, -1.297915245220823e-12, 3.244230624265827e-07, ],
+        ];
+        let ida_ee = array![ 2.65787533317467e-07, 1.063275845801634e-12, -2.657884288386138e-07, ];
+        let ida_ewt= array![ 73343005.56993243,   999999.985461217,  9901.346408259429];
+        let ida_sigma = array![ 1.0, 0.6666666666666666, 0.6666666666666666,  0.888888888888889,  1.422222222222222,  2.585858585858586,  ];
+        let knew = 4;
+        let err_k=  29.10297975314245;
+        let err_km1=  3.531162835377502;
+        let nflag=true;
 
         let f = Lorenz63::default();
-        let mut i = Ida::new(f, array![1., 2., 3.], array![4., 5., 6.]);
+        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+
+        // Set preconditions:
+        ida.ida_kk = kk;
+        ida.ida_suppressalg = suppressalg > 0;
+        ida.ida_phi.assign(&ida_phi);
+        ida.ida_ee.assign(&ida_ee);
+        ida.ida_ewt.assign(&ida_ewt);
+        ida.ida_sigma.assign(&ida_sigma);
+
+        // Call the function under test
+        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck);
+
+        assert_eq!(ida.ida_knew, knew);
+        assert_nearly_eq!(err_k_new, err_k);
+        assert_nearly_eq!(err_km1_new, err_km1);
+        assert_eq!(nflag_new, nflag);
+    }
+
+    #[test]
+    fn test_test_error2() {
+        //--- IDATestError Before:
+        let ck = 0.2025812352167927;
+        let suppressalg = 0;
+        let kk = 4;
+        let ida_phi= array![ [3.051237735052657e-05,1.220531905117091e-10, 0.9999694875005963,],[-2.513114849098281e-06,-1.005308974226734e-11,2.513124902721765e-06,],[4.500284453718991e-07,1.800291970640913e-12,-4.500302448499092e-07,],[-1.366709389821433e-07,-5.467603693902342e-13,1.366714866794709e-07,],[7.278821769100639e-08,2.911981566628798e-13,-7.278850816613011e-08,],[-8.304741244343501e-09,-3.324587131187576e-14,8.304772990651073e-09,],  ];
+        let ida_ee = array![ -2.981302228744271e-08, -1.192712676406388e-13, 2.981313872620108e-08, ];
+        let ida_ewt = array![76621085.31777237, 999999.9877946811, 9901.289220872719,];
+        let ida_sigma = array![ 1.0, 0.5, 0.3214285714285715, 0.2396514200444849, 0.1941955227762807, 2.585858585858586, ];
+        //--- IDATestError After:
+        let knew=4;
+        let err_k = 0.2561137489433976;
+        let err_km1 = 0.455601916633899;
+        let nflag = false;
+
+        let f = Lorenz63::default();
+        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+
+        // Set preconditions:
+        ida.ida_kk = kk;
+        ida.ida_suppressalg = suppressalg > 0;
+        ida.ida_phi.assign(&ida_phi);
+        ida.ida_ee.assign(&ida_ee);
+        ida.ida_ewt.assign(&ida_ewt);
+        ida.ida_sigma.assign(&ida_sigma);
+
+        // Call the function under test
+        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck);
+
+        assert_eq!(ida.ida_knew, knew);
+        assert_nearly_eq!(err_k_new, err_k);
+        assert_nearly_eq!(err_km1_new, err_km1);
+        assert_eq!(nflag_new, nflag);
+    }
+
+    #[test]
+    fn test_restore1() {
+        let saved_t = 717553.4942644858;
+        #[rustfmt::skip]
+        let phi_before = array![[0.00280975951420059, 1.125972706132338e-08, 0.9971902292261264], [-0.0001926545663078034, -7.857235149861102e-10,0.0001926553520857565], [2.945636347837807e-05, 1.066748079583829e-10,-2.945647009050819e-05], [-5.518529121250618e-06, -4.529997656241677e-11,5.518574540464112e-06], [2.822681468681011e-06, -4.507342025411469e-11,-2.822636100488049e-06], [-8.124641701620927e-08,-8.669560754165103e-11,8.133355922669991e-08], ];
+        #[rustfmt::skip]
+        let psi_before = array![ 47467.05706123715, 94934.1141224743, 142401.1711837114, 166134.69971433, 189868.2282449486, 107947.0192373629 ];
+        let cvals_before = array![1., 1., 1., 1., 1., 0.];
+        let beta_before = array![1., 1., 1., 1.2, 1.4, 1.];
+
+        #[rustfmt::skip]
+        let phi_after = array![[0.00280975951420059,1.125972706132338e-08, 0.9971902292261264,], [-0.0001926545663078034,-7.857235149861102e-10,0.0001926553520857565,], [2.945636347837807e-05,1.066748079583829e-10,-2.945647009050819e-05,], [-4.598774267708849e-06,-3.774998046868064e-11,4.598812117053426e-06,], [2.016201049057865e-06,-3.219530018151049e-11,-2.016168643205749e-06,], [-8.124641701620927e-08,-8.669560754165103e-11,8.133355922669991e-08,], ];
+        #[rustfmt::skip]
+        let psi_after = array![ 47467.05706123715, 94934.11412247429, 118667.6426530929, 142401.1711837114, 189868.2282449486, 107947.0192373629 ];
+        let cvals_after = array![0.8333333333333334, 0.7142857142857142, 1., 1., 1., 0.];
+        let beta_after = array![1., 1., 1., 1.2, 1.4, 1.];
+
+        let f = Lorenz63::default();
+        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+
+        // Set preconditions:
+        ida.ida_tn = 765020.5513257229;
+        ida.ida_ns = 3;
+        ida.ida_kk = 4;
+        ida.ida_hh = 47467.05706123715;
+        ida.ida_phi.assign(&phi_before);
+        ida.ida_psi.assign(&psi_before);
+        ida.ida_cvals.assign(&cvals_before);
+        ida.ida_beta.assign(&beta_before);
+
+        // Call the function under test
+        ida.restore(saved_t);
+
+        assert_nearly_eq!(ida.ida_tn, saved_t);
+        assert_eq!(ida.ida_ns, 3);
+        assert_eq!(ida.ida_kk, 4);
+        assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
+        assert_nearly_eq!(ida.ida_beta, beta_after, 1e-6);
+        assert_nearly_eq!(ida.ida_psi, psi_after, 1e-6);
+        assert_nearly_eq!(ida.ida_phi, phi_after, 1e-6);
+    }
+
+    #[test]
+    fn test_restore2() {
+        let saved_t = 3623118336.24244;
+        #[rustfmt::skip]
+        let phi_before = array![ [5.716499633245077e-07,2.286601144610028e-12, 0.9999994283477499,], [-1.555846772013456e-07,-6.223394599091205e-13,1.555852991517385e-07,], [7.018252655941472e-08,2.807306512268244e-13,-7.01828076998538e-08,], [-4.56160628763917e-08,-1.824647796129851e-13,4.561624269904529e-08,], [5.593228676143622e-08,2.237297583983664e-13,-5.593253344183256e-08,], [-2.242367216194777e-10,-8.970915966733762e-16,2.242247401239887e-10,], ];
+        #[rustfmt::skip]
+        let psi_before = array![  857870592.1885694,   1286805888.282854,   1715741184.377139,   1930208832.424281,   2144676480.471424,    26020582.4876316];
+        #[rustfmt::skip]
+        let cvals_before = array![1., 1., 1., 1., 1., 1.];
+        #[rustfmt::skip]
+        let beta_before = array![1., 2., 3., 4.8, 7.199999999999999, 10.28571428571428];
+        //--- IDARestore After: saved_t=   3623118336.24244 tn=   3623118336.24244 ns=1 kk=4
+        #[rustfmt::skip]
+        let phi_after = array![ [5.716499633245077e-07,2.286601144610028e-12, 0.9999994283477499,], [-7.779233860067279e-08,-3.111697299545603e-13,7.779264957586927e-08,], [2.339417551980491e-08,9.35768837422748e-14,-2.33942692332846e-08,], [-9.503346432581604e-09,-3.801349575270522e-14,9.503383895634436e-09,], [7.768373161310588e-09,3.107357755532867e-14,-7.768407422476745e-09,], [-2.242367216194777e-10,-8.970915966733762e-16,2.242247401239887e-10,], ];
+        #[rustfmt::skip]
+        let psi_after= array![  428935296.0942847,   857870592.1885694,   1072338240.235712,   1286805888.282854,   2144676480.471424,    26020582.4876316];
+        #[rustfmt::skip]
+        let cvals_after = array![ 0.5, 0.3333333333333333, 0.2083333333333333, 0.1388888888888889, 1., 1. ];
+        #[rustfmt::skip]
+        let beta_after = array![1., 2., 3., 4.8, 7.199999999999999, 10.28571428571428];
+
+        let f = Lorenz63::default();
+        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+
+        // Set preconditions:
+        ida.ida_tn = 4480988928.431009;
+        ida.ida_ns = 1;
+        ida.ida_kk = 4;
+        ida.ida_hh = 857870592.1885694;
+        ida.ida_phi.assign(&phi_before);
+        ida.ida_psi.assign(&psi_before);
+        ida.ida_cvals.assign(&cvals_before);
+        ida.ida_beta.assign(&beta_before);
+
+        // Call the function under test
+        ida.restore(saved_t);
+
+        assert_nearly_eq!(ida.ida_tn, saved_t);
+        assert_eq!(ida.ida_ns, 1);
+        assert_eq!(ida.ida_kk, 4);
+        assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
+        assert_nearly_eq!(ida.ida_beta, beta_after, 1e-6);
+        assert_nearly_eq!(ida.ida_psi, psi_after, 1e-6);
+        assert_nearly_eq!(ida.ida_phi, phi_after, 1e-6);
+    }
+
+    #[test]
+    fn test_restore3() {
+        let saved_t = 13638904.64873992;
+        let phi_before = array![
+            [
+                0.0001523741818966069,
+                6.095884948264652e-10,
+                0.9998476252085154,
+            ],
+            [
+                -1.964117218731689e-05,
+                -7.858910051867137e-11,
+                1.964125077907938e-05,
+            ],
+            [
+                4.048658569496216e-06,
+                1.620249912028008e-11,
+                -4.048674765925692e-06,
+            ],
+            [
+                -1.215165175266232e-06,
+                -4.863765573523665e-12,
+                1.21517004866448e-06,
+            ],
+            [
+                4.909710408845208e-07,
+                1.965778579990634e-12,
+                -4.909729965008022e-07,
+            ],
+            [
+                -2.529640523993838e-07,
+                -1.012593011825966e-12,
+                2.529650614751456e-07,
+            ],
+        ];
+        let psi_before = array![
+            1656116.685489699,
+            2484175.028234549,
+            3312233.370979399,
+            4140291.713724249,
+            5060356.538996303,
+            5520388.951632331
+        ];
+        let cvals_before = array![1., 1., 1., 1., 1., 1.];
+        let beta_before = array![1., 2., 3., 4., 4.864864864864866, 6.370656370656372];
+        //--- IDARestore After: saved_t=  13638904.64873992 tn=  13638904.64873992 ns=1 kk=5
+        let phi_after = array![
+            [
+                0.0001523741818966069,
+                6.095884948264652e-10,
+                0.9998476252085154,
+            ],
+            [
+                -9.820586093658443e-06,
+                -3.929455025933569e-11,
+                9.820625389539692e-06,
+            ],
+            [
+                1.349552856498739e-06,
+                5.400833040093358e-12,
+                -1.349558255308564e-06,
+            ],
+            [
+                -3.037912938165579e-07,
+                -1.215941393380916e-12,
+                3.0379251216612e-07,
+            ],
+            [
+                1.009218250707071e-07,
+                4.040767081091857e-13,
+                -1.009222270584982e-07,
+            ],
+            [
+                -3.970769064935782e-08,
+                -1.589464182199546e-13,
+                3.970784904367437e-08,
+            ],
+        ];
+        let psi_after = array![ 828058.3427448499, 1656116.685489699, 2484175.02823455, 3404239.853506604, 3864272.266142632, 5520388.951632331, ];
+        let cvals_after = array![ 0.5, 0.3333333333333333, 0.25, 0.2055555555555555, 0.156969696969697, 1., ];
+        let beta_after = array![1., 2., 3., 4., 4.864864864864866, 6.370656370656372];
+
+        let f = Lorenz63::default();
+        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+
+        // Set preconditions:
+        ida.ida_tn = 15295021.33422961;
+        ida.ida_ns = 1;
+        ida.ida_kk = 5;
+        ida.ida_hh = 1656116.685489699;
+        ida.ida_phi.assign(&phi_before);
+        ida.ida_psi.assign(&psi_before);
+        ida.ida_cvals.assign(&cvals_before);
+        ida.ida_beta.assign(&beta_before);
+
+        // Call the function under test
+        ida.restore(saved_t);
+
+        assert_nearly_eq!(ida.ida_tn, saved_t);
+        assert_eq!(ida.ida_ns, 1);
+        assert_eq!(ida.ida_kk, 5);
+        assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
+        assert_nearly_eq!(ida.ida_beta, beta_after, 1e-6);
+        assert_nearly_eq!(ida.ida_psi, psi_after, 1e-6);
+        assert_nearly_eq!(ida.ida_phi, phi_after, 1e-6);
+    }
+
+    #[test]
+    fn test_complete_step() {
+        let err_k=0.1022533962984153;
+        let err_km1=0.3638660854770704;
+        let ida_phi = array![ [0.0000001057015204,0.0000000000004228,0.9999998942980568,],[-0.0000000330821964,-0.0000000000001323,0.0000000330823287,],[0.0000000186752739,0.0000000000000747,-0.0000000186753488,],[-0.0000000199565018,-0.0000000000000798,0.0000000199565809,],[0.0000000012851942,0.0000000000000051,-0.0000000012851948,],[-0.0000000002242367,-0.0000000000000009,0.0000000002242247,],  ];
+        let ida_ee = array![-0.0000000051560075,-0.0000000000000206,0.0000000051560285,];
+        let ida_ewt = array![99894410.0897681862115860,999999.9999577193520963,9900.9911352019826154,];
+        let kk = 2;
+        let kused = 2;
+        let knew = 2;
+        let phase = 1;
+        let hh=3774022770.1406540870666504;
+        let hused=4313148194.5176315307617188;
+        let rr=0.8750041964562566;
+        let hmax_inv=0.0000000000000000;
+        let nst=357;
+        let maxord=5;
+
+        // Set preconditions:
+        let f = Lorenz63::default();
+        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        ida.ida_nst = nst;
+        ida.ida_kk = kk;
+        ida.ida_hh = hh;
+        ida.ida_rr = rr;
+        ida.ida_kused = kused;
+        ida.ida_hused = hused;
+        ida.ida_knew = knew;
+        ida.ida_maxord = maxord;
+        ida.ida_phase = phase;
+        ida.ida_hmax_inv = hmax_inv;
+        ida.ida_ee.assign(&ida_ee);
+        ida.ida_phi.assign(&ida_phi);
+        ida.ida_ewt.assign(&ida_ewt);
+        //ida.ida_Xvecs.assign(&ida_Xvecs);
+        //ida.ida_Zvecs.assign(&ida_Zvecs);
+
+        ida.complete_step(err_k,err_km1);
+
+        let ida_phi = array![ [0.0000000861385903,0.0000000000003446,0.9999999138610652,],[-0.0000000195629300,-0.0000000000000783,0.0000000195630084,],[0.0000000135192664,0.0000000000000541,-0.0000000135193203,],[-0.0000000051560075,-0.0000000000000206,0.0000000051560285,],[0.0000000012851942,0.0000000000000051,-0.0000000012851948,],[-0.0000000002242367,-0.0000000000000009,0.0000000002242247,],  ];
+        let ida_ee = array![-0.0000000051560075,-0.0000000000000206,0.0000000051560285,];
+        let ida_ewt = array![99894410.0897681862115860,999999.9999577193520963,9900.9911352019826154,];
+        let kk=2;
+        let kused=2;
+        let knew=2;
+        let phase=1;
+        let hh=3774022770.1406540870666504;
+        let hused=3774022770.1406540870666504;
+        let rr=1.6970448397793398;
+        let hmax_inv=0.0000000000000000;
+        let nst=358;
+        let maxord=5;
+
+        assert_eq!(ida.ida_nst, nst);
+        assert_eq!(ida.ida_kk, kk);
+        assert_eq!(ida.ida_hh , hh);
+        assert_nearly_eq!(ida.ida_rr , rr, 1e-6);
+        assert_eq!(ida.ida_kused , kused);
+        assert_eq!(ida.ida_hused , hused);
+        assert_eq!(ida.ida_knew , knew);
+        assert_eq!(ida.ida_maxord , maxord);
+        assert_eq!(ida.ida_phase , phase);
+        assert_eq!(ida.ida_hmax_inv , hmax_inv);
+        assert_nearly_eq!(ida.ida_ee, ida_ee, 1e-6);
+        assert_nearly_eq!(ida.ida_phi, ida_phi, 1e-6);
+        assert_nearly_eq!(ida.ida_ewt, ida_ewt, 1e-6);
+    }
+
+    #[test]
+    fn test_get_solution() {
+        // --- IDAGetSolution Before:
+        let t = 3623118336.24244;
+        let hh = 857870592.1885694;
+        let tn = 3623118336.24244;
+        let kused = 4;
+        let hused = 428935296.0942847;
+        let ida_phi = array![ [5.716499633245077e-07,2.286601144610028e-12, 0.9999994283477499,],[-7.779233860067279e-08,-3.111697299545603e-13,7.779264957586927e-08,],[2.339417551980491e-08,9.35768837422748e-14,-2.33942692332846e-08,],[-9.503346432581604e-09,-3.801349575270522e-14,9.503383895634436e-09,],[7.768373161310588e-09,3.107357755532867e-14,-7.768407422476745e-09,],[-2.242367216194777e-10,-8.970915966733762e-16,2.242247401239887e-10,],  ];
+        let ida_psi = array![  428935296.0942847,  857870592.1885694,  1072338240.235712,  1286805888.282854,  1501273536.329997,   26020582.4876316,  ];
+
+        //--- IDAGetSolution After:
+        let yret_expect = array![ 5.716499633245077e-07, 2.286601144610028e-12, 0.9999994283477499, ];
+        let ypret_expect = array![ -1.569167478317552e-16, -6.276676917262037e-22, 1.569173718962504e-16, ];
+
+        let f = Lorenz63::default();
+        let mut ida = Ida::new(f, array![1., 2., 3.], array![4., 5., 6.]);
         //println!("{:#?}", i);
 
-        i.ida_cvals += 2.0;
-        i.ida_dvals += 2.0;
-        i.ida_phi += 1.0;
-        //i.ida_tn = 1e-3;
-        i.ida_hh = 1e-6;
-        i.ida_ee -= 1.0;
-
-        i.ida_kk = 2;
-        i.ida_kused = 0;
-        i.ida_hused = 0.0;
-        i.ida_psi[0] = i.ida_hh;
-        i.ida_cj = 1.0 / i.ida_hh;
-        i.ida_phase = 0;
-        i.ida_ns = 0;
+        ida.ida_hh = hh;
+        ida.ida_tn = tn;
+        ida.ida_kused = kused;
+        ida.ida_hused = hused;
+        ida.ida_phi.assign(&ida_phi);
+        ida.ida_psi.assign(&ida_psi);
 
         let mut yret = Array::zeros((3));
         let mut ypret = Array::zeros((3));
 
-        i.get_solution(0.0, &mut yret, &mut ypret).unwrap();
+        ida.get_solution(t, &mut yret, &mut ypret).unwrap();
 
-        //dbg!(&yret);
-        //dbg!(&ypret);
-
-        //i.get_solution(10.0, &mut yret, &mut ypret).unwrap();
-
-        //dbg!(&i.ida_ee);
-        dbg!(&i.ida_phi);
-
-        i.complete_step(1e-6, 2e-5);
-
-        dbg!(&i);
+        assert_nearly_eq!(yret, yret_expect, 1e-6);
+        assert_nearly_eq!(ypret, ypret_expect, 1e-6);
     }
 }
