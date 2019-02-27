@@ -1,7 +1,7 @@
 Implicit Differential-Algebraic Solver
 ====================
-[![Crate](http://meritbadge.herokuapp.com/eom)](https://crates.io/crates/ida)
-[![docs.rs](https://docs.rs/eom/badge.svg)](https://docs.rs/ida)
+[![Crate](http://meritbadge.herokuapp.com/ida)](https://crates.io/crates/ida)
+[![docs.rs](https://docs.rs/ida/badge.svg)](https://docs.rs/ida)
 [![Build Status](https://travis-ci.org/jondo2010/ida-rs.svg?branch=master)](https://travis-ci.org/jondo2010/ida-rs)
 
 `ida` is a Rust port of the Implicit Differential-Algebraic solver from the Sundials suite.
