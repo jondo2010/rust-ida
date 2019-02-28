@@ -1,10 +1,6 @@
 //! Basic traits for problem specification
 
 use ndarray::*;
-//use ndarray_linalg::*;
-
-//use num_traits::real::Real as Scalar;
-//num_traits::float::Float + num_traits::float::FloatConst + num_traits::NumAssignRef + ScalarOperand
 
 /// Model specification
 pub trait ModelSpec: Clone {
@@ -161,91 +157,6 @@ where
             / A::from(self.len()).unwrap())
         .sqrt()
     }
-}
-
-pub fn N_VLinearCombination<A, S, SM, D>(
-    c: &ArrayBase<S, D::Smaller>,
-    x: &ArrayBase<S, D>,
-    z: &mut ArrayBase<SM, D::Smaller>,
-) where
-    A: num_traits::float::Float + ScalarOperand + std::fmt::Debug,
-    S: Data<Elem = A>,
-    SM: DataMut<Elem = A>,
-    D: Dimension + RemoveAxis,
-{
-    ndarray::Zip::from(z)
-        .and(c)
-        .and(x.gencolumns())
-        .apply(|z, c, row| *z = row.sum());
-}
-
-pub fn N_VScale<A, S, SM, D>(c: A, x: &ArrayBase<S, D>, z: &mut ArrayBase<SM, D>)
-where
-    A: num_traits::float::Float + ScalarOperand,
-    S: Data<Elem = A>,
-    SM: DataMut<Elem = A>,
-    D: Dimension,
-{
-    z.zip_mut_with(x, |z, xn| *z = c * (*xn));
-}
-
-#[test]
-fn test_N_VLinearCombination() {
-    let c: ArrayBase<_, Ix1> = array![2., 1., 1.];
-    let x: ArrayBase<_, Ix2> = array![[1., 2., 3.], [4., 5., 6.], [5., 6., 7.]];
-    let mut z = Array::zeros(c.raw_dim());
-
-    N_VLinearCombination(&c, &x, &mut z);
-
-    assert_eq!(z, aview1(&[11., 15., 19.]));
-}
-
-#[test]
-fn test_N_VScale() //(N_Vector X, N_Vector Z, sunindextype local_length, int myid)
-{
-    const LENGTH: usize = 32;
-    // Case 1: x = cx, VScaleBy
-
-    // fill vector data
-    let mut x = Array::from_elem(LENGTH, 0.5);
-
-    //N_VScale(2.0, &mut x, &mut x);
-
-    // X should be vector of +1
-    //assert_eq!(x, Array::from_elem(LENGTH, 1.0));
-
-    // Case 2: z = x, VCopy
-
-    // fill vector data
-    let mut x = Array::from_elem(LENGTH, -1.0);
-    let mut z = Array::from_elem(LENGTH, 0.0);
-
-    N_VScale(1.0, &x, &mut z);
-
-    // Z should be vector of -1
-    assert_eq!(z, Array::from_elem(LENGTH, -1.0));
-
-    // Case 3: z = -x, VNeg
-
-    // fill vector data
-    let mut x = Array::from_elem(LENGTH, -1.0);
-    let mut z = Array::from_elem(LENGTH, 0.0);
-
-    N_VScale(-1.0, &x, &mut z);
-
-    // Z should be vector of +1
-    assert_eq!(z, Array::from_elem(LENGTH, 1.0));
-
-    // Case 4: z = cx, All other cases
-
-    // fill vector data
-    let mut x = Array::from_elem(LENGTH, -0.5);
-    let mut z = Array::from_elem(LENGTH, 0.0);
-
-    N_VScale(2.0, &x, &mut z);
-
-    /* Z should be vector of -1 */
-    assert_eq!(z, Array::from_elem(LENGTH, -1.0));
 }
 
 #[cfg(test)]
