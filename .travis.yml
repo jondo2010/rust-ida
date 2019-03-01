@@ -1,11 +1,30 @@
 language: rust
-sudo: false
+sudo: required
 
 rust:
-  - nightly
+  - stable
 
 matrix:
     fast_finish: true
 
 cache: cargo
 
+env:
+  global:
+    - RUST_BACKTRACE=1
+    - CARGO_MAKE_CI="true"
+    - CARGO_MAKE_RUN_CODECOV="true"
+
+before_script:
+  - export PATH=$HOME/.cargo/bin:$PATH
+  - cargo install cargo-make || echo "cargo-make already installed"
+  #- cargo install cargo-travis || echo "cargo-travis already installed"
+  #- cargo install-update -a # update outdated cached binaries
+
+script:
+  - cargo make ci-flow
+
+addons:
+  apt:
+    update: false
+    packages:
