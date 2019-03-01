@@ -548,7 +548,7 @@ impl<
     /// Returns the 'variable stepsize error coefficient ck'
     pub fn set_coeffs(&mut self) -> F::Scalar {
         // Set coefficients for the current stepsize h
-        if self.ida_hh != self.ida_hused || self.ida_kk != self.ida_kused {
+        if (self.ida_hh != self.ida_hused) || (self.ida_kk != self.ida_kused) {
             self.ida_ns = 0;
         }
         self.ida_ns = std::cmp::min(self.ida_ns + 1, self.ida_kused + 2);
@@ -558,7 +558,7 @@ impl<
             let mut temp1 = self.ida_hh;
             self.ida_gamma[0] = F::Scalar::zero();
             self.ida_sigma[0] = F::Scalar::one();
-            for i in 1..self.ida_kk {
+            for i in 1..self.ida_kk + 1 {
                 let temp2 = self.ida_psi[i - 1];
                 self.ida_psi[i - 1] = temp1;
                 self.ida_beta[i] = self.ida_beta[i - 1] * (self.ida_psi[i - 1] / temp2);
@@ -589,27 +589,16 @@ impl<
         // change phi to phi-star
         // Scale i=self.ida_ns to i<=self.ida_kk
         if self.ida_ns <= self.ida_kk {
-            let nv = self.ida_kk - self.ida_ns + 1;
-            let c = self.ida_beta.slice(s![self.ida_ns..]);
-
-            let ix1 = s![self.ida_ns..];
-            let ix2 = SliceOrIndex::from(0..self.ida_ns);
-            //self.ida_phi.slice(ix1);
-            //&SliceInfo<<<<F as ModelSpec>::Dim as Dimension>::Larger as Dimension>::SliceArg, _>
-            //let ix: <<<F as ModelSpec>::Dim as Dimension>::Larger as Dimension>::SliceArg = &[SliceOrIndex::from(0..self.ida_ns)];
-
-            //<<<<F as ModelSpec>::Dim as Dimension>::Larger as Dimension>::SliceArg as AsRef<[SliceOrIndex]>>::from(0..1);
-
-            //let z = self.ida_phi.slice_mut(s![self.ida_ns..]);
-            //self.ida_phi.index_axis_mut(Axis(0), 0).assign(&yy0);
-            /*
-            N_VScaleVectorArray(
-              self.ida_kk - self.ida_ns + 1,
-              self.ida_beta + self.ida_ns,
-              self.ida_phi + self.ida_ns,
-              self.ida_phi + self.ida_ns,
-            );
-            */
+            //N_VScaleVectorArray( self.ida_kk - self.ida_ns + 1, self.ida_beta + self.ida_ns, self.ida_phi + self.ida_ns, self.ida_phi + self.ida_ns,);
+            let mut phi = self
+                .ida_phi
+                .slice_axis_mut(Axis(0), Slice::from(self.ida_ns..self.ida_kk + 1));
+            let beta = self.ida_beta.slice(s![self.ida_ns..self.ida_kk + 1]);
+            let beta = beta
+                .broadcast((phi.len_of(Axis(1)), phi.len_of(Axis(0))))
+                .unwrap()
+                .reversed_axes();
+            phi *= &beta;
         }
 
         return ck;
@@ -641,9 +630,7 @@ impl<
                 .unwrap()
                 .reversed_axes();
 
-            let mut yypredict = self
-                .ida_yypredict
-                .slice_axis_mut(Axis(0), Slice::from(0..));
+            let mut yypredict = self.ida_yypredict.slice_axis_mut(Axis(0), Slice::from(0..));
 
             yypredict.assign(&(&phi * &cvals).sum_axis(Axis(0)));
         }
@@ -662,9 +649,7 @@ impl<
                 .unwrap()
                 .reversed_axes();
 
-            let mut yppredict = self
-                .ida_yppredict
-                .slice_axis_mut(Axis(0), Slice::from(0..));
+            let mut yppredict = self.ida_yppredict.slice_axis_mut(Axis(0), Slice::from(0..));
 
             yppredict.assign(&(&phi * &gamma).sum_axis(Axis(0)));
         }
@@ -1109,6 +1094,211 @@ mod tests {
     use nearly_eq::*;
 
     #[test]
+    fn test_set_coeffs() {
+        //Before
+        let ida_phi = array![
+            [
+                4.1295003522440181e-07,
+                1.6518008147114031e-12,
+                9.9999958704831304e-01,
+            ],
+            [
+                -6.4049734044789205e-08,
+                -2.5619916159829551e-13,
+                6.4049990326726996e-08,
+            ],
+            [
+                2.1135440604995772e-08,
+                8.4541889872000439e-14,
+                -2.1135525197726480e-08,
+            ],
+            [
+                -2.2351400807868742e-08,
+                -8.9405756031743853e-14,
+                2.2351489636470618e-08,
+            ],
+            [
+                1.8323105973439385e-08,
+                7.3292641194159994e-14,
+                -1.8323176512520801e-08,
+            ],
+            [
+                -2.2423672161947766e-10,
+                -8.9709159667337618e-16,
+                2.2422474012398869e-10,
+            ],
+        ];
+        let ida_psi = array![
+            6.6874844417638421e+08,
+            1.4118022710390334e+09,
+            1.8407375671333179e+09,
+            1.8153920670983608e+09,
+            2.1446764804714236e+09,
+            2.6020582487631597e+07,
+        ];
+        let ida_alpha = array![
+            1.0000000000000000e+00,
+            4.7368421052631576e-01,
+            3.6330461012857090e-01,
+            4.0930763129879277e-01,
+            3.9999999999999997e-01,
+            3.6363636363636365e-01,
+        ];
+        let ida_beta = array![
+            1.0000000000000000e+00,
+            9.0000000000000002e-01,
+            1.0841585634594841e+00,
+            3.5332089881864119e+00,
+            7.1999999999999993e+00,
+            1.0285714285714285e+01,
+        ];
+        let ida_sigma = array![
+            1.0000000000000000e+00,
+            4.7368421052631576e-01,
+            3.4418331485864612e-01,
+            7.2268199139687761e-01,
+            1.4222222222222223e+00,
+            2.5858585858585861e+00,
+        ];
+        let ida_gamma = array![
+            0.0000000000000000e+00,
+            1.4953305816383288e-09,
+            2.2036450676775371e-09,
+            2.8236868704168917e-09,
+            3.0437121109953610e-09,
+            3.1823098347208659e-07,
+        ];
+        let kk = 2;
+        let kused = 2;
+        let ns = 1;
+        let hh = 6.6874844417638421e+08;
+        let hused = 6.6874844417638421e+08;
+        let cj = 2.2429958724574930e-09;
+        let cjlast = 2.4672954597032423e-09;
+
+        let f = Lorenz63::default();
+        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+
+        // Set preconditions:
+        ida.ida_hh = hh;
+        ida.ida_hused = hused;
+        ida.ida_ns = ns;
+        ida.ida_kused = kused;
+        ida.ida_kk = kk;
+        ida.ida_beta.assign(&ida_beta);
+        ida.ida_alpha.assign(&ida_alpha);
+        ida.ida_gamma.assign(&ida_gamma);
+        ida.ida_sigma.assign(&ida_sigma);
+        ida.ida_phi.assign(&ida_phi);
+        ida.ida_psi.assign(&ida_psi);
+        ida.ida_cjlast = cjlast;
+        ida.ida_cj = cj;
+
+        // Call the function under test
+        let ck = ida.set_coeffs();
+
+        //--- IDASetCoeffs After
+        let ck_expect = 0.3214285714285713969;
+        let ida_phi = array![
+            [
+                4.1295003522440181e-07,
+                1.6518008147114031e-12,
+                9.9999958704831304e-01,
+            ],
+            [
+                -6.4049734044789205e-08,
+                -2.5619916159829551e-13,
+                6.4049990326726996e-08,
+            ],
+            [
+                2.0023048994206519e-08,
+                8.0092316720842518e-14,
+                -2.0023129134688242e-08,
+            ],
+            [
+                -2.2351400807868742e-08,
+                -8.9405756031743853e-14,
+                2.2351489636470618e-08,
+            ],
+            [
+                1.8323105973439385e-08,
+                7.3292641194159994e-14,
+                -1.8323176512520801e-08,
+            ],
+            [
+                -2.2423672161947766e-10,
+                -8.9709159667337618e-16,
+                2.2422474012398869e-10,
+            ],
+        ];
+        let ida_psi = array![
+            6.6874844417638421e+08,
+            1.3374968883527684e+09,
+            2.0805507152154176e+09,
+            1.8153920670983608e+09,
+            2.1446764804714236e+09,
+            2.6020582487631597e+07,
+        ];
+        let ida_alpha = array![
+            1.0000000000000000e+00,
+            5.0000000000000000e-01,
+            3.2142857142857140e-01,
+            4.0930763129879277e-01,
+            3.9999999999999997e-01,
+            3.6363636363636365e-01,
+        ];
+        let ida_beta = array![
+            1.0000000000000000e+00,
+            1.0000000000000000e+00,
+            9.4736842105263153e-01,
+            3.5332089881864119e+00,
+            7.1999999999999993e+00,
+            1.0285714285714285e+01,
+        ];
+        let ida_sigma = array![
+            1.0000000000000000e+00,
+            5.0000000000000000e-01,
+            3.2142857142857140e-01,
+            7.2268199139687761e-01,
+            1.4222222222222223e+00,
+            2.5858585858585861e+00,
+        ];
+        let ida_gamma = array![
+            0.0000000000000000e+00,
+            1.4953305816383288e-09,
+            2.2429958724574930e-09,
+            2.8236868704168917e-09,
+            3.0437121109953610e-09,
+            3.1823098347208659e-07,
+        ];
+        let kk = 2;
+        let kused = 2;
+        let ns = 2;
+        let hh = 6.6874844417638421e+08;
+        let hused = 6.6874844417638421e+08;
+        let cj = 2.2429958724574930e-09;
+        let cjlast = 2.2429958724574930e-09;
+
+        assert_nearly_eq!(ida.ida_hh, hh);
+        assert_nearly_eq!(ida.ida_hused, hused);
+        assert_eq!(ida.ida_ns, ns);
+        assert_eq!(ida.ida_kused, kused);
+        assert_eq!(ida.ida_kk, kk);
+        assert_nearly_eq!(ida.ida_beta, ida_beta);
+        assert_nearly_eq!(ida.ida_alpha, ida_alpha);
+        assert_nearly_eq!(ida.ida_gamma, ida_gamma);
+        assert_nearly_eq!(ida.ida_sigma, ida_sigma);
+        assert_nearly_eq!(ida.ida_phi, ida_phi);
+        assert_nearly_eq!(ida.ida_psi, ida_psi);
+        assert_nearly_eq!(ida.ida_cjlast, cjlast);
+        assert_nearly_eq!(ida.ida_cj, cj);
+        assert_nearly_eq!(ck, ck_expect);
+    }
+
+    #[test]
+    fn test_predict() {}
+
+    #[test]
     fn test_test_error1() {
         let ck = 1.091414141414142;
         let suppressalg = 0;
@@ -1265,12 +1455,36 @@ mod tests {
     #[test]
     fn test_predict1() {
         let ida_phi = array![
-            [ 1.0570152037228958e-07, 4.2280612558303261e-13, 9.9999989429805680e-01, ],
-            [ -3.3082196412696304e-08, -1.3232881828710420e-13, 3.3082328676061534e-08, ],
-            [ 1.8675273859330434e-08, 7.4701128706323864e-14, -1.8675348801050254e-08, ],
-            [ -1.9956501813542136e-08, -7.9826057803058290e-14, 1.9956580862443821e-08, ],
-            [ 1.2851942479612096e-09, 5.1407743965993651e-15, -1.2851948368212051e-09, ],
-            [ -2.2423672161947766e-10, -8.9709159667337618e-16, 2.2422474012398869e-10, ],
+            [
+                1.0570152037228958e-07,
+                4.2280612558303261e-13,
+                9.9999989429805680e-01,
+            ],
+            [
+                -3.3082196412696304e-08,
+                -1.3232881828710420e-13,
+                3.3082328676061534e-08,
+            ],
+            [
+                1.8675273859330434e-08,
+                7.4701128706323864e-14,
+                -1.8675348801050254e-08,
+            ],
+            [
+                -1.9956501813542136e-08,
+                -7.9826057803058290e-14,
+                1.9956580862443821e-08,
+            ],
+            [
+                1.2851942479612096e-09,
+                5.1407743965993651e-15,
+                -1.2851948368212051e-09,
+            ],
+            [
+                -2.2423672161947766e-10,
+                -8.9709159667337618e-16,
+                2.2422474012398869e-10,
+            ],
         ];
         let ida_gamma = array![
             0.0000000000000000e+00,
@@ -1307,12 +1521,36 @@ mod tests {
 
         //--- IDAPredict After
         let ida_phi = array![
-            [ 1.0570152037228958e-07, 4.2280612558303261e-13, 9.9999989429805680e-01, ],
-            [ -3.3082196412696304e-08, -1.3232881828710420e-13, 3.3082328676061534e-08, ],
-            [ 1.8675273859330434e-08, 7.4701128706323864e-14, -1.8675348801050254e-08, ],
-            [ -1.9956501813542136e-08, -7.9826057803058290e-14, 1.9956580862443821e-08, ],
-            [ 1.2851942479612096e-09, 5.1407743965993651e-15, -1.2851948368212051e-09, ],
-            [ -2.2423672161947766e-10, -8.9709159667337618e-16, 2.2422474012398869e-10, ],
+            [
+                1.0570152037228958e-07,
+                4.2280612558303261e-13,
+                9.9999989429805680e-01,
+            ],
+            [
+                -3.3082196412696304e-08,
+                -1.3232881828710420e-13,
+                3.3082328676061534e-08,
+            ],
+            [
+                1.8675273859330434e-08,
+                7.4701128706323864e-14,
+                -1.8675348801050254e-08,
+            ],
+            [
+                -1.9956501813542136e-08,
+                -7.9826057803058290e-14,
+                1.9956580862443821e-08,
+            ],
+            [
+                1.2851942479612096e-09,
+                5.1407743965993651e-15,
+                -1.2851948368212051e-09,
+            ],
+            [
+                -2.2423672161947766e-10,
+                -8.9709159667337618e-16,
+                2.2422474012398869e-10,
+            ],
         ];
         let ida_yypredict = array![
             9.1294597818923714e-08,
