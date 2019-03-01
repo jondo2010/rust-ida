@@ -100,7 +100,7 @@ enum IdaError {
     #[fail(display = "Illegal value for k.")]
     BadK {},
     //MSG_NULL_DKY       "dky = NULL illegal."
-    ///MSG_BAD_T          
+    ///MSG_BAD_T
     #[fail(
         display = "Illegal value for t: t = {} is not between tcur - hu = {} and tcur = {}.",
         t, tdiff, tcurr
@@ -625,45 +625,49 @@ impl<
     /// IDAPredict
     /// This routine predicts the new values for vectors yy and yp.
     pub fn predict(&mut self) -> () {
-        for j in 0..self.ida_kk {
-            self.ida_cvals[j] = F::Scalar::one();
+        self.ida_cvals.assign(&Array::ones(self.ida_cvals.shape()));
+
+        // yypredict = cvals * phi[0..kk+1]
+        //(void) N_VLinearCombination(IDA_mem->ida_kk+1, IDA_mem->ida_cvals, IDA_mem->ida_phi, IDA_mem->ida_yypredict);
+        {
+            let phi = self
+                .ida_phi
+                .slice_axis(Axis(0), Slice::from(0..self.ida_kk + 1));
+
+            // We manually broadcast here so we can turn it into a column vec
+            let cvals = self.ida_cvals.slice(s![0..self.ida_kk + 1]);
+            let cvals = cvals
+                .broadcast((phi.len_of(Axis(1)), phi.len_of(Axis(0))))
+                .unwrap()
+                .reversed_axes();
+
+            let mut yypredict = self
+                .ida_yypredict
+                .slice_axis_mut(Axis(0), Slice::from(0..));
+
+            yypredict.assign(&(&phi * &cvals).sum_axis(Axis(0)));
         }
 
-        let cv = self.ida_cvals.slice(s![self.ida_kk + 1..]);
-        let ph = self.ida_phi.index_axis(Axis(0), self.ida_kk + 1);
-        //let x = self.ida_phi.slice(s![self.ida_kk + 1.., ..]);
-
-        // ida_delta = ida_phi[ida_kk] + self.ida_ee;
-        //self.ida_delta .assign(&self.ida_phi.index_axis(Axis(0), self.ida_kk));
-        let v = self.ida_phi.index_axis(Axis(0), self.ida_kk);
-        //Zip::from(&mut self.ida_delta).and(&v).and(&self.ida_ee).apply(|delta, phi, ee| {});
-        self.ida_delta.assign(&v);
-        self.ida_delta += &self.ida_ee;
-
-        //self.ida_delta = &v + &self.ida_ee;
-
-        // ida_yypredict = sum 0..kk (cvals[k] * phi[k])
-        /*
-        for i = 0..n
-            for j = 0..nv
-
-        */
-
-        let c = self.ida_cvals.slice(s![self.ida_kk + 1..]);
-        let x = self
-            .ida_phi
-            .slice_axis(Axis(0), Slice::from(self.ida_kk + 1..));
-        //let mut z = self.ida_yypredict.slice_axis_mut(Axis(0), Slice::from(self.ida_kk+1..));
-
-        ndarray::Zip::from(&mut self.ida_yypredict)
-            .and(x.lanes(Axis(0)))
-            .apply(|z, row| {
-                *z = (&row * &c).sum();
-            });
-
-        //N_VLinearCombination(&c, &x, &mut z);
-        //(void) N_VLinearCombination(IDA_mem->ida_kk+1, IDA_mem->ida_cvals, IDA_mem->ida_phi, IDA_mem->ida_yypredict);
+        // yppredict = gamma[1..kk+1] * phi[1..kk+1]
         //(void) N_VLinearCombination(IDA_mem->ida_kk, IDA_mem->ida_gamma+1, IDA_mem->ida_phi+1, IDA_mem->ida_yppredict);
+        {
+            let phi = self
+                .ida_phi
+                .slice_axis(Axis(0), Slice::from(1..self.ida_kk + 1));
+
+            // We manually broadcast here so we can turn it into a column vec
+            let gamma = self.ida_gamma.slice(s![1..self.ida_kk + 1]);
+            let gamma = gamma
+                .broadcast((phi.len_of(Axis(1)), phi.len_of(Axis(0))))
+                .unwrap()
+                .reversed_axes();
+
+            let mut yppredict = self
+                .ida_yppredict
+                .slice_axis_mut(Axis(0), Slice::from(0..));
+
+            yppredict.assign(&(&phi * &gamma).sum_axis(Axis(0)));
+        }
     }
 
     /// IDATestError
@@ -1256,6 +1260,75 @@ mod tests {
         assert_nearly_eq!(err_k_new, err_k);
         assert_nearly_eq!(err_km1_new, err_km1);
         assert_eq!(nflag_new, nflag);
+    }
+
+    #[test]
+    fn test_predict1() {
+        let ida_phi = array![
+            [ 1.0570152037228958e-07, 4.2280612558303261e-13, 9.9999989429805680e-01, ],
+            [ -3.3082196412696304e-08, -1.3232881828710420e-13, 3.3082328676061534e-08, ],
+            [ 1.8675273859330434e-08, 7.4701128706323864e-14, -1.8675348801050254e-08, ],
+            [ -1.9956501813542136e-08, -7.9826057803058290e-14, 1.9956580862443821e-08, ],
+            [ 1.2851942479612096e-09, 5.1407743965993651e-15, -1.2851948368212051e-09, ],
+            [ -2.2423672161947766e-10, -8.9709159667337618e-16, 2.2422474012398869e-10, ],
+        ];
+        let ida_gamma = array![
+            0.0000000000000000e+00,
+            2.6496925453439462e-10,
+            3.8862188959925182e-10,
+            8.0997073172076138e-10,
+            3.0437121109953610e-09,
+            3.1823098347208659e-07,
+        ];
+        let ida_yypredict = array![
+            1.2565802218583172e-07,
+            5.0263218338609083e-13,
+            9.9999987434147597e-01,
+        ];
+        let ida_yppredict = array![
+            1.5848602690328082e-18,
+            6.3394566628399208e-24,
+            -1.5848663595269871e-18,
+        ];
+        let kk = 2;
+
+        let f = Lorenz63::default();
+        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+
+        // Set preconditions:
+        ida.ida_kk = kk;
+        ida.ida_phi.assign(&ida_phi);
+        ida.ida_gamma.assign(&ida_gamma);
+        ida.ida_yypredict.assign(&ida_yypredict);
+        ida.ida_yppredict.assign(&ida_yppredict);
+
+        // Call the function under test
+        ida.predict();
+
+        //--- IDAPredict After
+        let ida_phi = array![
+            [ 1.0570152037228958e-07, 4.2280612558303261e-13, 9.9999989429805680e-01, ],
+            [ -3.3082196412696304e-08, -1.3232881828710420e-13, 3.3082328676061534e-08, ],
+            [ 1.8675273859330434e-08, 7.4701128706323864e-14, -1.8675348801050254e-08, ],
+            [ -1.9956501813542136e-08, -7.9826057803058290e-14, 1.9956580862443821e-08, ],
+            [ 1.2851942479612096e-09, 5.1407743965993651e-15, -1.2851948368212051e-09, ],
+            [ -2.2423672161947766e-10, -8.9709159667337618e-16, 2.2422474012398869e-10, ],
+        ];
+        let ida_yypredict = array![
+            9.1294597818923714e-08,
+            3.6517843600225230e-13,
+            9.9999990870503663e-01,
+        ];
+        let ida_yppredict = array![
+            -1.5081447058360581e-18,
+            -6.0325745419028739e-24,
+            1.5081506275685795e-18,
+        ];
+
+        assert_eq!(ida.ida_kk, kk);
+        assert_nearly_eq!(ida.ida_phi, ida_phi, 1e-9);
+        assert_nearly_eq!(ida.ida_yypredict, ida_yypredict, 1e-9);
+        assert_nearly_eq!(ida.ida_yppredict, ida_yppredict, 1e-9);
     }
 
     #[test]
