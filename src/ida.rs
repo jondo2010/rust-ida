@@ -498,7 +498,7 @@ impl<
             //if nflag != IDA_SUCCESS {
             // restore and decide what to do
             self.restore(saved_t);
-            //kflag = handle_n_flag(IDA_mem, nflag, err_k, err_km1, &(self.ida_ncfn), &ncf, &(self.ida_netf), &nef);
+            //kflag = self.handle_n_flag(nflag, err_k, err_km1, &(self.ida_ncfn), &ncf, &(self.ida_netf), &nef);
 
             // exit on nonrecoverable failure
             //if kflag != PREDICT_AGAIN {
@@ -531,6 +531,7 @@ impl<
             (2) the value of ee is only valid if IDAHandleNFlag()
                 returns either PREDICT_AGAIN or IDA_SUCCESS
         */
+
         //N_VScale(ck, IDA_mem->ida_ee, IDA_mem->ida_ee);
         self.ida_ee *= ck;
 
@@ -546,7 +547,7 @@ impl<
     /// Also, complete_step() prohibits an order increase until ns = k + 2.
     ///
     /// Returns the 'variable stepsize error coefficient ck'
-    pub fn set_coeffs(&mut self) -> F::Scalar {
+    fn set_coeffs(&mut self) -> F::Scalar {
         // Set coefficients for the current stepsize h
         if (self.ida_hh != self.ida_hused) || (self.ida_kk != self.ida_kused) {
             self.ida_ns = 0;
@@ -607,13 +608,13 @@ impl<
     /// IDANls
     /// This routine attempts to solve the nonlinear system using the linear solver specified.
     /// NOTE: this routine uses N_Vector ee as the scratch vector tempv3 passed to lsetup.
-    pub fn nonlinear_solve(&mut self) -> Result<(), failure::Error> {
+    fn nonlinear_solve(&mut self) -> Result<(), failure::Error> {
         unimplemented!();
     }
 
     /// IDAPredict
     /// This routine predicts the new values for vectors yy and yp.
-    pub fn predict(&mut self) -> () {
+    fn predict(&mut self) -> () {
         self.ida_cvals.assign(&Array::ones(self.ida_cvals.shape()));
 
         // yypredict = cvals * phi[0..kk+1]
@@ -661,7 +662,7 @@ impl<
     /// decrease, and performs the local error test.
     ///
     /// Returns a tuple of (err_k, err_km1, nflag)
-    pub fn test_error(
+    fn test_error(
         &mut self,
         ck: F::Scalar,
     ) -> (
@@ -724,7 +725,7 @@ impl<
     /// It changes back `phi-star` to `phi` (changed in `set_coeffs()`)
     ///
     ///
-    pub fn restore(&mut self, saved_t: F::Scalar) -> () {
+    fn restore(&mut self, saved_t: F::Scalar) -> () {
         self.ida_tn = saved_t;
 
         // Restore psi[0 .. kk] = psi[1 .. kk + 1] - hh
@@ -794,7 +795,7 @@ impl<
     ///   IDA_RES_FAIL
     ///   IDA_LSETUP_FAIL
     ///   IDA_LSOLVE_FAIL
-    pub fn handle_n_flag(
+    fn handle_n_flag(
         &mut self,
         nflag: u32,
         err_k: F::Scalar,
@@ -809,7 +810,7 @@ impl<
     /// IDAReset
     /// This routine is called only if we need to predict again at the very first step. In such a case,
     /// reset phi[1] and psi[0].
-    pub fn reset(&mut self) -> () {
+    fn reset(&mut self) -> () {
         self.ida_psi[0] = self.ida_hh;
         //N_VScale(IDA_mem->ida_rr, IDA_mem->ida_phi[1], IDA_mem->ida_phi[1]);
         self.ida_phi *= self.ida_rr;
@@ -819,7 +820,7 @@ impl<
     /// This routine completes a successful step.  It increments nst, saves the stepsize and order
     /// used, makes the final selection of stepsize and order for the next step, and updates the phi
     /// array.
-    pub fn complete_step(&mut self, err_k: F::Scalar, err_km1: F::Scalar) -> () {
+    fn complete_step(&mut self, err_k: F::Scalar, err_km1: F::Scalar) -> () {
         self.ida_nst += 1;
         let kdiff = self.ida_kk - self.ida_kused;
         self.ida_kused = self.ida_kk;
