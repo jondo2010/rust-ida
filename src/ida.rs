@@ -1,35 +1,9 @@
-use ndarray::*;
-//use ndarray_linalg::*;
-
 use failure::Fail;
+use log::error;
+use ndarray::*;
 
+use crate::constants::*;
 use crate::traits::*;
-
-/// hmax_inv default value
-const HMAX_INV_DEFAULT: f64 = 0.0;
-/// maxord default value
-const MAXORD_DEFAULT: usize = 5;
-/// max. number of N_Vectors in phi
-const MXORDP1: usize = 6;
-/// mxstep default value
-const MXSTEP_DEFAULT: usize = 500;
-
-/// max number of convergence failures allowed
-const MXNCF: u32 = 10;
-/// max number of error test failures allowed
-const MXNEF: u32 = 10;
-/// max. number of h tries in IC calc.
-const MAXNH: u32 = 5;
-/// max. number of J tries in IC calc.
-const MAXNJ: u32 = 4;
-/// max. Newton iterations in IC calc.
-const MAXNI: u32 = 10;
-/// Newton convergence test constant
-const EPCON: f64 = 0.33;
-/// max backtracks per Newton step in IDACalcIC
-const MAXBACKS: u32 = 100;
-/// constant for updating Jacobian/preconditioner
-const XRATE: f64 = 0.25;
 
 #[derive(Debug, Fail)]
 enum IdaError {
@@ -37,7 +11,8 @@ enum IdaError {
     // IDA_ERR_FAIL
     /// IDA_REP_RES_ERR:
     #[fail(
-        display = "The user's residual function repeatedly returned a recoverable error flag, but the solver was unable to recover"
+        display = "The user's residual function repeatedly returned a recoverable error flag, \
+                   but the solver was unable to recover"
     )]
     RepeatedResidualError {},
 
@@ -51,7 +26,8 @@ enum IdaError {
 
     /// IDA_BAD_EWT
     #[fail(
-        display = "Some component of the error weight vector is zero (illegal), either for the input value of y0 or a corrected value"
+        display = "Some component of the error weight vector is zero (illegal), either for the \
+                   input value of y0 or a corrected value"
     )]
     BadErrorWeightVector {},
 
@@ -61,7 +37,8 @@ enum IdaError {
 
     /// IDA_FIRST_RES_FAIL
     #[fail(
-        display = "The user's residual routine returned a recoverable error flag on the first call, but IDACalcIC was unable to recover"
+        display = "The user's residual routine returned a recoverable error flag on the first \
+                   call, but IDACalcIC was unable to recover"
     )]
     FirstResidualFail {},
 
@@ -75,7 +52,8 @@ enum IdaError {
 
     /// IDA_NO_RECOVERY
     #[fail(
-        display = "The user's residual routine, or the linear solver's setup or solve routine had a recoverable error, but IDACalcIC was unable to recover"
+        display = "The user's residual routine, or the linear solver's setup or solve routine \
+                   had a recoverable error, but IDACalcIC was unable to recover"
     )]
     NoRecovery {},
 
@@ -88,7 +66,8 @@ enum IdaError {
 
     /// IDA_LINESEARCH_FAIL
     #[fail(
-        display = "The Linesearch algorithm failed to find a  solution with a step larger than steptol   in weighted RMS norm"
+        display = "The Linesearch algorithm failed to find a solution with a step larger than \
+                   steptol in weighted RMS norm"
     )]
     LinesearchFail {},
 
@@ -99,6 +78,7 @@ enum IdaError {
     ///MSG_BAD_K
     #[fail(display = "Illegal value for k.")]
     BadK {},
+
     //MSG_NULL_DKY       "dky = NULL illegal."
     ///MSG_BAD_T
     #[fail(
@@ -106,11 +86,35 @@ enum IdaError {
         t, tdiff, tcurr
     )]
     BadTimeValue { t: f64, tdiff: f64, tcurr: f64 },
+
+    #[fail(
+        display = "At t = {}, the rootfinding routine failed in an unrecoverable manner.",
+        t
+    )]
+    RootFunctionFail { t: f64 },
+
+    ///MSG_BAD_TSTOP
+    #[fail(
+        display = "The value tstop = {} is behind current t = {} in the direction of integration.",
+        tstop, t
+    )]
+    BadStopTime { tstop: f64, t: f64 },
+
+    ///MSG_TOO_MUCH_ACC
+    #[fail(display = "At t = {} too much accuracy requested.", t)]
+    TooMuchAccuracy { t: f64 },
 }
 
 pub enum IdaTask {
     Normal,
     OneStep,
+}
+
+pub enum IdaSolveStatus {
+    ContinueSteps,
+    Success,
+    TStop,
+    Root,
 }
 
 /// Structure containing the parameters for the numerical integration.
@@ -119,6 +123,8 @@ pub struct Ida<F: IdaModel> {
     f: F,
     //dt: <F::Scalar as AssociatedReal>::Real,
     //x: Array<F::Scalar, Ix1>,
+    ida_itol: ToleranceType,
+
     /// constraints vector present: do constraints calc
     ida_constraintsSet: bool,
     /// SUNTRUE means suppress algebraic vars in local error tests
@@ -142,9 +148,9 @@ pub struct Ida<F: IdaModel> {
     /// error weight vector
     ida_ewt: Array<F::Scalar, Ix1>,
     /// work space for y vector (= user's yret)
-    //ida_yy: Array1<<F::Scalar as AssociatedReal>::Real>,
+    //ida_yy: Array<F::Scalar, Ix1>,
     /// work space for y' vector (= user's ypret)
-    //ida_yp: Array1<<F::Scalar as AssociatedReal>::Real>,
+    //ida_yp: Array<F::Scalar, Ix1>,
     /// predicted y vector
     ida_yypredict: Array<F::Scalar, Ix1>,
     /// predicted y' vector
@@ -209,9 +215,12 @@ pub struct Ida<F: IdaModel> {
     //realtype ida_cjratio;  /* ratio of cj values: cj/cjold                      */
     //realtype ida_ss;       /* scalar used in Newton iteration convergence test  */
     //realtype ida_oldnrm;   /* norm of previous nonlinear solver update          */
-    //realtype ida_epsNewt;  /* test constant in Newton convergence test          */
-    //realtype ida_epcon;    /* coeficient of the Newton covergence test          */
-    //realtype ida_toldel;   /* tolerance in direct test on Newton corrections    */
+    /// test constant in Newton convergence test
+    ida_epsNewt: F::Scalar,
+    /// coeficient of the Newton covergence test
+    ida_epcon: F::Scalar,
+    /// tolerance in direct test on Newton corrections
+    ida_toldel: F::Scalar,
 
     // Limits
     /// max numer of convergence failures
@@ -244,6 +253,35 @@ pub struct Ida<F: IdaModel> {
     ida_cvals: Array1<F::Scalar>,
     ida_dvals: Array1<F::Scalar>,
 
+    /// tolerance scale factor (saved value)
+    ida_tolsf: F::Scalar,
+
+    //IDARootFn ida_gfun;       /* Function g for roots sought                     */
+    /// number of components of g
+    ida_nrtfn: usize,
+    //int *ida_iroots;          /* array for root information                      */
+    //int *ida_rootdir;         /* array specifying direction of zero-crossing     */
+    /// nearest endpoint of interval in root search
+    //ida_tlo: F::Scalar,
+    /// farthest endpoint of interval in root search
+    //ida_thi: F::Scalar,
+    /// t return value from rootfinder routine
+    //ida_trout: F::Scalar,
+    /// saved array of g values at t = tlo
+    //ida_glo: Array1<F::Scalar>,
+    //realtype *ida_ghi;        /* saved array of g values at t = thi              */
+    //realtype *ida_grout;      /* array of g values at t = trout                  */
+    //realtype ida_toutc;       /* copy of tout (if NORMAL mode)                   */
+    /// tolerance on root location
+    //ida_ttol: F::Scalar,
+    //int ida_taskc;            /* copy of parameter itask                         */
+    //int ida_irfnd;            /* flag showing whether last step had a root       */
+    /// counter for g evaluations
+    ida_nge: u64,
+    //booleantype *ida_gactive; /* array with active/inactive event functions      */
+    //int ida_mxgnull;          /* number of warning messages about possible g==0  */
+
+    // Arrays for Fused Vector Operations
     ida_Xvecs: Array<F::Scalar, Ix2>,
     ida_Zvecs: Array<F::Scalar, Ix2>,
 }
@@ -287,7 +325,7 @@ impl<
             // Set default values for integrator optional inputs
             //ida_res:         = NULL,
             //ida_user_data:   = NULL,
-            //ida_itol        = IDA_NN;
+            ida_itol: ToleranceType::TolNN,
             //ida_user_efun   = SUNFALSE;
             //ida_efun        = NULL;
             //ida_edata       = NULL;
@@ -298,10 +336,12 @@ impl<
             ida_mxstep: MXSTEP_DEFAULT as u64,
             ida_hmax_inv: F::Scalar::from(HMAX_INV_DEFAULT).unwrap(),
             ida_hin: F::Scalar::zero(),
-            //ida_epcon       = EPCON;
+            ida_epsNewt: F::Scalar::zero(),
+            ida_epcon: F::Scalar::from(EPCON).unwrap(),
+            ida_toldel: F::Scalar::zero(),
             ida_maxnef: MXNEF as u64,
             ida_maxncf: MXNCF as u64,
-            //ida_suppressalg = SUNFALSE;
+            ida_suppressalg: false,
             //ida_id          = NULL;
             //ida_constraints: Array::zeros(yy0.raw_dim()),
             ida_constraintsSet: false,
@@ -311,8 +351,8 @@ impl<
             //ida_maxord_alloc = MAXORD_DEFAULT;
 
             // Set default values for IC optional inputs
-            //ida_epiccon = PT01 * EPCON;
-            //ida_maxnh   = MAXNH;
+            //ida_epiccon : F::Scalar::from(0.01 * EPCON).unwrap(),
+            //ida_maxnh   : MAXNH,
             //ida_maxnj   = MAXNJ;
             //ida_maxnit  = MAXNI;
             //ida_maxbacks  = MAXBACKS;
@@ -346,28 +386,27 @@ impl<
             ida_nsetups: 0,
             ida_kused: 0,
             ida_hused: F::Scalar::zero(),
-            //ida_tolsf: <F::Scalar as AssociatedReal>::Real::from_f64(1.0),
-
-            //ida_nge = 0;
+            ida_tolsf: F::Scalar::one(),
+            ida_nge: 0,
 
             //ida_irfnd = 0;
 
             // Initialize root-finding variables
 
+            //ida_glo: Array::zeros(),
             //ida_glo     = NULL;
             //ida_ghi     = NULL;
             //ida_grout   = NULL;
             //ida_iroots  = NULL;
             //ida_rootdir = NULL;
             //ida_gfun    = NULL;
-            //ida_nrtfn   = 0;
+            ida_nrtfn: 0,
             //ida_gactive  = NULL;
             //ida_mxgnull  = 1;
 
             // Not from ida.c...
             ida_ewt: Array::zeros(yy0.raw_dim()),
             ida_ee: Array::zeros(yy0.raw_dim()),
-            ida_suppressalg: false,
 
             ida_tstop: F::Scalar::zero(),
 
@@ -401,29 +440,42 @@ impl<
     // Main solver function
     //-----------------------------------------------------------------
 
-    /// IDASolve
-    ///
     /// This routine is the main driver of the IDA package.
     ///
-    /// It integrates over an independent variable interval defined by the user, by calling IDAStep
+    /// This is the central step in the solution process, the call to perform the integration of
+    /// the DAE. One of the input arguments (itask) specifies one of two modes as to where ida is
+    /// to return a solution. But these modes are modified if the user has set a stop time (with
+    /// `set_stop_time()`) or requested rootfinding.
+    ///
+    /// It integrates over an independent variable interval defined by the user, by calling `step()`
     /// to take internal independent variable steps.
     ///
-    /// The first time that IDASolve is called for a successfully initialized problem, it computes
+    /// The first time that `solve()` is called for a successfully initialized problem, it computes
     /// a tentative initial step size.
     ///
-    /// `solve()` supports two modes, specified by task:
-    /// In the `Normal` mode, the solver steps until it passes `tout` and then interpolates to obtain
+    /// `solve()` supports two modes, specified by `itask`:
+    /// * In the `Normal` mode, the solver steps until it passes `tout` and then interpolates to obtain
     /// `y(tout)` and `yp(tout)`.
-    /// In the `OneStep` mode, it takes one internal step and returns.
+    /// * In the `OneStep` mode, it takes one internal step and returns.
     ///
-    /// IDASolve returns integer values corresponding to success and failure as below:
+    /// # Arguments
     ///
-    /// successful returns:
+    /// * `tout` The next time at which a computed solution is desired.
+    /// * `tret` The time reached by the solver (output).
+    /// * `yret` The computed solution vector y (output).
+    /// * `ypret` The computed solution vector ˙y (output).
+    /// * `itask` A flag indicating the job of the solver for the next user step. The IDA NORMAL task is to have the solver take internal steps until it has reached or just passed the user specified tout parameter. The solver then interpolates in order to return approximate values of y(tout) and ˙y(tout). The IDA ONE STEP option tells the solver to just take one internal step and return the solution at the point reached by that step
     ///
-    /// IDA_SUCCESS
-    /// IDA_TSTOP_RETURN
+    /// # Returns
     ///
-    /// failed returns:
+    /// * `IdaSolveStatus::Success` - general success.
+    /// * `IdaSolveStatus::TStop` - `solve()` succeeded by reaching the stop point specified through
+    /// the optional input function `set_stop_time()`.
+    /// * `IdaSolveStatus::Root` -  `solve()` succeeded and found one or more roots. In this case,
+    /// tret is the location of the root. If nrtfn > 1, call `get_root_info()` to see which gi were
+    /// found to have a root.
+    ///
+    /// # Errors
     ///
     /// IDA_ILL_INPUT
     /// IDA_TOO_MUCH_WORK
@@ -436,14 +488,17 @@ impl<
     /// IDA_ERR_FAIL
     /// IDA_REP_RES_ERR
     /// IDA_RES_FAIL
-    fn solve(
+    fn solve<'a>(
         &mut self,
         tout: F::Scalar,
         tret: &mut F::Scalar,
-        yret: &Array<F::Scalar, Ix1>,
-        ypret: &Array<F::Scalar, Ix1>,
+        yret: &'a mut Array<F::Scalar, Ix1>,
+        ypret: &'a mut Array<F::Scalar, Ix1>,
         itask: IdaTask,
-    ) -> Result<(), IdaError> {
+    ) -> Result<IdaSolveStatus, failure::Error>
+    where
+        &'a mut Array<F::Scalar, Ix1>: NdProducer,
+    {
         if self.ida_nst == 0 {
             // This is the first call
 
@@ -461,7 +516,7 @@ impl<
             let tdist = (tout - self.ida_tn).abs();
             if tdist == F::Scalar::zero() {
                 Err(IdaError::IllegalInput {
-                    msg: "tout too close to t0 to start integration.".to_owned(),
+                    msg: format!("tout too close to t0 to start integration."),
                 })?
             }
             let troundoff = F::Scalar::from(2.0).unwrap()
@@ -469,7 +524,7 @@ impl<
                 * (self.ida_tn.abs() + tout.abs());
             if tdist < troundoff {
                 Err(IdaError::IllegalInput {
-                    msg: "tout too close to t0 to start integration.".to_owned(),
+                    msg: format!("tout too close to t0 to start integration."),
                 })?
             }
 
@@ -478,7 +533,7 @@ impl<
                 && ((tout - self.ida_tn) * self.ida_hh < F::Scalar::zero())
             {
                 Err(IdaError::IllegalInput {
-                    msg: "Initial step is not towards tout.".to_owned(),
+                    msg: format!("Initial step is not towards tout."),
                 })?
             }
 
@@ -504,9 +559,14 @@ impl<
 
             if self.ida_tstopset {
                 if (self.ida_tstop - self.ida_tn) * self.ida_hh <= F::Scalar::zero() {
-                    Err(IdaError::IllegalInput{
-              msg: format!("The value tstop = {} is behind current t = {} in the direction of integration.", self.ida_tstop, self.ida_tn)
-          })?
+                    Err(IdaError::IllegalInput {
+                        msg: format!(
+                            "The value tstop = {:?} \
+                             is behind current t = {:?} \
+                             in the direction of integration.",
+                            self.ida_tstop, self.ida_tn
+                        ),
+                    })?
                 }
                 if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh > F::Scalar::zero() {
                     self.ida_hh = (self.ida_tstop - self.ida_tn)
@@ -516,10 +576,11 @@ impl<
 
             self.ida_h0u = self.ida_hh;
             self.ida_kk = 0;
-            self.ida_kused = 0; /* set in case of an error return before a step */
+            self.ida_kused = 0; // set in case of an error return before a step
 
             /* Check for exact zeros of the root functions at or near t0. */
             //if self.ida_nrtfn > 0 {
+            self.r_check1()?;
             //  ier = IDARcheck1(IDA_mem);
             //  if (ier == IDA_RTFUNC_FAIL) {
             //    IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck1", MSG_RTFUNC_FAILED, self.ida_tn);
@@ -528,17 +589,17 @@ impl<
             //}
 
             //N_VScale(self.ida_hh, self.ida_phi[1], self.ida_phi[1]);  /* set phi[1] = hh*y' */
-            self.ida_phi.index_axis_mut(Axis(0), 1) *= self.ida_hh;
+            let phi = self.ida_phi.index_axis_mut(Axis(0), 1);
+            phi *= self.ida_hh;
 
             // Set the convergence test constants epsNewt and toldel
             self.ida_epsNewt = self.ida_epcon;
-            self.ida_toldel = F::Scalar::from(0.001) * self.ida_epsNewt;
+            self.ida_toldel = F::Scalar::from(0.001).unwrap() * self.ida_epsNewt;
         } // end of first-call block.
 
         // Call lperf function and set nstloc for later performance testing.
-
         //if self.ida_lperf != NULL {self.ida_lperf(IDA_mem, 0);}
-        //let mut nstloc = 0;
+        let mut nstloc = 0;
 
         // If not the first call, perform all stopping tests.
 
@@ -547,55 +608,54 @@ impl<
             // any.  If itask = IDA_ONE_STEP and y(tn) was not returned because of an intervening
             // root, return y(tn) now.
 
-            /*
             if self.ida_nrtfn > 0 {
+                /*
 
-              irfndp = self.ida_irfnd;
+                  irfndp = self.ida_irfnd;
 
-              ier = IDARcheck2(IDA_mem);
+                  ier = IDARcheck2(IDA_mem);
 
-              if (ier == CLOSERT) {
-                IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDARcheck2", MSG_CLOSE_ROOTS, self.ida_tlo);
-                return(IDA_ILL_INPUT);
-              } else if (ier == IDA_RTFUNC_FAIL) {
-                IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck2", MSG_RTFUNC_FAILED, self.ida_tlo);
-                return(IDA_RTFUNC_FAIL);
-              } else if (ier == RTFOUND) {
-                self.ida_tretlast = *tret = self.ida_tlo;
-                return(IDA_ROOT_RETURN);
-              }
-
-              /* If tn is distinct from tretlast (within roundoff),
-                 check remaining interval for roots */
-              troundoff = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
-              if ( SUNRabs(self.ida_tn - self.ida_tretlast) > troundoff ) {
-                ier = IDARcheck3(IDA_mem);
-                if (ier == IDA_SUCCESS) {     /* no root found */
-                  self.ida_irfnd = 0;
-                  if ((irfndp == 1) && (itask == IDA_ONE_STEP)) {
-                    self.ida_tretlast = *tret = self.ida_tn;
-                    ier = IDAGetSolution(IDA_mem, self.ida_tn, yret, ypret);
-                    return(IDA_SUCCESS);
+                  if (ier == CLOSERT) {
+                    IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDARcheck2", MSG_CLOSE_ROOTS, self.ida_tlo);
+                    return(IDA_ILL_INPUT);
+                  } else if (ier == IDA_RTFUNC_FAIL) {
+                    IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck2", MSG_RTFUNC_FAILED, self.ida_tlo);
+                    return(IDA_RTFUNC_FAIL);
+                  } else if (ier == RTFOUND) {
+                    self.ida_tretlast = *tret = self.ida_tlo;
+                    return(IDA_ROOT_RETURN);
                   }
-                } else if (ier == RTFOUND) {  /* a new root was found */
-                  self.ida_irfnd = 1;
-                  self.ida_tretlast = *tret = self.ida_tlo;
-                  return(IDA_ROOT_RETURN);
-                } else if (ier == IDA_RTFUNC_FAIL) {  /* g failed */
-                  IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
-                  return(IDA_RTFUNC_FAIL);
-                }
-              }
 
+                  /* If tn is distinct from tretlast (within roundoff),
+                     check remaining interval for roots */
+                  troundoff = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
+                  if ( SUNRabs(self.ida_tn - self.ida_tretlast) > troundoff ) {
+                    ier = IDARcheck3(IDA_mem);
+                    if (ier == IDA_SUCCESS) {     /* no root found */
+                      self.ida_irfnd = 0;
+                      if ((irfndp == 1) && (itask == IDA_ONE_STEP)) {
+                        self.ida_tretlast = *tret = self.ida_tn;
+                        ier = IDAGetSolution(IDA_mem, self.ida_tn, yret, ypret);
+                        return(IDA_SUCCESS);
+                      }
+                    } else if (ier == RTFOUND) {  /* a new root was found */
+                      self.ida_irfnd = 1;
+                      self.ida_tretlast = *tret = self.ida_tlo;
+                      return(IDA_ROOT_RETURN);
+                    } else if (ier == IDA_RTFUNC_FAIL) {  /* g failed */
+                      IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
+                      return(IDA_RTFUNC_FAIL);
+                    }
+                  }
+
+                */
             } // end of root stop check
-            */
 
             // Now test for all other stop conditions.
 
-            let istate = IDAStopTest1(tout, tret, yret, ypret, itask);
-            if istate != CONTINUE_STEPS {
-                return (istate);
-            }
+            let istate = self.stop_test1(tout, tret, yret, ypret, itask)?;
+            //let istate = IDAStopTest1(tout, tret, yret, ypret, itask);
+            //if istate != CONTINUE_STEPS { return (istate); }
         }
 
         // Looping point for internal steps.
@@ -604,10 +664,16 @@ impl<
             // Check for too many steps taken.
 
             if (self.ida_mxstep > 0) && (nstloc >= self.ida_mxstep) {
-                //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_MAX_STEPS, self.ida_tn);
+                *tret = self.ida_tn;
+                self.ida_tretlast = self.ida_tn;
+                // Here yy=yret and yp=ypret already have the current solution.
+                Err(IdaError::IllegalInput {
+                    msg: format!(
+                        "At t = {:?}, mxstep steps taken before reaching tout.",
+                        self.ida_tn
+                    ),
+                })?
                 //istate = IDA_TOO_MUCH_WORK;
-                //*tret = self.ida_tretlast = self.ida_tn;
-                break; /* Here yy=yret and yp=ypret already have the current solution. */
             }
 
             // Call lperf to generate warnings of poor performance.
@@ -622,59 +688,81 @@ impl<
                 let ier = 0;
 
                 if ier != 0 {
-                    if self.ida_itol == IDA_WF {
-                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_FAIL, self.ida_tn);
-                        Err(IdaError {
-                            msg: format!(
-                                "At t = {:?} the user-provide EwtSet function failed.",
-                                self.ida_tn
-                            ),
-                        })?
-                    } else {
-                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_BAD, self.ida_tn);
-                        Err(IdaError {
-                            msg: format!(
-                                "At t = {:?} some ewt component has become <= 0.0.",
-                                self.ida_tn
-                            ),
-                        })?
-                    }
+                    self.get_solution(self.ida_tn, yret, ypret);
+                    *tret = self.ida_tn;
+                    self.ida_tretlast = self.ida_tn;
 
+                    match self.ida_itol {
+                        ToleranceType::TolWF => {
+                            //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_FAIL, self.ida_tn);
+                            Err(IdaError::IllegalInput {
+                                msg: format!(
+                                    "At t = {:?} the user-provide EwtSet function failed.",
+                                    self.ida_tn
+                                ),
+                            })?
+                        }
+                        _ => {
+                            //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_BAD, self.ida_tn);
+                            Err(IdaError::IllegalInput {
+                                msg: format!(
+                                    "At t = {:?} some ewt component has become <= 0.0.",
+                                    self.ida_tn
+                                ),
+                            })?
+                        }
+                    }
                     //istate = IDA_ILL_INPUT;
-                    self.get_solution(self.ida_tn, &mut self.yret, &mut self.ypret);
-                    //ier = IDAGetSolution(IDA_mem, self.ida_tn, yret, ypret);
-                    //*tret = self.ida_tretlast = self.ida_tn;
-                    break;
+                    //break;
                 }
             }
 
             // Check for too much accuracy requested.
 
-            let nrm = self.wrms_norm(self.ida_phi[0], &self.ida_ewt, self.ida_suppressalg);
+            let nrm = self.wrms_norm(
+                &self.ida_phi.index_axis(Axis(0), 0),
+                &self.ida_ewt,
+                self.ida_suppressalg,
+            );
+
             self.ida_tolsf = F::Scalar::epsilon() * nrm;
             if self.ida_tolsf > F::Scalar::one() {
                 self.ida_tolsf *= F::Scalar::from(10.0).unwrap();
+
+                *tret = self.ida_tn;
+                self.ida_tretlast = self.ida_tn;
+                if self.ida_nst > 0 {
+                    let ier = self.get_solution(self.ida_tn, yret, ypret);
+                }
                 //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_TOO_MUCH_ACC, self.ida_tn);
                 //istate = IDA_TOO_MUCH_ACC;
-                //*tret = self.ida_tretlast = self.ida_tn;
-                if self.ida_nst > 0 {
-                    let ier = self.get_solution(self.ida_tn, &mut self.yret, &mut self.ypret);
-                }
-                break;
+                //break;
+                Err(IdaError::TooMuchAccuracy {
+                    t: self.ida_tn.to_f64().unwrap(),
+                })?
             }
 
-            /* Call IDAStep to take a step. */
+            // Call IDAStep to take a step.
 
             let sflag = self.step();
 
-            /* Process all failed-step cases, and exit loop. */
+            // Process all failed-step cases, and exit loop.
 
-            if sflag.is_err() {
-                //istate = IDAHandleFailure(IDA_mem, sflag);
-                //*tret = self.ida_tretlast = self.ida_tn;
-                let ier = self.get_solution(self.ida_tn, &mut self.yret, &mut self.ypret);
-                break;
-            }
+            sflag.map_err(|err| {
+                let ier = self.get_solution(self.ida_tn, yret, ypret);
+                match ier {
+                    Ok(_) => {
+                        *tret = self.ida_tn;
+                        self.ida_tretlast = self.ida_tn;
+                    }
+                    Err(e2) => {
+                        error!("Error occured with get_solution: {:?}", e2.as_fail());
+                        //err.context(e2)
+                    }
+                }
+                // Forward the error
+                err
+            })?;
 
             nstloc += 1;
 
@@ -682,50 +770,45 @@ impl<
 
             // First check for root in the last step taken.
 
-            /*
             if self.ida_nrtfn > 0 {
+                /*
+                  ier = IDARcheck3(IDA_mem);
 
-              ier = IDARcheck3(IDA_mem);
-
-              if (ier == RTFOUND) {  /* A new root was found */
-                self.ida_irfnd = 1;
-                istate = IDA_ROOT_RETURN;
-                self.ida_tretlast = *tret = self.ida_tlo;
-                break;
-              } else if (ier == IDA_RTFUNC_FAIL) { /* g failed */
-                IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
-                istate = IDA_RTFUNC_FAIL;
-                break;
-              }
-
-              /* If we are at the end of the first step and we still have
-               * some event functions that are inactive, issue a warning
-               * as this may indicate a user error in the implementation
-               * of the root function. */
-
-              if (self.ida_nst==1) {
-                inactive_roots = SUNFALSE;
-                for (ir=0; ir<self.ida_nrtfn; ir++) {
-                  if (!self.ida_gactive[ir]) {
-                    inactive_roots = SUNTRUE;
+                  if (ier == RTFOUND) {  /* A new root was found */
+                    self.ida_irfnd = 1;
+                    istate = IDA_ROOT_RETURN;
+                    self.ida_tretlast = *tret = self.ida_tlo;
+                    break;
+                  } else if (ier == IDA_RTFUNC_FAIL) { /* g failed */
+                    IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
+                    istate = IDA_RTFUNC_FAIL;
                     break;
                   }
-                }
-                if ((self.ida_mxgnull > 0) && inactive_roots) {
-                  IDAProcessError(IDA_mem, IDA_WARNING, "IDA", "IDASolve", MSG_INACTIVE_ROOTS);
-                }
-              }
 
+                  /* If we are at the end of the first step and we still have
+                   * some event functions that are inactive, issue a warning
+                   * as this may indicate a user error in the implementation
+                   * of the root function. */
+
+                  if (self.ida_nst==1) {
+                    inactive_roots = SUNFALSE;
+                    for (ir=0; ir<self.ida_nrtfn; ir++) {
+                      if (!self.ida_gactive[ir]) {
+                        inactive_roots = SUNTRUE;
+                        break;
+                      }
+                    }
+                    if ((self.ida_mxgnull > 0) && inactive_roots) {
+                      IDAProcessError(IDA_mem, IDA_WARNING, "IDA", "IDASolve", MSG_INACTIVE_ROOTS);
+                    }
+                  }
+                */
             }
-            */
 
             // Now check all other stop conditions.
 
-            istate = self.stop_test2(tout, tret, yret, ypret, itask);
-            if (istate != CONTINUE_STEPS) {
-                break;
-            }
-        } /* End of step loop */
+            self.stop_test2(tout, tret, yret, ypret, itask)?;
+        } // End of step loop
 
         //return(istate);
     }
@@ -863,19 +946,19 @@ impl<
     ///
     /// All the real work is done in the routines IDAEwtSetSS, IDAEwtSetSV.
     /*
-    pub fn ewt_set(ycur: &ArrayBase<S, Ix1>, weight: &ArrayBase<S, Ix1>) -> Result<(), IdaError>
-    {
-    switch(self.ida_itol) {
-    case IDA_SS:
-        flag = IDAEwtSetSS(IDA_mem, ycur, weight);
-        break;
-    case IDA_SV:
-        flag = IDAEwtSetSV(IDA_mem, ycur, weight);
-        break;
-    }
-    return(flag);
-    }
-*/
+        pub fn ewt_set(ycur: &ArrayBase<S, Ix1>, weight: &ArrayBase<S, Ix1>) -> Result<(), IdaError>
+        {
+        switch(self.ida_itol) {
+        case IDA_SS:
+            flag = IDAEwtSetSS(IDA_mem, ycur, weight);
+            break;
+        case IDA_SV:
+            flag = IDAEwtSetSV(IDA_mem, ycur, weight);
+            break;
+        }
+        return(flag);
+        }
+    */
 
     /// IDAEwtSetSS
     ///
@@ -899,16 +982,13 @@ impl<
         unimplemented!();
     }
 
-    /*
-     * IDAEwtSetSV
-     *
-     * This routine sets ewt as decribed above in the case itol=IDA_SV.
-     * It tests for non-positive components before inverting. IDAEwtSetSV
-     * returns 0 if ewt is successfully set to a positive vector
-     * and -1 otherwise. In the latter case, ewt is considered
-     * undefined.
-*/
-
+    /// IDAEwtSetSV
+    ///
+    /// This routine sets ewt as decribed above in the case itol=IDA_SV.
+    /// It tests for non-positive components before inverting. IDAEwtSetSV
+    /// returns 0 if ewt is successfully set to a positive vector
+    /// and -1 otherwise. In the latter case, ewt is considered
+    /// undefined.
     fn ewt_set_sv<S: Data<Elem = F::Scalar>>(
         ycur: &ArrayBase<S, Ix1>,
         weight: &ArrayBase<S, Ix1>,
@@ -941,14 +1021,79 @@ impl<
     ///
     /// In the tstop cases, this routine may adjust the stepsize hh to cause
     /// the next step to reach tstop exactly.
-    fn stop_test1<S: Data<Elem = F::Scalar>>(
+    fn stop_test1<S1, S2>(
+        &mut self,
         tout: F::Scalar,
         tret: &mut F::Scalar,
-        yret: &ArrayBase<S, Ix1>,
-        ypret: &mut ArrayBase<S, Ix1>,
+        yret: &mut ArrayBase<S1, Ix1>,
+        ypret: &mut ArrayBase<S2, Ix1>,
         itask: IdaTask,
-    ) -> Result<(), IdaError> {
-        unimplemented!();
+    ) -> Result<IdaSolveStatus, failure::Error>
+    where
+        S1: Data<Elem = F::Scalar>,
+        S2: DataMut<Elem = F::Scalar>,
+        ArrayBase<S1, Ix1>: NdProducer,
+        ArrayBase<S2, Ix1>: NdProducer,
+    {
+        match itask {
+            IdaTask::Normal => {
+                if self.ida_tstopset {
+                    // Test for tn past tstop, tn = tretlast, tn past tout, tn near tstop.
+                    if (self.ida_tn - self.ida_tstop) * self.ida_hh > F::Scalar::zero() {
+                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.ida_tn);
+                        //return(IDA_ILL_INPUT);
+                        Err(IdaError::BadStopTime {
+                            tstop: self.ida_tstop.to_f64().unwrap(),
+                            t: self.ida_tn.to_f64().unwrap(),
+                        })?
+                    }
+                }
+
+                /* Test for tout = tretlast, and for tn past tout. */
+                if tout == self.ida_tretlast {
+                    //*tret = self.ida_tretlast = tout;
+                    //return(IDA_SUCCESS);
+                    self.ida_tretlast = tout;
+                    *tret = tout;
+                    return Ok(IdaSolveStatus::Success);
+                }
+
+                if (self.ida_tn - tout) * self.ida_hh >= F::Scalar::zero() {
+                    self.get_solution(tout, yret, ypret)?;
+                    self.ida_tretlast = tout;
+                    *tret = tout;
+                    return Ok(IdaSolveStatus::Success);
+                }
+
+                if self.ida_tstopset {
+                    let troundoff = F::Scalar::from(100.0).unwrap()
+                        * F::Scalar::epsilon()
+                        * (self.ida_tn.abs() + self.ida_hh.abs());
+                    if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
+                        self.get_solution(self.ida_tstop, yret, ypret)?;
+                        //if (ier != IDA_SUCCESS) {
+                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.ida_tn);
+                        //return(IDA_ILL_INPUT);
+                        //}
+                        self.ida_tretlast = self.ida_tstop;
+                        *tret = self.ida_tstop;
+                        self.ida_tstopset = false;
+                        return Ok(IdaSolveStatus::TStop);
+                    }
+
+                    if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+                        > F::Scalar::zero()
+                    {
+                        self.ida_hh = (self.ida_tstop - self.ida_tn)
+                            * (F::Scalar::one()
+                                - F::Scalar::from(4.0).unwrap() * F::Scalar::epsilon());
+                    }
+                }
+
+                Ok(IdaSolveStatus::ContinueSteps)
+            }
+            IdaTask::OneStep => Ok(IdaSolveStatus::Success),
+        }
     }
 
     /// IDAStopTest2
@@ -970,11 +1115,12 @@ impl<
     ///
     /// Note: No test is made for an error return from IDAGetSolution here,
     /// because the same test was made prior to the step.
-    fn stop_test2<S: Data<Elem = F::Scalar>>(
+    fn stop_test2<S1: Data<Elem = F::Scalar>, S2: DataMut<Elem = F::Scalar>>(
+        &mut self,
         tout: F::Scalar,
         tret: &mut F::Scalar,
-        yret: &ArrayBase<S, Ix1>,
-        ypret: &mut ArrayBase<S, Ix1>,
+        yret: &ArrayBase<S1, Ix1>,
+        ypret: &mut ArrayBase<S2, Ix1>,
         itask: IdaTask,
     ) -> Result<(), IdaError> {
         unimplemented!();
@@ -1041,11 +1187,11 @@ impl<
             self.ida_ns = 0;
         }
 
-/* To prevent 'unintialized variable' warnings */
+        /* To prevent 'unintialized variable' warnings */
         //err_k = ZERO;
         //err_km1 = ZERO;
 
-/* Looping point for attempts to take a step */
+        // Looping point for attempts to take a step
 
         loop {
             //-----------------------
@@ -1079,8 +1225,12 @@ impl<
 
             // If NLS was successful, perform error test
             if nflag.is_ok() {
-                let (err_k, err_km1, nflag) = self.test_error(ck);
+                let nflag2 = self.test_error(ck);
             }
+
+            let err_flags = nflag.map(|_| self.test_error(ck));
+
+            let (err_k, err_km1, nflag) = self.test_error(ck);
 
             // Test for convergence or error test failures
             if nflag != true {
@@ -1251,11 +1401,11 @@ impl<
     fn test_error(
         &mut self,
         ck: F::Scalar,
-    ) -> (
+    ) -> Option<(
         F::Scalar, // err_k
         F::Scalar, // err_km1
         bool,      // nflag
-    ) {
+    )> {
         //realtype enorm_k, enorm_km1, enorm_km2;   /* error norms */
         //realtype terr_k, terr_km1, terr_km2;      /* local truncation error norms */
         // Compute error for order k.
@@ -1298,12 +1448,12 @@ impl<
                 }
             }
         };
-
-        (
-            err_k,
-            err_km1,
-            (ck * enorm_k) > F::Scalar::one(), // Perform error test
-        )
+        // Perform error test
+        if (ck * enorm_k) > F::Scalar::one() {
+            Some((err_k, err_km1, true))
+        } else {
+            None
+        }
     }
 
     /// IDARestore
@@ -1577,12 +1727,18 @@ impl<
     /// The return values are:
     ///   IDA_SUCCESS  if t is legal, or
     ///   IDA_BAD_T    if t is not within the interval of the last step taken.
-    pub fn get_solution(
+    pub fn get_solution<'a, S1, S2>(
         &mut self,
         t: F::Scalar,
-        yret: &mut Array<F::Scalar, Ix1>,
-        ypret: &mut Array<F::Scalar, Ix1>,
-    ) -> Result<(), failure::Error> {
+        yret: &'a mut ArrayBase<S1, Ix1>,
+        ypret: &'a mut ArrayBase<S2, Ix1>,
+    ) -> Result<(), failure::Error>
+    where
+        S1: Data<Elem = F::Scalar>,
+        S2: Data<Elem = F::Scalar>,
+        &'a mut ArrayBase<S1, Ix1>: NdProducer,
+        &'a mut ArrayBase<S2, Ix1>: NdProducer,
+    {
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
         //tfuzz = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
@@ -1625,6 +1781,8 @@ impl<
             self.ida_dvals[j - 1] = d;
         }
 
+        ndarray::Zip::from(yret);
+
         //retval = N_VLinearCombination(kord+1, self.ida_cvals, self.ida_phi,  yret);
         ndarray::Zip::from(yret)
             .and(
@@ -1658,21 +1816,85 @@ impl<
     ///
     /// mask = SUNFALSE       when the call is made from the nonlinear solver.
     /// mask = suppressalg otherwise.
-    pub fn wrms_norm<S>(
+    pub fn wrms_norm<S1: Data<Elem = F::Scalar>, S2: Data<Elem = F::Scalar>>(
         &self,
-        x: &ArrayBase<S, Ix1>,
-        w: &ArrayBase<S, Ix1>,
+        x: &ArrayBase<S1, Ix1>,
+        w: &ArrayBase<S2, Ix1>,
         mask: bool,
-    ) -> F::Scalar
-    where
-        S: Data<Elem = F::Scalar>,
-    {
+    ) -> F::Scalar {
         if mask {
             //x.norm_wrms_masked(w, self.ida_id)
             x.norm_wrms_masked(w, &self.ida_id)
         } else {
             x.norm_wrms(w)
         }
+    }
+
+    /// IDARcheck1
+    ///
+    /// This routine completes the initialization of rootfinding memory
+    /// information, and checks whether g has a zero both at and very near
+    /// the initial point of the IVP.
+    ///
+    /// This routine returns an int equal to:
+    ///  IDA_RTFUNC_FAIL < 0 if the g function failed, or
+    ///  IDA_SUCCESS     = 0 otherwise.
+    fn r_check1(&mut self) -> Result<(), IdaError> {
+        //int i, retval;
+        //realtype smallh, hratio, tplus;
+        //booleantype zroot;
+
+        //for (i = 0; i < self.ida_nrtfn; i++)
+        //  self.ida_iroots[i] = 0;
+        self.ida_tlo = self.ida_tn;
+        self.ida_ttol = ((self.ida_tn).abs() + (self.ida_hh).abs())
+            * F::Scalar::epsilon()
+            * F::Scalar::from(100.0).unwrap();
+
+        // Evaluate g at initial t and check for zero values.
+        /*
+        let retval: Result<(), IdaError> = self.ida_gfun(
+            self.ida_tlo,
+            self.ida_phi[0],
+            self.ida_phi[1],
+            self.ida_glo,
+            self.ida_user_data,
+        );
+        */
+        self.ida_nge = 1;
+        //retval.map_err(|e| IdaError::RootFunctionFail{t: self.ida_tn.to_f64().unwrap() })?;
+
+        /*
+          zroot = SUNFALSE;
+          for (i = 0; i < self.ida_nrtfn; i++) {
+            if (SUNRabs(self.ida_glo[i]) == ZERO) {
+              zroot = SUNTRUE;
+              self.ida_gactive[i] = SUNFALSE;
+            }
+          }
+          if (!zroot) return(IDA_SUCCESS);
+
+          /* Some g_i is zero at t0; look at g at t0+(small increment). */
+          hratio = SUNMAX(self.ida_ttol/SUNRabs(self.ida_hh), PT1);
+          smallh = hratio * self.ida_hh;
+          tplus = self.ida_tlo + smallh;
+          N_VLinearSum(ONE, self.ida_phi[0], smallh, self.ida_phi[1], self.ida_yy);
+          retval = self.ida_gfun(tplus, self.ida_yy, self.ida_phi[1],
+                                     self.ida_ghi, self.ida_user_data);
+          self.ida_nge++;
+          if (retval != 0) return(IDA_RTFUNC_FAIL);
+
+          /* We check now only the components of g which were exactly 0.0 at t0
+           * to see if we can 'activate' them. */
+          for (i = 0; i < self.ida_nrtfn; i++) {
+            if (!self.ida_gactive[i] && SUNRabs(self.ida_ghi[i]) != ZERO) {
+              self.ida_gactive[i] = SUNTRUE;
+              self.ida_glo[i] = self.ida_ghi[i];
+            }
+          }
+          return(IDA_SUCCESS);
+        */
+        Ok(())
     }
 }
 
@@ -1956,7 +2178,7 @@ mod tests {
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
-        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck);
+        let Some((err_k_new, err_km1_new, nflag_new)) = ida.test_error(ck);
 
         assert_eq!(ida.ida_knew, knew);
         assert_nearly_eq!(err_k_new, err_k);
@@ -2034,7 +2256,7 @@ mod tests {
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
-        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck);
+        let Some((err_k_new, err_km1_new, nflag_new)) = ida.test_error(ck);
 
         assert_eq!(ida.ida_knew, knew);
         assert_nearly_eq!(err_k_new, err_k);

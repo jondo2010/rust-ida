@@ -21,6 +21,7 @@ travis-ci = { repository = "jondo2010/ida-rs", branch = "master" }
 #default   = ["ndarray-linalg/netlib"]
 
 [dependencies]
+log = { version = "0.4.6", features = ["std"] }
 failure        = { version = "0.1.5" }
 ndarray        = { version = "0.12.1", default-features = true }
 #ndarray-linalg = { version = "0.10.0",  default-features = false, optional = true }

@@ -125,13 +125,14 @@ where
     fn norm_wrms_masked(&self, w: &ArrayBase<S, D>, id: &ArrayBase<B, D>) -> A;
 }
 
-impl<A, S, D> NormRms<A, S, D> for ArrayBase<S, D>
+impl<A, S1, S2, D> NormRms<A, S1, D> for ArrayBase<S2, D>
 where
     A: num_traits::float::Float,
-    S: Data<Elem = A>,
+    S1: Data<Elem = A>,
+    S2: Data<Elem = A>,
     D: Dimension,
 {
-    fn norm_wrms(&self, w: &ArrayBase<S, D>) -> A {
+    fn norm_wrms(&self, w: &ArrayBase<S1, D>) -> A {
         ((self * w)
             .iter()
             .map(|x| x.powi(2))
@@ -141,14 +142,15 @@ where
     }
 }
 
-impl<A, S, D, B> NormRmsMasked<A, S, D, B> for ArrayBase<S, D>
+impl<A, S1, S2, D, B> NormRmsMasked<A, S1, D, B> for ArrayBase<S2, D>
 where
     A: num_traits::float::Float,
-    S: Data<Elem = A>,
+    S1: Data<Elem = A>,
+    S2: Data<Elem = A>,
     D: Dimension,
     B: Data<Elem = bool>,
 {
-    fn norm_wrms_masked(&self, w: &ArrayBase<S, D>, id: &ArrayBase<B, D>) -> A {
+    fn norm_wrms_masked(&self, w: &ArrayBase<S1, D>, id: &ArrayBase<B, D>) -> A {
         let mask = id.map(|x| if *x { A::one() } else { A::zero() });
         ((self * w * mask)
             .iter()
