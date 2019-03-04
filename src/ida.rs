@@ -1,109 +1,10 @@
-use failure::Fail;
 use log::error;
 use ndarray::*;
 
 use crate::constants::*;
 use crate::traits::*;
 
-#[derive(Debug, Fail)]
-enum IdaError {
-    // LSETUP_ERROR_NONRECVR
-    // IDA_ERR_FAIL
-    /// IDA_REP_RES_ERR:
-    #[fail(
-        display = "The user's residual function repeatedly returned a recoverable error flag, \
-                   but the solver was unable to recover"
-    )]
-    RepeatedResidualError {},
-
-    /// IDA_ILL_INPUT
-    #[fail(display = "One of the input arguments was illegal. See printed message")]
-    IllegalInput { msg: String },
-
-    /// IDA_LINIT_FAIL
-    #[fail(display = "The linear solver's init routine failed")]
-    LinearInitFail {},
-
-    /// IDA_BAD_EWT
-    #[fail(
-        display = "Some component of the error weight vector is zero (illegal), either for the \
-                   input value of y0 or a corrected value"
-    )]
-    BadErrorWeightVector {},
-
-    /// IDA_RES_FAIL
-    #[fail(display = "The user's residual routine returned a non-recoverable error flag")]
-    ResidualFail {},
-
-    /// IDA_FIRST_RES_FAIL
-    #[fail(
-        display = "The user's residual routine returned a recoverable error flag on the first \
-                   call, but IDACalcIC was unable to recover"
-    )]
-    FirstResidualFail {},
-
-    /// IDA_LSETUP_FAIL
-    #[fail(display = "The linear solver's setup routine had a non-recoverable error")]
-    LinearSetupFail {},
-
-    /// IDA_LSOLVE_FAIL
-    #[fail(display = "The linear solver's solve routine had a non-recoverable error")]
-    LinearSolveFail {},
-
-    /// IDA_NO_RECOVERY
-    #[fail(
-        display = "The user's residual routine, or the linear solver's setup or solve routine \
-                   had a recoverable error, but IDACalcIC was unable to recover"
-    )]
-    NoRecovery {},
-
-    /// IDA_CONSTR_FAIL
-    /// The inequality constraints were violated, and the solver was unable to recover.
-    #[fail(
-        display = "IDACalcIC was unable to find a solution satisfying the inequality constraints"
-    )]
-    ConstraintFail {},
-
-    /// IDA_LINESEARCH_FAIL
-    #[fail(
-        display = "The Linesearch algorithm failed to find a solution with a step larger than \
-                   steptol in weighted RMS norm"
-    )]
-    LinesearchFail {},
-
-    /// IDA_CONV_FAIL
-    #[fail(display = "IDACalcIC failed to get convergence of the Newton iterations")]
-    ConvergenceFail {},
-
-    ///MSG_BAD_K
-    #[fail(display = "Illegal value for k.")]
-    BadK {},
-
-    //MSG_NULL_DKY       "dky = NULL illegal."
-    ///MSG_BAD_T
-    #[fail(
-        display = "Illegal value for t: t = {} is not between tcur - hu = {} and tcur = {}.",
-        t, tdiff, tcurr
-    )]
-    BadTimeValue { t: f64, tdiff: f64, tcurr: f64 },
-
-    #[fail(
-        display = "At t = {}, the rootfinding routine failed in an unrecoverable manner.",
-        t
-    )]
-    RootFunctionFail { t: f64 },
-
-    ///MSG_BAD_TSTOP
-    #[fail(
-        display = "The value tstop = {} is behind current t = {} in the direction of integration.",
-        tstop, t
-    )]
-    BadStopTime { tstop: f64, t: f64 },
-
-    ///MSG_TOO_MUCH_ACC
-    #[fail(display = "At t = {} too much accuracy requested.", t)]
-    TooMuchAccuracy { t: f64 },
-}
+pub use crate::error::IdaError;
 
 pub enum IdaTask {
     Normal,
@@ -488,16 +389,19 @@ impl<
     /// IDA_ERR_FAIL
     /// IDA_REP_RES_ERR
     /// IDA_RES_FAIL
-    fn solve<'a>(
+    fn solve<S1, S2>(
         &mut self,
         tout: F::Scalar,
         tret: &mut F::Scalar,
-        yret: &'a mut Array<F::Scalar, Ix1>,
-        ypret: &'a mut Array<F::Scalar, Ix1>,
-        itask: IdaTask,
+        yret: &mut ArrayBase<S1, Ix1>,
+        ypret: &mut ArrayBase<S2, Ix1>,
+        itask: &IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error>
     where
-        &'a mut Array<F::Scalar, Ix1>: NdProducer,
+        S1: DataMut<Elem = F::Scalar>,
+        S2: DataMut<Elem = F::Scalar>,
+        ArrayBase<S1, Ix1>: IntoNdProducer,
+        ArrayBase<S2, Ix1>: IntoNdProducer,
     {
         if self.ida_nst == 0 {
             // This is the first call
@@ -589,7 +493,7 @@ impl<
             //}
 
             //N_VScale(self.ida_hh, self.ida_phi[1], self.ida_phi[1]);  /* set phi[1] = hh*y' */
-            let phi = self.ida_phi.index_axis_mut(Axis(0), 1);
+            let mut phi = self.ida_phi.index_axis_mut(Axis(0), 1);
             phi *= self.ida_hh;
 
             // Set the convergence test constants epsNewt and toldel
@@ -611,42 +515,42 @@ impl<
             if self.ida_nrtfn > 0 {
                 /*
 
-                  irfndp = self.ida_irfnd;
+                irfndp = self.ida_irfnd;
 
-                  ier = IDARcheck2(IDA_mem);
+                ier = IDARcheck2(IDA_mem);
 
-                  if (ier == CLOSERT) {
-                    IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDARcheck2", MSG_CLOSE_ROOTS, self.ida_tlo);
-                    return(IDA_ILL_INPUT);
-                  } else if (ier == IDA_RTFUNC_FAIL) {
-                    IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck2", MSG_RTFUNC_FAILED, self.ida_tlo);
-                    return(IDA_RTFUNC_FAIL);
-                  } else if (ier == RTFOUND) {
-                    self.ida_tretlast = *tret = self.ida_tlo;
-                    return(IDA_ROOT_RETURN);
-                  }
+                if (ier == CLOSERT) {
+                  IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDARcheck2", MSG_CLOSE_ROOTS, self.ida_tlo);
+                  return(IDA_ILL_INPUT);
+                } else if (ier == IDA_RTFUNC_FAIL) {
+                  IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck2", MSG_RTFUNC_FAILED, self.ida_tlo);
+                  return(IDA_RTFUNC_FAIL);
+                } else if (ier == RTFOUND) {
+                  self.ida_tretlast = *tret = self.ida_tlo;
+                  return(IDA_ROOT_RETURN);
+                }
 
-                  /* If tn is distinct from tretlast (within roundoff),
-                     check remaining interval for roots */
-                  troundoff = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
-                  if ( SUNRabs(self.ida_tn - self.ida_tretlast) > troundoff ) {
-                    ier = IDARcheck3(IDA_mem);
-                    if (ier == IDA_SUCCESS) {     /* no root found */
-                      self.ida_irfnd = 0;
-                      if ((irfndp == 1) && (itask == IDA_ONE_STEP)) {
-                        self.ida_tretlast = *tret = self.ida_tn;
-                        ier = IDAGetSolution(IDA_mem, self.ida_tn, yret, ypret);
-                        return(IDA_SUCCESS);
-                      }
-                    } else if (ier == RTFOUND) {  /* a new root was found */
-                      self.ida_irfnd = 1;
-                      self.ida_tretlast = *tret = self.ida_tlo;
-                      return(IDA_ROOT_RETURN);
-                    } else if (ier == IDA_RTFUNC_FAIL) {  /* g failed */
-                      IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
-                      return(IDA_RTFUNC_FAIL);
-                    }
-                  }
+                /* If tn is distinct from tretlast (within roundoff),
+                   check remaining interval for roots */
+                troundoff = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
+                if ( SUNRabs(self.ida_tn - self.ida_tretlast) > troundoff ) {
+                ier = IDARcheck3(IDA_mem);
+                if (ier == IDA_SUCCESS) {     /* no root found */
+                self.ida_irfnd = 0;
+                if ((irfndp == 1) && (itask == IDA_ONE_STEP)) {
+                self.ida_tretlast = *tret = self.ida_tn;
+                ier = IDAGetSolution(IDA_mem, self.ida_tn, yret, ypret);
+                return(IDA_SUCCESS);
+                }
+                } else if (ier == RTFOUND) {  /* a new root was found */
+                self.ida_irfnd = 1;
+                self.ida_tretlast = *tret = self.ida_tlo;
+                return(IDA_ROOT_RETURN);
+                } else if (ier == IDA_RTFUNC_FAIL) {  /* g failed */
+                IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
+                return(IDA_RTFUNC_FAIL);
+                }
+                }
 
                 */
             } // end of root stop check
@@ -772,37 +676,36 @@ impl<
 
             if self.ida_nrtfn > 0 {
                 /*
-                  ier = IDARcheck3(IDA_mem);
+                ier = IDARcheck3(IDA_mem);
 
-                  if (ier == RTFOUND) {  /* A new root was found */
-                    self.ida_irfnd = 1;
-                    istate = IDA_ROOT_RETURN;
-                    self.ida_tretlast = *tret = self.ida_tlo;
-                    break;
-                  } else if (ier == IDA_RTFUNC_FAIL) { /* g failed */
-                    IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
-                    istate = IDA_RTFUNC_FAIL;
-                    break;
-                  }
+                if (ier == RTFOUND) {  /* A new root was found */
+                self.ida_irfnd = 1;
+                istate = IDA_ROOT_RETURN;
+                self.ida_tretlast = *tret = self.ida_tlo;
+                break;
+                } else if (ier == IDA_RTFUNC_FAIL) { /* g failed */
+                IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
+                istate = IDA_RTFUNC_FAIL;
+                break;
+                }
 
-                  /* If we are at the end of the first step and we still have
-                   * some event functions that are inactive, issue a warning
-                   * as this may indicate a user error in the implementation
-                   * of the root function. */
-
-                  if (self.ida_nst==1) {
-                    inactive_roots = SUNFALSE;
-                    for (ir=0; ir<self.ida_nrtfn; ir++) {
-                      if (!self.ida_gactive[ir]) {
-                        inactive_roots = SUNTRUE;
-                        break;
-                      }
-                    }
-                    if ((self.ida_mxgnull > 0) && inactive_roots) {
-                      IDAProcessError(IDA_mem, IDA_WARNING, "IDA", "IDASolve", MSG_INACTIVE_ROOTS);
-                    }
-                  }
-                */
+                /* If we are at the end of the first step and we still have
+                 * some event functions that are inactive, issue a warning
+                 * as this may indicate a user error in the implementation
+                 * of the root function. */
+                if (self.ida_nst==1) {
+                inactive_roots = SUNFALSE;
+                for (ir=0; ir<self.ida_nrtfn; ir++) {
+                if (!self.ida_gactive[ir]) {
+                inactive_roots = SUNTRUE;
+                break;
+                }
+                }
+                if ((self.ida_mxgnull > 0) && inactive_roots) {
+                IDAProcessError(IDA_mem, IDA_WARNING, "IDA", "IDASolve", MSG_INACTIVE_ROOTS);
+                }
+                }
+                 */
             }
 
             // Now check all other stop conditions.
@@ -832,7 +735,7 @@ impl<
     ///   IDA_VECTOROP_ERR  if the fused vector operation fails
     pub fn get_dky<S>(t: F::Scalar, k: u32, dky: &mut ArrayBase<S, Ix1>) -> Result<(), IdaError>
     where
-        S: Data<Elem = F::Scalar>,
+        S: DataMut<Elem = F::Scalar>,
     {
         unimplemented!();
         /*
@@ -844,91 +747,89 @@ impl<
 
         /* Check ida_mem */
         if (ida_mem == NULL) {
-          IDAProcessError(NULL, IDA_MEM_NULL, "IDA", "IDAGetDky", MSG_NO_MEM);
-          return (IDA_MEM_NULL);
+        IDAProcessError(NULL, IDA_MEM_NULL, "IDA", "IDAGetDky", MSG_NO_MEM);
+        return (IDA_MEM_NULL);
         }
         IDA_mem = (IDAMem) ida_mem;
 
         if (dky == NULL) {
-          IDAProcessError(IDA_mem, IDA_BAD_DKY, "IDA", "IDAGetDky", MSG_NULL_DKY);
-          return(IDA_BAD_DKY);
+        IDAProcessError(IDA_mem, IDA_BAD_DKY, "IDA", "IDAGetDky", MSG_NULL_DKY);
+        return(IDA_BAD_DKY);
         }
 
         if ((k < 0) || (k > self.ida_kused)) {
-          IDAProcessError(IDA_mem, IDA_BAD_K, "IDA", "IDAGetDky", MSG_BAD_K);
-          return(IDA_BAD_K);
+        IDAProcessError(IDA_mem, IDA_BAD_K, "IDA", "IDAGetDky", MSG_BAD_K);
+        return(IDA_BAD_K);
         }
 
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
         tfuzz = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
         if (self.ida_hh < ZERO)
-          tfuzz = - tfuzz;
+        tfuzz = - tfuzz;
         tp = self.ida_tn - self.ida_hused - tfuzz;
         if ((t - tp)*self.ida_hh < ZERO) {
-          IDAProcessError(IDA_mem, IDA_BAD_T, "IDA", "IDAGetDky", MSG_BAD_T, t,
-                          self.ida_tn-self.ida_hused, self.ida_tn);
-          return(IDA_BAD_T);
+        IDAProcessError(IDA_mem, IDA_BAD_T, "IDA", "IDAGetDky", MSG_BAD_T, t,
+        self.ida_tn-self.ida_hused, self.ida_tn);
+        return(IDA_BAD_T);
         }
 
         // Initialize the c_j^(k) and c_k^(k-1)
         for(i=0; i<MXORDP1; i++) {
-          cjk  [i] = 0;
-          cjk_1[i] = 0;
+        cjk  [i] = 0;
+        cjk_1[i] = 0;
         }
 
         delt = t-self.ida_tn;
 
         for(i=0; i<=k; i++) {
 
-          // The below reccurence is used to compute the k-th derivative of the solution:
-          //    c_j^(k) = ( k * c_{j-1}^(k-1) + c_{j-1}^{k} (Delta+psi_{j-1}) ) / psi_j
-          //
-          //    Translated in indexes notation:
-          //    cjk[j] = ( k*cjk_1[j-1] + cjk[j-1]*(delt+psi[j-2]) ) / psi[j-1]
-          //
-          //    For k=0, j=1: c_1 = c_0^(-1) + (delt+psi[-1]) / psi[0]
-          //
-          //    In order to be able to deal with k=0 in the same way as for k>0, the
-          //    following conventions were adopted:
-          //      - c_0(t) = 1 , c_0^(-1)(t)=0
-          //      - psij_1 stands for psi[-1]=0 when j=1
-          //                      for psi[j-2]  when j>1
-          if(i==0) {
+        // The below reccurence is used to compute the k-th derivative of the solution:
+        //    c_j^(k) = ( k * c_{j-1}^(k-1) + c_{j-1}^{k} (Delta+psi_{j-1}) ) / psi_j
+        //
+        //    Translated in indexes notation:
+        //    cjk[j] = ( k*cjk_1[j-1] + cjk[j-1]*(delt+psi[j-2]) ) / psi[j-1]
+        //
+        //    For k=0, j=1: c_1 = c_0^(-1) + (delt+psi[-1]) / psi[0]
+        //
+        //    In order to be able to deal with k=0 in the same way as for k>0, the
+        //    following conventions were adopted:
+        //      - c_0(t) = 1 , c_0^(-1)(t)=0
+        //      - psij_1 stands for psi[-1]=0 when j=1
+        //                      for psi[j-2]  when j>1
+        if(i==0) {
 
-            cjk[i] = 1;
-            psij_1 = 0;
-          }else {
-            /*                                                i       i-1          1
-              c_i^(i) can be always updated since c_i^(i) = -----  --------  ... -----
-                                                            psi_j  psi_{j-1}     psi_1
-            */
-            cjk[i] = cjk[i-1]*i / self.ida_psi[i-1];
-            psij_1 = self.ida_psi[i-1];
-          }
+        cjk[i] = 1;
+        psij_1 = 0;
+        }else {
+        /*                                                i       i-1          1
+          c_i^(i) can be always updated since c_i^(i) = -----  --------  ... -----
+                                                        psi_j  psi_{j-1}     psi_1
+        */
+        cjk[i] = cjk[i-1]*i / self.ida_psi[i-1];
+        psij_1 = self.ida_psi[i-1];
+        }
 
-          /* update c_j^(i) */
+        /* update c_j^(i) */
+        /*j does not need to go till kused */
+        for(j=i+1; j<=self.ida_kused-k+i; j++) {
 
-          /*j does not need to go till kused */
-          for(j=i+1; j<=self.ida_kused-k+i; j++) {
+        cjk[j] = ( i* cjk_1[j-1] + cjk[j-1] * (delt + psij_1) ) / self.ida_psi[j-1];
+        psij_1 = self.ida_psi[j-1];
+        }
 
-            cjk[j] = ( i* cjk_1[j-1] + cjk[j-1] * (delt + psij_1) ) / self.ida_psi[j-1];
-            psij_1 = self.ida_psi[j-1];
-          }
-
-          /* save existing c_j^(i)'s */
-          for(j=i+1; j<=self.ida_kused-k+i; j++) cjk_1[j] = cjk[j];
+        /* save existing c_j^(i)'s */
+        for(j=i+1; j<=self.ida_kused-k+i; j++) cjk_1[j] = cjk[j];
         }
 
         /* Compute sum (c_j(t) * phi(t)) */
-
         /* Sum j=k to j<=self.ida_kused */
         retval = N_VLinearCombination(self.ida_kused-k+1, cjk+k,
-                                      self.ida_phi+k, dky);
+        self.ida_phi+k, dky);
         if (retval != IDA_SUCCESS) return(IDA_VECTOROP_ERR);
 
         return(IDA_SUCCESS);
-        */
+         */
     }
 
     /// IDAEwtSet
@@ -1027,13 +928,13 @@ impl<
         tret: &mut F::Scalar,
         yret: &mut ArrayBase<S1, Ix1>,
         ypret: &mut ArrayBase<S2, Ix1>,
-        itask: IdaTask,
+        itask: &IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error>
     where
-        S1: Data<Elem = F::Scalar>,
+        S1: DataMut<Elem = F::Scalar>,
         S2: DataMut<Elem = F::Scalar>,
-        ArrayBase<S1, Ix1>: NdProducer,
-        ArrayBase<S2, Ix1>: NdProducer,
+        ArrayBase<S1, Ix1>: IntoNdProducer,
+        ArrayBase<S2, Ix1>: IntoNdProducer,
     {
         match itask {
             IdaTask::Normal => {
@@ -1115,14 +1016,18 @@ impl<
     ///
     /// Note: No test is made for an error return from IDAGetSolution here,
     /// because the same test was made prior to the step.
-    fn stop_test2<S1: Data<Elem = F::Scalar>, S2: DataMut<Elem = F::Scalar>>(
+    fn stop_test2<S1, S2>(
         &mut self,
         tout: F::Scalar,
         tret: &mut F::Scalar,
         yret: &ArrayBase<S1, Ix1>,
         ypret: &mut ArrayBase<S2, Ix1>,
-        itask: IdaTask,
-    ) -> Result<(), IdaError> {
+        itask: &IdaTask,
+    ) -> Result<(), IdaError>
+    where
+        S1: Data<Elem = F::Scalar>,
+        S2: DataMut<Elem = F::Scalar>,
+    {
         unimplemented!();
     }
 
@@ -1230,7 +1135,8 @@ impl<
 
             let err_flags = nflag.map(|_| self.test_error(ck));
 
-            let (err_k, err_km1, nflag) = self.test_error(ck);
+            //let (err_k, err_km1, nflag) = self.test_error(ck);
+            let nflag = false;
 
             // Test for convergence or error test failures
             if nflag != true {
@@ -1734,10 +1640,10 @@ impl<
         ypret: &'a mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
-        S1: Data<Elem = F::Scalar>,
-        S2: Data<Elem = F::Scalar>,
-        &'a mut ArrayBase<S1, Ix1>: NdProducer,
-        &'a mut ArrayBase<S2, Ix1>: NdProducer,
+        S1: DataMut<Elem = F::Scalar>,
+        S2: DataMut<Elem = F::Scalar>,
+        ArrayBase<S1, Ix1>: IntoNdProducer,
+        ArrayBase<S2, Ix1>: IntoNdProducer,
     {
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
@@ -1781,8 +1687,6 @@ impl<
             self.ida_dvals[j - 1] = d;
         }
 
-        ndarray::Zip::from(yret);
-
         //retval = N_VLinearCombination(kord+1, self.ida_cvals, self.ida_phi,  yret);
         ndarray::Zip::from(yret)
             .and(
@@ -1795,7 +1699,7 @@ impl<
             });
 
         //retval = N_VLinearCombination(kord, self.ida_dvals, self.ida_phi+1, ypret);
-        ndarray::Zip::from(ypret)
+        ndarray::Zip::from(ypret.into_producer())
             .and(
                 self.ida_phi
                     .slice_axis(Axis(0), Slice::from(1..kord + 1))
@@ -1846,10 +1750,10 @@ impl<
 
         //for (i = 0; i < self.ida_nrtfn; i++)
         //  self.ida_iroots[i] = 0;
-        self.ida_tlo = self.ida_tn;
-        self.ida_ttol = ((self.ida_tn).abs() + (self.ida_hh).abs())
-            * F::Scalar::epsilon()
-            * F::Scalar::from(100.0).unwrap();
+        //self.ida_tlo = self.ida_tn;
+        //self.ida_ttol = ((self.ida_tn).abs() + (self.ida_hh).abs())
+        //    * F::Scalar::epsilon()
+        //    * F::Scalar::from(100.0).unwrap();
 
         // Evaluate g at initial t and check for zero values.
         /*
@@ -1865,35 +1769,35 @@ impl<
         //retval.map_err(|e| IdaError::RootFunctionFail{t: self.ida_tn.to_f64().unwrap() })?;
 
         /*
-          zroot = SUNFALSE;
-          for (i = 0; i < self.ida_nrtfn; i++) {
-            if (SUNRabs(self.ida_glo[i]) == ZERO) {
-              zroot = SUNTRUE;
-              self.ida_gactive[i] = SUNFALSE;
-            }
+        zroot = SUNFALSE;
+        for (i = 0; i < self.ida_nrtfn; i++) {
+          if (SUNRabs(self.ida_glo[i]) == ZERO) {
+            zroot = SUNTRUE;
+            self.ida_gactive[i] = SUNFALSE;
           }
-          if (!zroot) return(IDA_SUCCESS);
+        }
+        if (!zroot) return(IDA_SUCCESS);
 
-          /* Some g_i is zero at t0; look at g at t0+(small increment). */
-          hratio = SUNMAX(self.ida_ttol/SUNRabs(self.ida_hh), PT1);
-          smallh = hratio * self.ida_hh;
-          tplus = self.ida_tlo + smallh;
-          N_VLinearSum(ONE, self.ida_phi[0], smallh, self.ida_phi[1], self.ida_yy);
-          retval = self.ida_gfun(tplus, self.ida_yy, self.ida_phi[1],
-                                     self.ida_ghi, self.ida_user_data);
-          self.ida_nge++;
-          if (retval != 0) return(IDA_RTFUNC_FAIL);
+        /* Some g_i is zero at t0; look at g at t0+(small increment). */
+        hratio = SUNMAX(self.ida_ttol/SUNRabs(self.ida_hh), PT1);
+        smallh = hratio * self.ida_hh;
+        tplus = self.ida_tlo + smallh;
+        N_VLinearSum(ONE, self.ida_phi[0], smallh, self.ida_phi[1], self.ida_yy);
+        retval = self.ida_gfun(tplus, self.ida_yy, self.ida_phi[1],
+        self.ida_ghi, self.ida_user_data);
+        self.ida_nge++;
+        if (retval != 0) return(IDA_RTFUNC_FAIL);
 
-          /* We check now only the components of g which were exactly 0.0 at t0
-           * to see if we can 'activate' them. */
-          for (i = 0; i < self.ida_nrtfn; i++) {
-            if (!self.ida_gactive[i] && SUNRabs(self.ida_ghi[i]) != ZERO) {
-              self.ida_gactive[i] = SUNTRUE;
-              self.ida_glo[i] = self.ida_ghi[i];
-            }
-          }
-          return(IDA_SUCCESS);
-        */
+        /* We check now only the components of g which were exactly 0.0 at t0
+         * to see if we can 'activate' them. */
+        for (i = 0; i < self.ida_nrtfn; i++) {
+        if (!self.ida_gactive[i] && SUNRabs(self.ida_ghi[i]) != ZERO) {
+        self.ida_gactive[i] = SUNTRUE;
+        self.ida_glo[i] = self.ida_ghi[i];
+        }
+        }
+        return(IDA_SUCCESS);
+         */
         Ok(())
     }
 }
@@ -2178,7 +2082,7 @@ mod tests {
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
-        let Some((err_k_new, err_km1_new, nflag_new)) = ida.test_error(ck);
+        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck).unwrap();
 
         assert_eq!(ida.ida_knew, knew);
         assert_nearly_eq!(err_k_new, err_k);
@@ -2256,7 +2160,7 @@ mod tests {
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
-        let Some((err_k_new, err_km1_new, nflag_new)) = ida.test_error(ck);
+        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck).unwrap();
 
         assert_eq!(ida.ida_knew, knew);
         assert_nearly_eq!(err_k_new, err_k);
@@ -2755,7 +2659,7 @@ mod tests {
         let mut yret = Array::zeros((3));
         let mut ypret = Array::zeros((3));
 
-        ida.get_solution(t, &mut yret, &mut ypret).unwrap();
+        ida.get_solution(t, &mut yret.view_mut(), &mut ypret.view_mut()).unwrap();
 
         assert_nearly_eq!(yret, yret_expect, 1e-6);
         assert_nearly_eq!(ypret, ypret_expect, 1e-6);
