@@ -9,13 +9,14 @@ pub trait ModelSpec: Clone {
     fn model_size(&self) -> <Ix1 as Dimension>::Pattern;
 }
 
-/// Core implementation for explicit schemes
-pub trait IdaModel: ModelSpec {
-    /// Calculate right hand side (rhs) of Explicit from current state
+pub trait Residual: ModelSpec {
+    /// Nonlinear residual function
     fn residual<'a, S>(&mut self, v: &'a mut ArrayBase<S, Ix1>) -> &'a mut ArrayBase<S, Ix1>
     where
         S: DataMut<Elem = Self::Scalar>;
+}
 
+pub trait Jacobian: ModelSpec {
     /// Calculate the Jacobian
     fn jacobian<S>(
         &mut self,
@@ -27,26 +28,29 @@ pub trait IdaModel: ModelSpec {
         S: DataMut<Elem = Self::Scalar>;
 }
 
+/// Core implementation for explicit schemes
+pub trait IdaModel: Residual + Jacobian {}
+
 /// Constants for Ida
 pub trait IdaConst {
     type Scalar: num_traits::Float;
-    fn half() -> Self::Scalar;
-    fn quarter() -> Self::Scalar;
-    fn twothirds() -> Self::Scalar;
-    fn onept5() -> Self::Scalar;
-    fn two() -> Self::Scalar;
-    fn four() -> Self::Scalar;
-    fn five() -> Self::Scalar;
-    fn ten() -> Self::Scalar;
-    fn twelve() -> Self::Scalar;
-    fn twenty() -> Self::Scalar;
-    fn hundred() -> Self::Scalar;
-    fn pt9() -> Self::Scalar;
-    fn pt99() -> Self::Scalar;
-    fn pt1() -> Self::Scalar;
-    fn pt01() -> Self::Scalar;
-    fn pt001() -> Self::Scalar;
-    fn pt0001() -> Self::Scalar;
+    fn half() -> Self;
+    fn quarter() -> Self;
+    fn twothirds() -> Self;
+    fn onept5() -> Self;
+    fn two() -> Self;
+    fn four() -> Self;
+    fn five() -> Self;
+    fn ten() -> Self;
+    fn twelve() -> Self;
+    fn twenty() -> Self;
+    fn hundred() -> Self;
+    fn pt9() -> Self;
+    fn pt99() -> Self;
+    fn pt1() -> Self;
+    fn pt01() -> Self;
+    fn pt001() -> Self;
+    fn pt0001() -> Self;
 }
 
 impl IdaConst for f64 {

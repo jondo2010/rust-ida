@@ -37,7 +37,7 @@ impl ModelSpec for Lorenz63 {
     }
 }
 
-impl IdaModel for Lorenz63 {
+impl Residual for Lorenz63 {
     fn residual<'a, S>(&mut self, v: &'a mut ArrayBase<S, Ix1>) -> &'a mut ArrayBase<S, Ix1>
     where
         S: DataMut<Elem = Self::Scalar>,
@@ -50,12 +50,14 @@ impl IdaModel for Lorenz63 {
         v[2] = x * y - self.b * z;
         v
     }
+}
 
+impl Jacobian for Lorenz63 {
     fn jacobian<S>(
         &mut self,
         cj: Self::Scalar,
-        yy: &ArrayView<S, Self::Dim>,
-        yp: &ArrayView<S, Self::Dim>,
+        yy: &ArrayView<S, Ix1>,
+        yp: &ArrayView<S, Ix1>,
     ) -> ()
     where
         S: DataMut<Elem = Self::Scalar>,

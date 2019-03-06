@@ -25,6 +25,12 @@ pub struct Ida<F: IdaModel> {
     //dt: <F::Scalar as AssociatedReal>::Real,
     //x: Array<F::Scalar, Ix1>,
     ida_itol: ToleranceType,
+    /// relative tolerance
+    ida_rtol: F::Scalar,
+    /// scalar absolute tolerance
+    ida_Satol: F::Scalar,
+    /// vector absolute tolerance
+    ida_Vatol: Array1<F::Scalar>,
 
     /// constraints vector present: do constraints calc
     ida_constraintsSet: bool,
@@ -194,7 +200,8 @@ impl<
                          + num_traits::NumRef
                          + num_traits::NumAssignRef
                          + ScalarOperand
-                         + std::fmt::Debug, /*+ IdaConst*/
+                         + std::fmt::Debug
+                         + IdaConst,
         >,
     > Ida<F>
 //where
@@ -334,6 +341,10 @@ impl<
 
             ida_yypredict: Array::zeros(yy0.raw_dim()),
             ida_yppredict: Array::zeros(yy0.raw_dim()),
+
+            ida_rtol: F::Scalar::zero(),
+            ida_Satol: F::Scalar::zero(),
+            ida_Vatol: Array::zeros(MXORDP1),
         }
     }
 
@@ -423,9 +434,8 @@ impl<
                     msg: format!("tout too close to t0 to start integration."),
                 })?
             }
-            let troundoff = F::Scalar::from(2.0).unwrap()
-                * F::Scalar::epsilon()
-                * (self.ida_tn.abs() + tout.abs());
+            let troundoff =
+                F::Scalar::two() * F::Scalar::epsilon() * (self.ida_tn.abs() + tout.abs());
             if tdist < troundoff {
                 Err(IdaError::IllegalInput {
                     msg: format!("tout too close to t0 to start integration."),
@@ -442,14 +452,14 @@ impl<
             }
 
             if self.ida_hh == F::Scalar::zero() {
-                self.ida_hh = F::Scalar::from(0.001).unwrap() * tdist;
+                self.ida_hh = F::Scalar::pt001() * tdist;
                 let ypnorm = self.wrms_norm(
                     &self.ida_phi.index_axis(Axis(0), 1),
                     &self.ida_ewt,
                     self.ida_suppressalg,
                 );
-                if ypnorm > F::Scalar::from(2.0).unwrap() / self.ida_hh {
-                    self.ida_hh = F::Scalar::from(0.5).unwrap() / ypnorm;
+                if ypnorm > F::Scalar::two() / self.ida_hh {
+                    self.ida_hh = F::Scalar::half() / ypnorm;
                 }
                 if tout < self.ida_tn {
                     self.ida_hh = -self.ida_hh;
@@ -474,7 +484,7 @@ impl<
                 }
                 if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh > F::Scalar::zero() {
                     self.ida_hh = (self.ida_tstop - self.ida_tn)
-                        * (F::Scalar::one() - F::Scalar::from(4.0).unwrap() * F::Scalar::epsilon());
+                        * (F::Scalar::one() - F::Scalar::four() * F::Scalar::epsilon());
                 }
             }
 
@@ -498,7 +508,7 @@ impl<
 
             // Set the convergence test constants epsNewt and toldel
             self.ida_epsNewt = self.ida_epcon;
-            self.ida_toldel = F::Scalar::from(0.001).unwrap() * self.ida_epsNewt;
+            self.ida_toldel = F::Scalar::pt001() * self.ida_epsNewt;
         } // end of first-call block.
 
         // Call lperf function and set nstloc for later performance testing.
@@ -631,7 +641,7 @@ impl<
 
             self.ida_tolsf = F::Scalar::epsilon() * nrm;
             if self.ida_tolsf > F::Scalar::one() {
-                self.ida_tolsf *= F::Scalar::from(10.0).unwrap();
+                self.ida_tolsf *= F::Scalar::ten();
 
                 *tret = self.ida_tn;
                 self.ida_tretlast = self.ida_tn;
@@ -733,103 +743,111 @@ impl<
     ///   IDA_BAD_DKY       if the dky vector is NULL
     ///   IDA_BAD_K         if the requested k is not in the range [0,order used]
     ///   IDA_VECTOROP_ERR  if the fused vector operation fails
-    pub fn get_dky<S>(t: F::Scalar, k: u32, dky: &mut ArrayBase<S, Ix1>) -> Result<(), IdaError>
+    pub fn get_dky<S>(
+        &mut self,
+        t: F::Scalar,
+        k: usize,
+        dky: &mut ArrayBase<S, Ix1>,
+    ) -> Result<(), failure::Error>
     where
         S: DataMut<Elem = F::Scalar>,
     {
-        unimplemented!();
         /*
         IDAMem IDA_mem;
         realtype tfuzz, tp, delt, psij_1;
         int i, j, retval;
         realtype cjk  [MXORDP1];
         realtype cjk_1[MXORDP1];
+        */
 
-        /* Check ida_mem */
-        if (ida_mem == NULL) {
-        IDAProcessError(NULL, IDA_MEM_NULL, "IDA", "IDAGetDky", MSG_NO_MEM);
-        return (IDA_MEM_NULL);
-        }
-        IDA_mem = (IDAMem) ida_mem;
-
-        if (dky == NULL) {
-        IDAProcessError(IDA_mem, IDA_BAD_DKY, "IDA", "IDAGetDky", MSG_NULL_DKY);
-        return(IDA_BAD_DKY);
-        }
-
-        if ((k < 0) || (k > self.ida_kused)) {
-        IDAProcessError(IDA_mem, IDA_BAD_K, "IDA", "IDAGetDky", MSG_BAD_K);
-        return(IDA_BAD_K);
+        if (k < 0) || (k > self.ida_kused) {
+            Err(IdaError::BadK {})?
+            //IDAProcessError(IDA_mem, IDA_BAD_K, "IDA", "IDAGetDky", MSG_BAD_K);
+            //return(IDA_BAD_K);
         }
 
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
-        tfuzz = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
-        if (self.ida_hh < ZERO)
-        tfuzz = - tfuzz;
-        tp = self.ida_tn - self.ida_hused - tfuzz;
-        if ((t - tp)*self.ida_hh < ZERO) {
-        IDAProcessError(IDA_mem, IDA_BAD_T, "IDA", "IDAGetDky", MSG_BAD_T, t,
-        self.ida_tn-self.ida_hused, self.ida_tn);
-        return(IDA_BAD_T);
+        let tfuzz = F::Scalar::hundred()
+            * F::Scalar::epsilon()
+            * (self.ida_tn.abs() + self.ida_hh.abs())
+            * self.ida_hh.signum();
+        let tp = self.ida_tn - self.ida_hused - tfuzz;
+        if (t - tp) * self.ida_hh < F::Scalar::zero() {
+            Err(IdaError::BadTimeValue {
+                t: t.to_f64().unwrap(),
+                tdiff: (self.ida_tn - self.ida_hused).to_f64().unwrap(),
+                tcurr: self.ida_tn.to_f64().unwrap(),
+            })?
+            //IDAProcessError(IDA_mem, IDA_BAD_T, "IDA", "IDAGetDky", MSG_BAD_T, t, self.ida_tn-self.ida_hused, self.ida_tn);
+            //return(IDA_BAD_T);
         }
 
         // Initialize the c_j^(k) and c_k^(k-1)
-        for(i=0; i<MXORDP1; i++) {
-        cjk  [i] = 0;
-        cjk_1[i] = 0;
+        let mut cjk = Array::zeros(MXORDP1);
+        let mut cjk_1 = Array::zeros(MXORDP1);
+
+        let delt = t - self.ida_tn;
+        let mut psij_1 = F::Scalar::zero();
+
+        for i in 0..k + 1 {
+            // The below reccurence is used to compute the k-th derivative of the solution:
+            //    c_j^(k) = ( k * c_{j-1}^(k-1) + c_{j-1}^{k} (Delta+psi_{j-1}) ) / psi_j
+            //
+            //    Translated in indexes notation:
+            //    cjk[j] = ( k*cjk_1[j-1] + cjk[j-1]*(delt+psi[j-2]) ) / psi[j-1]
+            //
+            //    For k=0, j=1: c_1 = c_0^(-1) + (delt+psi[-1]) / psi[0]
+            //
+            //    In order to be able to deal with k=0 in the same way as for k>0, the
+            //    following conventions were adopted:
+            //      - c_0(t) = 1 , c_0^(-1)(t)=0
+            //      - psij_1 stands for psi[-1]=0 when j=1
+            //                      for psi[j-2]  when j>1
+            if i == 0 {
+                cjk[i] = F::Scalar::one();
+            } else {
+                //                                                i       i-1          1
+                // c_i^(i) can be always updated since c_i^(i) = -----  --------  ... -----
+                //                                               psi_j  psi_{j-1}     psi_1
+                cjk[i] = cjk[i - 1] * F::Scalar::from(i as f64).unwrap() / self.ida_psi[i - 1];
+                psij_1 = self.ida_psi[i - 1];
+            }
+
+            // update c_j^(i)
+            //j does not need to go till kused
+            //for(j=i+1; j<=self.ida_kused-k+i; j++) {
+            for j in i + 1..self.ida_kused - k + 1 + 1 {
+                cjk[j] = (F::Scalar::from(i as f64).unwrap() * cjk_1[j - 1]
+                    + cjk[j - 1] * (delt + psij_1))
+                    / self.ida_psi[j - 1];
+                psij_1 = self.ida_psi[j - 1];
+            }
+
+            // save existing c_j^(i)'s
+            //for(j=i+1; j<=self.ida_kused-k+i; j++)
+            for j in i + 1..self.ida_kused - k + 1 + 1 {
+                cjk_1[j] = cjk[j];
+            }
         }
 
-        delt = t-self.ida_tn;
+        // Compute sum (c_j(t) * phi(t))
+        // Sum j=k to j<=self.ida_kused
+        //retval = N_VLinearCombination( self.ida_kused - k + 1, cjk + k, self.ida_phi + k, dky);
+        let phi = self
+            .ida_phi
+            .slice_axis(Axis(0), Slice::from(k..self.ida_kused + 1));
 
-        for(i=0; i<=k; i++) {
+        // We manually broadcast here so we can turn it into a column vec
+        let cvals = cjk.slice(s![k..self.ida_kused + 1]);
+        let cvals = cvals
+            .broadcast((phi.len_of(Axis(1)), phi.len_of(Axis(0))))
+            .unwrap()
+            .reversed_axes();
 
-        // The below reccurence is used to compute the k-th derivative of the solution:
-        //    c_j^(k) = ( k * c_{j-1}^(k-1) + c_{j-1}^{k} (Delta+psi_{j-1}) ) / psi_j
-        //
-        //    Translated in indexes notation:
-        //    cjk[j] = ( k*cjk_1[j-1] + cjk[j-1]*(delt+psi[j-2]) ) / psi[j-1]
-        //
-        //    For k=0, j=1: c_1 = c_0^(-1) + (delt+psi[-1]) / psi[0]
-        //
-        //    In order to be able to deal with k=0 in the same way as for k>0, the
-        //    following conventions were adopted:
-        //      - c_0(t) = 1 , c_0^(-1)(t)=0
-        //      - psij_1 stands for psi[-1]=0 when j=1
-        //                      for psi[j-2]  when j>1
-        if(i==0) {
+        dky.assign(&(&phi * &cvals).sum_axis(Axis(0)));
 
-        cjk[i] = 1;
-        psij_1 = 0;
-        }else {
-        /*                                                i       i-1          1
-          c_i^(i) can be always updated since c_i^(i) = -----  --------  ... -----
-                                                        psi_j  psi_{j-1}     psi_1
-        */
-        cjk[i] = cjk[i-1]*i / self.ida_psi[i-1];
-        psij_1 = self.ida_psi[i-1];
-        }
-
-        /* update c_j^(i) */
-        /*j does not need to go till kused */
-        for(j=i+1; j<=self.ida_kused-k+i; j++) {
-
-        cjk[j] = ( i* cjk_1[j-1] + cjk[j-1] * (delt + psij_1) ) / self.ida_psi[j-1];
-        psij_1 = self.ida_psi[j-1];
-        }
-
-        /* save existing c_j^(i)'s */
-        for(j=i+1; j<=self.ida_kused-k+i; j++) cjk_1[j] = cjk[j];
-        }
-
-        /* Compute sum (c_j(t) * phi(t)) */
-        /* Sum j=k to j<=self.ida_kused */
-        retval = N_VLinearCombination(self.ida_kused-k+1, cjk+k,
-        self.ida_phi+k, dky);
-        if (retval != IDA_SUCCESS) return(IDA_VECTOROP_ERR);
-
-        return(IDA_SUCCESS);
-         */
+        Ok(())
     }
 
     /// IDAEwtSet
@@ -841,25 +859,26 @@ impl<
     /// (2) ewt[i] = 1 / (rtol * SUNRabs(ycur[i]) + atol[i]), i=0,...,Neq-1
     ///     if itol = IDA_SV
     ///
-    ///  IDAEwtSet returns 0 if ewt is successfully set as above to a
-    ///  positive vector and -1 otherwise. In the latter case, ewt is
+    ///  `ewt_set` returns true if ewt is successfully set as above to a
+    ///  positive vector and false otherwise. In the latter case, ewt is
     ///  considered undefined.
     ///
-    /// All the real work is done in the routines IDAEwtSetSS, IDAEwtSetSV.
-    /*
-        pub fn ewt_set(ycur: &ArrayBase<S, Ix1>, weight: &ArrayBase<S, Ix1>) -> Result<(), IdaError>
-        {
-        switch(self.ida_itol) {
-        case IDA_SS:
-            flag = IDAEwtSetSS(IDA_mem, ycur, weight);
-            break;
-        case IDA_SV:
-            flag = IDAEwtSetSV(IDA_mem, ycur, weight);
-            break;
+    /// All the real work is done in the routines `ewt_set_ss`, `ewt_set_sv`.
+    pub fn ewt_set<S1, S2>(
+        &mut self,
+        ycur: &ArrayBase<S1, Ix1>,
+        weight: &mut ArrayBase<S2, Ix1>,
+    ) -> bool
+    where
+        S1: Data<Elem = F::Scalar>,
+        S2: DataMut<Elem = F::Scalar>,
+    {
+        match self.ida_itol {
+            ToleranceType::TolSS => self.ewt_set_ss(ycur, weight),
+            ToleranceType::TolSV => self.ewt_set_sv(ycur, weight),
+            _ => false,
         }
-        return(flag);
-        }
-    */
+    }
 
     /// IDAEwtSetSS
     ///
@@ -868,19 +887,33 @@ impl<
     /// returns 0 if ewt is successfully set to a positive vector
     /// and -1 otherwise. In the latter case, ewt is considered
     /// undefined.
-    fn ewt_set_ss<S: Data<Elem = F::Scalar>>(
-        ycur: &ArrayBase<S, Ix1>,
-        weight: &ArrayBase<S, Ix1>,
-    ) -> bool {
+    fn ewt_set_ss<S1, S2>(
+        &mut self,
+        ycur: &ArrayBase<S1, Ix1>,
+        weight: &mut ArrayBase<S2, Ix1>,
+    ) -> bool
+    where
+        S1: Data<Elem = F::Scalar>,
+        S2: DataMut<Elem = F::Scalar>,
+    {
+        let tempv1 = ycur.mapv(|x| (self.ida_rtol * x.abs()) + self.ida_Satol);
+        //self.ida_tempv1.zip_mut_with(ycur, |z, &a| { *z = });
         /*
         N_VAbs(ycur, self.ida_tempv1);
         N_VScale(self.ida_rtol, self.ida_tempv1, self.ida_tempv1);
         N_VAddConst(self.ida_tempv1, self.ida_Satol, self.ida_tempv1);
-        if (N_VMin(self.ida_tempv1) <= ZERO) {return false}
-        N_VInv(self.ida_tempv1, weight);
-        return true;
         */
-        unimplemented!();
+        if tempv1.fold(F::Scalar::max_value(), |acc, &x| acc.min(x)) <= F::Scalar::zero() {
+            //if tempv1.iter().min().unwrap() <= &F::Scalar::zero() {
+            false
+        } else {
+            weight.zip_mut_with(&tempv1, |w, &t| *w = t.recip());
+            true
+        }
+
+        //if (N_VMin(self.ida_tempv1) <= ZERO) {return false}
+        //N_VInv(self.ida_tempv1, weight);
+        //return true;
     }
 
     /// IDAEwtSetSV
@@ -890,10 +923,15 @@ impl<
     /// returns 0 if ewt is successfully set to a positive vector
     /// and -1 otherwise. In the latter case, ewt is considered
     /// undefined.
-    fn ewt_set_sv<S: Data<Elem = F::Scalar>>(
-        ycur: &ArrayBase<S, Ix1>,
-        weight: &ArrayBase<S, Ix1>,
-    ) -> bool {
+    fn ewt_set_sv<S1, S2>(
+        &mut self,
+        ycur: &ArrayBase<S1, Ix1>,
+        weight: &mut ArrayBase<S2, Ix1>,
+    ) -> bool
+    where
+        S1: Data<Elem = F::Scalar>,
+        S2: DataMut<Elem = F::Scalar>,
+    {
         /*
         N_VAbs(ycur, self.ida_tempv1);
         N_VLinearSum(self.ida_rtol, self.ida_tempv1, ONE, self.ida_Vatol, self.ida_tempv1);
@@ -950,7 +988,7 @@ impl<
                     }
                 }
 
-                /* Test for tout = tretlast, and for tn past tout. */
+                // Test for tout = tretlast, and for tn past tout.
                 if tout == self.ida_tretlast {
                     //*tret = self.ida_tretlast = tout;
                     //return(IDA_SUCCESS);
@@ -967,27 +1005,34 @@ impl<
                 }
 
                 if self.ida_tstopset {
-                    let troundoff = F::Scalar::from(100.0).unwrap()
+                    let troundoff = F::Scalar::hundred()
                         * F::Scalar::epsilon()
                         * (self.ida_tn.abs() + self.ida_hh.abs());
                     if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
-                        self.get_solution(self.ida_tstop, yret, ypret)?;
+                        /*
+                        self.get_solution(self.ida_tstop, yret, ypret)
+                            .map_err(|e| IdaError::BadStopTime {
+                                tstop: self.ida_tstop.to_f64().unwrap(),
+                                t: self.ida_tn.to_f64().unwrap(),
+                            })
+                            .and_then(|_| {
+                                self.ida_tretlast = self.ida_tstop;
+                                *tret = self.ida_tstop;
+                                self.ida_tstopset = false;
+                            })
+                        */
                         //if (ier != IDA_SUCCESS) {
                         //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.ida_tn);
                         //return(IDA_ILL_INPUT);
                         //}
-                        self.ida_tretlast = self.ida_tstop;
-                        *tret = self.ida_tstop;
-                        self.ida_tstopset = false;
-                        return Ok(IdaSolveStatus::TStop);
+                        //return Ok(IdaSolveStatus::TStop);
                     }
 
                     if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
                         > F::Scalar::zero()
                     {
                         self.ida_hh = (self.ida_tstop - self.ida_tn)
-                            * (F::Scalar::one()
-                                - F::Scalar::from(4.0).unwrap() * F::Scalar::epsilon());
+                            * (F::Scalar::one() - F::Scalar::four() * F::Scalar::epsilon());
                     }
                 }
 
@@ -1028,7 +1073,74 @@ impl<
         S1: Data<Elem = F::Scalar>,
         S2: DataMut<Elem = F::Scalar>,
     {
-        unimplemented!();
+        unimplemented!()
+        /*
+        match itask {
+            IdaTask::Normal => {
+                // Test for tn past tout.
+                if (self.ida_tn - tout) * self.ida_hh >= F::Scalar::zero() {
+                    // /* ier = */ IDAGetSolution(IDA_mem, tout, yret, ypret);
+                    *tret = tout;
+                    self.ida_tretlast = tout;
+                    self.get_solution(tout, yret, ypret)?;
+                    return Ok(IdaSolveStatus::Success);
+                }
+
+                if (self.ida_tstopset) {
+                    // Test for tn at tstop and for tn near tstop
+                    let troundoff = F::Scalar::hundred()
+                        * F::Scalar::epsilon()
+                        * (self.ida_tn.abs() + self.ida_hh.abs());
+                    if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
+                        /* ier = */
+                        self.get_solution(self.ida_tstop, yret, ypret);
+                        *tret = self.ida_tretlast = self.ida_tstop;
+                        self.ida_tstopset = false;
+                        //return(IDA_TSTOP_RETURN);
+
+                        //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.ida_tn.to_f64().unwrap(), })?
+                    }
+                    if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+                        > F::Scalar::zero()
+                    {
+                        self.ida_hh = (self.ida_tstop - self.ida_tn)
+                            * (F::Scalar::one() - F::Scalar::four() * self.ida_uround);
+                    }
+                }
+
+                //return(CONTINUE_STEPS);
+            }
+
+            IdaTask::OneStep => {
+                if self.ida_tstopset {
+                    /* Test for tn at tstop and for tn near tstop */
+                    let troundoff = F::Scalar::hundred()
+                        * F::Scalar::epsilon()
+                        * (self.ida_tn.abs() + self.ida_hh.abs());
+                    if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
+                        /* ier = */
+                        //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
+                        *tret = self.ida_tretlast = self.ida_tstop;
+                        self.ida_tstopset = false;
+
+                        self.get_solution(tout, yret, ypret)?;
+                        //return(IDA_TSTOP_RETURN);
+                    }
+                    if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+                        > F::Scalar::zero()
+                    {
+                        self.ida_hh = (self.ida_tstop - self.ida_tn)
+                            * (F::Scalar::one() - F::Scalar::four() * F::Scalar::epsilon());
+                    }
+                }
+
+                *tret = self.ida_tretlast = self.ida_tn;
+                //return (IDA_SUCCESS);
+            }
+        }
+
+        //return IDA_ILL_INPUT;  /* This return should never happen. */
+        */
     }
 
     /// This routine performs one internal IDA step, from tn to tn + hh. It calls other routines to do all the work.
@@ -1112,10 +1224,10 @@ impl<
             //-----------------------------------------------------
 
             self.ida_tn += self.ida_hh;
-            if self.ida_tstopset {
-                if (self.ida_tn - self.ida_tstop) * self.ida_hh > F::Scalar::one() {
-                    self.ida_tn = self.ida_tstop;
-                }
+            if self.ida_tstopset
+                && ((self.ida_tn - self.ida_tstop) * self.ida_hh > F::Scalar::one())
+            {
+                self.ida_tn = self.ida_tstop;
             }
 
             //-----------------------
@@ -1565,24 +1677,21 @@ impl<
             let mut hnew = self.ida_hh;
             //ida_rr = SUNRpowerR( TWO * err_knew + PT0001, -ONE/(self.ida_kk + 1) );
             self.ida_rr = {
-                let base =
-                    F::Scalar::from(2.0).unwrap() * err_knew + F::Scalar::from(0.0001).unwrap();
+                let base = F::Scalar::two() * err_knew + F::Scalar::pt0001();
                 let arg =
                     -F::Scalar::one() / (F::Scalar::from(self.ida_kk).unwrap() + F::Scalar::one());
                 base.powf(arg)
             };
 
-            if self.ida_rr >= F::Scalar::from(2.0).unwrap() {
-                hnew = F::Scalar::from(2.0).unwrap() * self.ida_hh;
+            if self.ida_rr >= F::Scalar::two() {
+                hnew = F::Scalar::two() * self.ida_hh;
                 let tmp = hnew.abs() * self.ida_hmax_inv;
                 if tmp > F::Scalar::one() {
                     hnew /= tmp;
                 }
             } else if self.ida_rr <= F::Scalar::one() {
                 //ida_rr = SUNMAX(HALF, SUNMIN(PT9,self.ida_rr));
-                self.ida_rr = F::Scalar::from(0.5)
-                    .unwrap()
-                    .max(self.ida_rr.min(F::Scalar::from(0.9).unwrap()));
+                self.ida_rr = F::Scalar::half().max(self.ida_rr.min(F::Scalar::pt9()));
                 hnew = self.ida_hh * self.ida_rr;
             }
 
@@ -1630,9 +1739,19 @@ impl<
     /// If `kused = 0` (no step has been taken), or if `t = tn`, then the order used here is taken
     /// to be 1, giving `yret = phi[0]`, `ypret = phi[1]/psi[0]`.
     ///
-    /// The return values are:
-    ///   IDA_SUCCESS  if t is legal, or
-    ///   IDA_BAD_T    if t is not within the interval of the last step taken.
+    /// # Arguments
+    ///
+    /// * `t` - requested independent variable (time)
+    /// * `yret` - return value of `y(t)`
+    /// * `ypret` - return value of `y'(t)`
+    ///
+    /// # Returns
+    ///
+    /// * () if `t` was legal. Outputs placed into `yret` and `ypret`
+    ///
+    /// # Errors
+    ///
+    /// * `IdaError::BadTimeValue` if `t` is not within the interval of the last step taken.
     pub fn get_solution<'a, S1, S2>(
         &mut self,
         t: F::Scalar,
@@ -1649,12 +1768,11 @@ impl<
 
         //tfuzz = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
 
-        let mut tfuzz = F::Scalar::from(100.0).unwrap()
+        let mut tfuzz = F::Scalar::hundred()
             * F::Scalar::epsilon()
-            * (self.ida_tn.abs() + self.ida_hh.abs());
-        if self.ida_hh < F::Scalar::zero() {
-            tfuzz = -tfuzz;
-        }
+            * (self.ida_tn.abs() + self.ida_hh.abs())
+            * self.ida_hh.signum();
+        //if self.ida_hh < F::Scalar::zero() { tfuzz = -tfuzz; }
         let tp = self.ida_tn - self.ida_hused - tfuzz;
         if (t - tp) * self.ida_hh < F::Scalar::zero() {
             Err(IdaError::BadTimeValue {
@@ -1699,7 +1817,7 @@ impl<
             });
 
         //retval = N_VLinearCombination(kord, self.ida_dvals, self.ida_phi+1, ypret);
-        ndarray::Zip::from(ypret.into_producer())
+        ndarray::Zip::from(ypret)
             .and(
                 self.ida_phi
                     .slice_axis(Axis(0), Slice::from(1..kord + 1))
@@ -1727,7 +1845,6 @@ impl<
         mask: bool,
     ) -> F::Scalar {
         if mask {
-            //x.norm_wrms_masked(w, self.ida_id)
             x.norm_wrms_masked(w, &self.ida_id)
         } else {
             x.norm_wrms(w)
@@ -2659,7 +2776,8 @@ mod tests {
         let mut yret = Array::zeros((3));
         let mut ypret = Array::zeros((3));
 
-        ida.get_solution(t, &mut yret.view_mut(), &mut ypret.view_mut()).unwrap();
+        ida.get_solution(t, &mut yret.view_mut(), &mut ypret.view_mut())
+            .unwrap();
 
         assert_nearly_eq!(yret, yret_expect, 1e-6);
         assert_nearly_eq!(ypret, ypret_expect, 1e-6);
