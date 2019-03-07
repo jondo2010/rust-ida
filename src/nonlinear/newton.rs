@@ -3,6 +3,7 @@ use ndarray::*;
 use crate::nonlinear::traits::*;
 use crate::traits::ModelSpec;
 
+#[derive(Debug)]
 struct Newton<P: NLProblem> {
     /// Newton update vector
     delta: Array1<P::Scalar>,
@@ -19,15 +20,20 @@ struct Newton<P: NLProblem> {
 }
 
 impl<
-        P: NLProblem<Scalar = impl num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef>,
+        P: NLProblem<
+            Scalar = impl num_traits::Float
+                         + num_traits::NumRef
+                         + num_traits::NumAssignRef
+                         + std::fmt::Debug,
+        >,
     > Newton<P>
 {
-    pub fn new(f: &P) -> Self {
+    pub fn new(size: usize, maxiters: usize) -> Self {
         Newton {
-            delta: Array::zeros(f.model_size()),
+            delta: Array::zeros(size),
             jcur: false,
             curiter: 0,
-            maxiters: 0,
+            maxiters: maxiters,
             niters: 0,
             nconvfails: 0,
         }
@@ -92,8 +98,6 @@ impl<
         let retval = 'outer: loop {
             // compute the nonlinear residual, store in delta
             NLProblem::res(problem, y0, &mut self.delta);
-            //retval = NEWTON_CONTENT(NLS)->Sys(y0, delta, mem);
-            //if (retval != SUN_NLS_SUCCESS) break;
 
             // if indicated, setup the linear system
             if call_lsetup {
@@ -216,28 +220,35 @@ mod tests {
         /// J(x,y,z) = ( 4x  2y  -4 )
         ///            ( 6x  -4  2z )  
         fn jac<S1, S2, S3>(
-            &self,
-            t: f64,
+            _t: f64,
             y: &ArrayBase<S1, Ix1>,
-            fy: &ArrayBase<S2, Ix1>,
-            J: &mut ArrayBase<S3, Ix2>,
+            _fy: &ArrayBase<S2, Ix1>,
+            j: &mut ArrayBase<S3, Ix2>,
         ) -> Result<(), failure::Error>
         where
-            S1: Data<Elem = <Self as ModelSpec>::Scalar>,
-            S2: Data<Elem = <Self as ModelSpec>::Scalar>,
-            S3: DataMut<Elem = <Self as ModelSpec>::Scalar>,
+            S1: Data<Elem = f64>,
+            S2: Data<Elem = f64>,
+            S3: DataMut<Elem = f64>,
         {
-            J[[0, 0]] = 2.0 * y[1];
-            J[[0, 1]] = 2.0 * y[2];
-            J[[0, 2]] = 2.0 * y[3];
+            j.assign(&array![
+                [2.0 * y[0], 2.0 * y[1], 2.0 * y[2]],
+                [4.0 * y[0], 2.0 * y[1], -4.0],
+                [6.0 * y[0], -4.0, 2.0 * y[2]]
+            ]);
 
-            J[[1, 0]] = 4.0 * y[1];
-            J[[1, 1]] = 2.0 * y[2];
-            J[[1, 2]] = -4.0;
+            /*
+            j[[0, 0]] = 2.0 * y[0];
+            j[[0, 1]] = 2.0 * y[1];
+            j[[0, 2]] = 2.0 * y[2];
 
-            J[[2, 0]] = 6.0 * y[1];
-            J[[2, 1]] = -4.0;
-            J[[2, 2]] = 2.0 * y[3];
+            j[[1, 0]] = 4.0 * y[0];
+            j[[1, 1]] = 2.0 * y[1];
+            j[[1, 2]] = -4.0;
+
+            j[[2, 0]] = 6.0 * y[0];
+            j[[2, 1]] = -4.0;
+            j[[2, 2]] = 2.0 * y[2];
+            */
             Ok(())
         }
     }
@@ -257,28 +268,25 @@ mod tests {
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
             S2: DataMut<Elem = <Self as ModelSpec>::Scalar>,
         {
-            f[0] = y[1] * y[1] + y[2] * y[2] + y[3] * y[3] - 1.0;
-            f[1] = 2.0 * y[1] * y[1] + y[2] * y[2] - 4.0 * y[3];
-            f[2] = 3.0 * (y[1] * y[1]) - 4.0 * y[2] + y[3] * y[3];
+            f[0] = y[0].powi(2) + y[1].powi(2) + y[2].powi(2) - 1.0;
+            f[1] = 2.0 * y[0].powi(2) + y[1].powi(2) - 4.0 * y[2];
+            f[2] = 3.0 * y[0].powi(2) - 4.0 * y[1] + y[2].powi(2);
             Ok(())
         }
 
         fn lsetup<S1>(
             &mut self,
             y: &ArrayBase<S1, Ix1>,
-            F: &ArrayView<<Self as ModelSpec>::Scalar, Ix1>,
-            jbad: bool,
+            _f: &ArrayView<<Self as ModelSpec>::Scalar, Ix1>,
+            _jbad: bool,
         ) -> bool
         where
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
         {
             // compute the Jacobian
-            self.jac(0.0, y, &Array::zeros(self.model_size()), &mut self.A);
+            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.A);
             //retval = Jac(ZERO, y, NULL, Imem->A, NULL, NULL, NULL, NULL);
             //if (retval != 0) return(retval);
-
-            // update Jacobian status
-            //*jcur = SUNTRUE;
 
             /* setup the linear solver */
             //retval = SUNLinSolSetup(Imem->LS, Imem->A);
@@ -287,7 +295,7 @@ mod tests {
             true
         }
 
-        fn lsolve<S1, S2>(&self, y: &ArrayBase<S1, Ix1>, b: &mut ArrayBase<S2, Ix1>)
+        fn lsolve<S1, S2>(&self, _y: &ArrayBase<S1, Ix1>, b: &mut ArrayBase<S2, Ix1>)
         where
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
             S2: DataMut<Elem = <Self as ModelSpec>::Scalar>,
@@ -295,7 +303,7 @@ mod tests {
             //retval = SUNLinSolSolve(Imem->LS, Imem->A, Imem->x, b, ZERO);
             //N_VScale(ONE, Imem->x, b);
             use ndarray_linalg::*;
-            self.A.solveh_inplace(b).unwrap();
+            self.A.solve_inplace(b).unwrap();
         }
 
         fn ctest<S1, S2, S3>(
@@ -323,7 +331,11 @@ mod tests {
     #[test]
     fn test_newton() {
         // approximate solution
-        let Y = array![0.785196933062355226, 0.496611392944656396, 0.369922830745872357];
+        let Y = array![
+            0.785196933062355226,
+            0.496611392944656396,
+            0.369922830745872357
+        ];
 
         let mut p = TestProblem {
             A: Array::zeros((3, 3)),
@@ -332,21 +344,23 @@ mod tests {
 
         // set initial guess
         let y0 = array![0.5, 0.5, 0.5];
-
         let mut y = Array::zeros(3);
 
         // set weights
         let w = array![1.0, 1.0, 1.0];
 
-        let mut newton = Newton::new(&p);
-        newton.solve(&mut p, &y0, &mut y, &w, 1e-2, true);
+        let mut newton = Newton::new(p.model_size(), 10);
+        newton.solve(&mut p, &y0, &mut y, &w, 1e-2, true).unwrap();
+
+        dbg!(&newton);
+
+        let expected_err = array![-0.00578453, 1.0143e-08, 1.47767e-08];
 
         // print the solution
         println!("Solution: y = {:?}", y);
-
-        // print the solution error
         println!("Solution Error = {:?}", &y - &Y);
+        println!("Number of nonlinear iterations: {}", newton.niters);
 
-        assert_nearly_eq!(y, Y);
+        assert_nearly_eq!(&y - &Y, expected_err, 1e-9);
     }
 }

@@ -31,6 +31,8 @@ pub trait Jacobian: ModelSpec {
 /// Core implementation for explicit schemes
 pub trait IdaModel: Residual + Jacobian {}
 
+impl<T> IdaModel for T where T: Residual + Jacobian {}
+
 /// Constants for Ida
 pub trait IdaConst {
     type Scalar: num_traits::Float;
