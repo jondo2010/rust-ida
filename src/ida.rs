@@ -2,6 +2,7 @@ use log::error;
 use ndarray::*;
 
 use crate::constants::*;
+use crate::nonlinear::*;
 use crate::traits::*;
 
 pub use crate::error::IdaError;
@@ -20,7 +21,7 @@ pub enum IdaSolveStatus {
 
 /// Structure containing the parameters for the numerical integration.
 #[derive(Debug, Clone)]
-pub struct Ida<F: IdaModel> {
+pub struct Ida<F: IdaModel, NLS: NLSolver> {
     f: F,
     //dt: <F::Scalar as AssociatedReal>::Real,
     //x: Array<F::Scalar, Ix1>,
@@ -103,13 +104,11 @@ pub struct Ida<F: IdaModel> {
     /// actual initial stepsize
     ida_h0u: F::Scalar,
     /// current step size h
-    //ida_hh: <F::Scalar as AssociatedReal>::Real,
     ida_hh: F::Scalar,
     /// step size used on last successful step
     ida_hused: F::Scalar,
     /// rr = hnext / hused
     ida_rr: F::Scalar,
-    //ida_rr: <F::Scalar as AssociatedReal>::Real,
     /// current internal value of t
     ida_tn: F::Scalar,
     /// value of tret previously returned by IDASolve
@@ -118,10 +117,14 @@ pub struct Ida<F: IdaModel> {
     ida_cj: F::Scalar,
     /// cj value saved from last successful step
     ida_cjlast: F::Scalar,
-    //realtype ida_cjold;    /* cj value saved from last call to lsetup           */
-    //realtype ida_cjratio;  /* ratio of cj values: cj/cjold                      */
-    //realtype ida_ss;       /* scalar used in Newton iteration convergence test  */
-    //realtype ida_oldnrm;   /* norm of previous nonlinear solver update          */
+    /// cj value saved from last call to lsetup
+    ida_cjold: F::Scalar,
+    /// ratio of cj values: cj/cjold
+    ida_cjratio: F::Scalar,
+    /// scalar used in Newton iteration convergence test
+    ida_ss: F::Scalar,
+    /// norm of previous nonlinear solver update
+    ida_oldnrm: F::Scalar,
     /// test constant in Newton convergence test
     ida_epsNewt: F::Scalar,
     /// coeficient of the Newton covergence test
@@ -193,20 +196,16 @@ pub struct Ida<F: IdaModel> {
     ida_Zvecs: Array<F::Scalar, Ix2>,
 }
 
-impl<
-        F: IdaModel<
-            Scalar = impl num_traits::Float
-                         + num_traits::float::FloatConst
-                         + num_traits::NumRef
-                         + num_traits::NumAssignRef
-                         + ScalarOperand
-                         + std::fmt::Debug
-                         + IdaConst,
-        >,
-    > Ida<F>
-//where
-//num_traits::float::Float + num_traits::float::FloatConst + num_traits::NumAssignRef + ScalarOperand
-//<<F as ModelSpec>::Dim as Dimension>::Larger: RemoveAxis,
+impl<F, NLS> Ida<F, NLS>
+where
+    F: IdaModel,
+    F::Scalar: num_traits::Float
+        + num_traits::float::FloatConst
+        + num_traits::NumRef
+        + num_traits::NumAssignRef
+        + ScalarOperand
+        + std::fmt::Debug
+        + IdaConst,
 {
     /// Creates a new IdaModel given a ModelSpec, initial Arrays of yy0 and yyp
     ///
@@ -1093,54 +1092,54 @@ impl<
                         * (self.ida_tn.abs() + self.ida_hh.abs());
                     if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
                         /* ier = */
-                        self.get_solution(self.ida_tstop, yret, ypret);
-                        *tret = self.ida_tretlast = self.ida_tstop;
-                        self.ida_tstopset = false;
-                        //return(IDA_TSTOP_RETURN);
+        self.get_solution(self.ida_tstop, yret, ypret);
+         *tret = self.ida_tretlast = self.ida_tstop;
+        self.ida_tstopset = false;
+        //return(IDA_TSTOP_RETURN);
 
-                        //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.ida_tn.to_f64().unwrap(), })?
-                    }
-                    if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-                        > F::Scalar::zero()
-                    {
-                        self.ida_hh = (self.ida_tstop - self.ida_tn)
-                            * (F::Scalar::one() - F::Scalar::four() * self.ida_uround);
-                    }
-                }
+        //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.ida_tn.to_f64().unwrap(), })?
+        }
+        if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+        > F::Scalar::zero()
+        {
+        self.ida_hh = (self.ida_tstop - self.ida_tn)
+         * (F::Scalar::one() - F::Scalar::four() * self.ida_uround);
+        }
+        }
 
-                //return(CONTINUE_STEPS);
-            }
+        //return(CONTINUE_STEPS);
+        }
 
-            IdaTask::OneStep => {
-                if self.ida_tstopset {
-                    /* Test for tn at tstop and for tn near tstop */
-                    let troundoff = F::Scalar::hundred()
-                        * F::Scalar::epsilon()
-                        * (self.ida_tn.abs() + self.ida_hh.abs());
-                    if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
-                        /* ier = */
-                        //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
-                        *tret = self.ida_tretlast = self.ida_tstop;
-                        self.ida_tstopset = false;
+        IdaTask::OneStep => {
+        if self.ida_tstopset {
+        /* Test for tn at tstop and for tn near tstop */
+        let troundoff = F::Scalar::hundred()
+         * F::Scalar::epsilon()
+         * (self.ida_tn.abs() + self.ida_hh.abs());
+        if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
+        /* ier = */
+        //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
+         *tret = self.ida_tretlast = self.ida_tstop;
+        self.ida_tstopset = false;
 
-                        self.get_solution(tout, yret, ypret)?;
-                        //return(IDA_TSTOP_RETURN);
-                    }
-                    if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-                        > F::Scalar::zero()
-                    {
-                        self.ida_hh = (self.ida_tstop - self.ida_tn)
-                            * (F::Scalar::one() - F::Scalar::four() * F::Scalar::epsilon());
-                    }
-                }
+        self.get_solution(tout, yret, ypret)?;
+        //return(IDA_TSTOP_RETURN);
+        }
+        if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+        > F::Scalar::zero()
+        {
+        self.ida_hh = (self.ida_tstop - self.ida_tn)
+         * (F::Scalar::one() - F::Scalar::four() * F::Scalar::epsilon());
+        }
+        }
 
-                *tret = self.ida_tretlast = self.ida_tn;
-                //return (IDA_SUCCESS);
-            }
+        *tret = self.ida_tretlast = self.ida_tn;
+        //return (IDA_SUCCESS);
+        }
         }
 
         //return IDA_ILL_INPUT;  /* This return should never happen. */
-        */
+         */
     }
 
     /// This routine performs one internal IDA step, from tn to tn + hh. It calls other routines to do all the work.
@@ -1363,7 +1362,69 @@ impl<
     /// This routine attempts to solve the nonlinear system using the linear solver specified.
     /// NOTE: this routine uses N_Vector ee as the scratch vector tempv3 passed to lsetup.
     fn nonlinear_solve(&mut self) -> Result<(), failure::Error> {
-        unimplemented!();
+        // Initialize if the first time called
+
+        if self.ida_nst == 0 {
+            self.ida_cjold = self.ida_cj;
+            self.ida_ss = F::Scalar::twenty();
+            if (self.ida_lsetup) {
+                callLSetup = true;
+            }
+        }
+
+        // Decide if lsetup is to be called
+
+        if self.ida_lsetup {
+            self.ida_cjratio = self.ida_cj / self.ida_cjold;
+            temp1 = (ONE - XRATE) / (ONE + XRATE);
+            temp2 = ONE / temp1;
+            if (self.ida_cjratio < temp1 || self.ida_cjratio > temp2) {
+                callLSetup = true;
+            }
+            if (self.ida_cj != self.ida_cjlast) {
+                self.ida_ss = F::Scalar::hundred();
+            }
+        }
+
+        // initial guess for the correction to the predictor
+        N_VConst(ZERO, self.ida_delta);
+
+        // call nonlinear solver setup if it exists
+        /*
+        if ((self.NLS)->ops->setup) {
+          retval = SUNNonlinSolSetup(self.NLS, self.ida_delta, IDA_mem);
+          if (retval < 0) return(IDA_NLS_SETUP_FAIL);
+          if (retval > 0) return(IDA_NLS_SETUP_RECVR);
+        }
+        */
+
+        // solve the nonlinear system
+        retval = SUNNonlinSolSolve(
+            self.NLS,
+            self.ida_delta,
+            self.ida_ee,
+            self.ida_ewt,
+            self.ida_epsNewt,
+            callLSetup,
+            IDA_mem,
+        );
+
+        /* update yy and yp based on the final correction from the nonlinear solve */
+        N_VLinearSum(ONE, self.ida_yypredict, ONE, self.ida_ee, self.ida_yy);
+        N_VLinearSum(
+            ONE,
+            self.ida_yppredict,
+            self.ida_cj,
+            self.ida_ee,
+            self.ida_yp,
+        );
+
+        /* return if nonlinear solver failed */
+        if (retval != IDA_SUCCESS) {
+            return (retval);
+        };
+
+        /* If otherwise successful, check and enforce inequality constraints. */
     }
 
     /// IDAPredict

@@ -19,15 +19,7 @@ struct Newton<P: NLProblem> {
     nconvfails: usize,
 }
 
-impl<
-        P: NLProblem<
-            Scalar = impl num_traits::Float
-                         + num_traits::NumRef
-                         + num_traits::NumAssignRef
-                         + std::fmt::Debug,
-        >,
-    > Newton<P>
-{
+impl<P: NLProblem> Newton<P> {
     pub fn new(size: usize, maxiters: usize) -> Self {
         Newton {
             delta: Array::zeros(size),
@@ -38,7 +30,13 @@ impl<
             nconvfails: 0,
         }
     }
+}
 
+impl<P> NLSolver<P> for Newton<P>
+where
+    P: NLProblem,
+    P::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + std::fmt::Debug,
+{
     ///
     /// # Arguments
     ///
@@ -66,14 +64,14 @@ impl<
     ///
     /// * `Err(Error::ConvergenceRecover)` - the iteration appears to be diverging, try to recover.
     /// * `Err(_)` - an unrecoverable error occurred.
-    pub fn solve<S1, S2>(
+    fn solve<S1, S2>(
         &mut self,
         problem: &mut P,
         y0: &ArrayBase<S1, Ix1>,
         y: &mut ArrayBase<S2, Ix1>,
         w: &ArrayBase<S1, Ix1>,
         tol: P::Scalar,
-        mut call_lsetup: bool,
+        call_lsetup: bool,
     ) -> Result<(), failure::Error>
     where
         S1: Data<Elem = P::Scalar>,
