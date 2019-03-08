@@ -2208,6 +2208,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_test_error2() {
         //--- IDATestError Before:
         let ck = 0.2025812352167927;

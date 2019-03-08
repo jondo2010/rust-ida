@@ -39,7 +39,7 @@ impl<
         }
     }
 
-    /// The optional function SUNNonlinSolLSetupFn is called by sundials integrators to provide the nonlinear solver with access to its linear solver setup function.
+    ///
     /// # Arguments
     ///
     /// * `problem` -
@@ -47,8 +47,7 @@ impl<
     /// * `y` -
     /// * `w` -
     /// * `tol` -
-    /// * `lsetup` - (SUNNonlinSolLSetupFn) a wrapper function to the sundials integrator’s linear
-    ///     solver setup function. See section 9.1.4 for the definition of SUNNonlinLSetupFn.
+    /// * `call_lsetup` -
     ///
     /// Note: The SUNNonlinLSetupFn function sets up the linear system `Ax = b` where `A = ∂F/∂y` is
     /// the linearization of the nonlinear residual function `F(y) = 0` (when using sunlinsol direct
@@ -61,21 +60,12 @@ impl<
     ///
     /// # Returns
     ///
-    /// Ok(())
+    /// * Ok(()) - Successfully converged on a solution
     ///
     /// # Errors
     ///
-    /// Recoverable failure return codes (positive):
-    /// * SUN_NLS_CONV_RECVR
-    /// *_RHSFUNC_RECVR (ODEs) or *_RES_RECVR (DAEs)
-    /// *_LSETUP_RECVR
-    /// *_LSOLVE_RECVR
-    ///
-    /// Unrecoverable failure return codes (negative):
-    /// *_MEM_NULL
-    /// *_RHSFUNC_FAIL (ODEs) or *_RES_FAIL (DAEs)
-    /// *_LSETUP_FAIL
-    /// *_LSOLVE_FAIL
+    /// * `Err(Error::ConvergenceRecover)` - the iteration appears to be diverging, try to recover.
+    /// * `Err(_)` - an unrecoverable error occurred.
     pub fn solve<S1, S2>(
         &mut self,
         problem: &mut P,
@@ -114,21 +104,17 @@ impl<
                     self.curiter = 0;
                     // load prediction into y
                     y.assign(&y0);
-
                     // looping point for Newton iteration. Break out on any error.
-                    let retval: Result<(), failure::Error> = 'inner: loop {
+                    'inner: loop {
                         // increment nonlinear solver iteration counter
                         self.niters += 1;
-
                         // compute the negative of the residual for the linear system rhs
                         self.delta.mapv_inplace(P::Scalar::neg);
-
                         // solve the linear system to get Newton update delta
                         let retval =
                             NLProblem::lsolve(problem, y, &mut self.delta).and_then(|_| {
                                 // update the Newton iterate
                                 *y += &self.delta;
-
                                 // test for convergence
                                 NLProblem::ctest(problem, y, &self.delta.view(), tol, w).and_then(
                                     |converged| {
@@ -139,9 +125,12 @@ impl<
                                         } else {
                                             self.curiter += 1;
                                             if self.curiter >= self.maxiters {
-                                                Ok(false)
+                                                Err(failure::Error::from(
+                                                    Error::ConvergenceRecover {},
+                                                ))
                                             } else {
                                                 // compute the nonlinear residual, store in delta
+                                                // Ok(false) will continue to iterate 'inner
                                                 problem.sys(y, &mut self.delta).and(Ok(false))
                                             }
                                         }
@@ -150,15 +139,12 @@ impl<
                             });
 
                         // check if the iteration should continue; otherwise exit Newton loop
-                        if retval.is_err() {
-                            break retval;
+                        if let Ok(false) = retval {
+                            continue 'inner;
+                        } else {
+                            break retval.and(Ok(()));
                         }
-                        /*
-                        else { continue; }
-                        */
-                    }; // end of Newton iteration loop
-
-                    retval
+                    } // end of Newton iteration loop
                 });
 
             // all inner-loop results go here
@@ -239,20 +225,6 @@ mod tests {
                 [4.0 * y[0], 2.0 * y[1], -4.0],
                 [6.0 * y[0], -4.0, 2.0 * y[2]]
             ]);
-
-            /*
-            j[[0, 0]] = 2.0 * y[0];
-            j[[0, 1]] = 2.0 * y[1];
-            j[[0, 2]] = 2.0 * y[2];
-
-            j[[1, 0]] = 4.0 * y[0];
-            j[[1, 1]] = 2.0 * y[1];
-            j[[1, 2]] = -4.0;
-
-            j[[2, 0]] = 6.0 * y[0];
-            j[[2, 1]] = -4.0;
-            j[[2, 2]] = 2.0 * y[2];
-            */
             Ok(())
         }
     }
@@ -288,14 +260,10 @@ mod tests {
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
         {
             // compute the Jacobian
-            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.A);
-            //retval = Jac(ZERO, y, NULL, Imem->A, NULL, NULL, NULL, NULL);
-            //if (retval != 0) return(retval);
+            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.A).map(|_| true)
 
-            /* setup the linear solver */
+            // setup the linear solver
             //retval = SUNLinSolSetup(Imem->LS, Imem->A);
-
-            Ok(true)
         }
 
         fn lsolve<S1, S2>(
@@ -361,7 +329,9 @@ mod tests {
         let w = array![1.0, 1.0, 1.0];
 
         let mut newton = Newton::new(p.model_size(), 10);
-        newton.solve(&mut p, &y0, &mut y, &w, 1e-2, true).unwrap();
+        newton
+            .solve(&mut p, &y0, &mut y, &w, 1e-2, true)
+            .expect("Should have converged.");
 
         dbg!(&newton);
 

@@ -4,7 +4,8 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'ida-rs'",
+            "name": "Debug unit tests in library 'ida'",
+            "sourceLanguages": ["rust"],
             "cargo": {
                 "args": [
                     "test",
@@ -12,10 +13,12 @@
                     "--lib",
                     "--package=ida",
                     "--",
-                    "test_newton"
+                    "--exact",
+                    "test_newton",
                 ],
                 "filter": {
-                    "kind": "lib"
+                    "kind": "lib",
+                    "name": "ida"
                 }
             },
             "args": [],

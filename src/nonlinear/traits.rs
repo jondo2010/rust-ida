@@ -117,10 +117,10 @@ pub trait NLProblem: ModelSpec {
     ///
     /// # Returns
     ///
-    /// The return value of this routine will be a negative value if an unrecoverable error occurred or one of the following:
-    /// Ok(`true`) - the iteration is converged.
-    /// Ok(`false`) - the iteration has not converged, keep iterating.
-    /// Err() - SUN NLS CONV RECVR the iteration appears to be diverging, try to recover.
+    /// * `Ok(true)` - the iteration is converged.
+    /// * `Ok(false)` - the iteration has not converged, keep iterating.
+    /// * `Err(Error::ConvergenceRecover)` - the iteration appears to be diverging, try to recover.
+    /// * `Err(_)` - an unrecoverable error occurred.
     ///
     /// # Notes
     ///
