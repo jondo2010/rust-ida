@@ -84,7 +84,7 @@ impl<
         w: &ArrayBase<S1, Ix1>,
         tol: P::Scalar,
         mut call_lsetup: bool,
-    ) -> Result<(), Error>
+    ) -> Result<(), failure::Error>
     where
         S1: Data<Elem = P::Scalar>,
         S2: DataMut<Elem = P::Scalar>,
@@ -95,91 +95,95 @@ impl<
         // looping point for attempts at solution of the nonlinear system: Evaluate the nonlinear
         // residual function (store in delta) Setup the linear solver if necessary Preform Newton
         // iteraion
-        let retval = 'outer: loop {
+        let retval: Result<(), failure::Error> = 'outer: loop {
             // compute the nonlinear residual, store in delta
-            NLProblem::res(problem, y0, &mut self.delta);
-
-            // if indicated, setup the linear system
-            if call_lsetup {
-                self.jcur = NLProblem::lsetup(problem, y0, &self.delta.view(), jbad);
-            }
-
-            // initialize counter curiter
-            self.curiter = 0;
-
-            // load prediction into y
-            y.assign(&y0);
-
-            // looping point for Newton iteration. Break out on any error.
-            let retval: Result<(), Error> = 'inner: loop {
-                // increment nonlinear solver iteration counter
-                self.niters += 1;
-
-                // compute the negative of the residual for the linear system rhs
-                self.delta.mapv_inplace(P::Scalar::neg);
-
-                // solve the linear system to get Newton update delta
-                NLProblem::lsolve(problem, y, &mut self.delta);
-
-                // update the Newton iterate
-                //N_VLinearSum(ONE, y, ONE, delta, y);
-                *y += &self.delta;
-
-                // test for convergence
-                let retval = NLProblem::ctest(problem, y, &self.delta.view(), tol, w);
-
-                match retval {
-                    // if successful update Jacobian status and return
-                    Ok(true) => {
-                        self.jcur = false;
-                        //  return(SUN_NLS_SUCCESS);
-                        break Ok(());
+            let retval = problem
+                .sys(y0, &mut self.delta)
+                .and_then(|_| {
+                    // if indicated, setup the linear system
+                    if call_lsetup {
+                        problem
+                            .lsetup(y0, &self.delta.view(), jbad)
+                            .map(|jcur| self.jcur = jcur)
+                    } else {
+                        Ok(())
                     }
-                    // check if the iteration should continue; otherwise exit Newton loop
-                    Ok(false) => {
-                        // not yet converged. Increment curiter and test for max allowed.
-                        self.curiter += 1;
-                        if self.curiter >= self.maxiters {
-                            //  retval = SUN_NLS_CONV_RECVR;
-                            break Err(Error::ConvergenceRecover {});
-                        }
+                })
+                .and_then(|_| {
+                    // initialize counter curiter
+                    self.curiter = 0;
+                    // load prediction into y
+                    y.assign(&y0);
 
-                        // compute the nonlinear residual, store in delta
-                        let retval = NLProblem::res(problem, y, &mut self.delta);
+                    // looping point for Newton iteration. Break out on any error.
+                    let retval: Result<(), failure::Error> = 'inner: loop {
+                        // increment nonlinear solver iteration counter
+                        self.niters += 1;
 
-                        //if (retval != SUN_NLS_SUCCESS) break;
+                        // compute the negative of the residual for the linear system rhs
+                        self.delta.mapv_inplace(P::Scalar::neg);
+
+                        // solve the linear system to get Newton update delta
+                        let retval =
+                            NLProblem::lsolve(problem, y, &mut self.delta).and_then(|_| {
+                                // update the Newton iterate
+                                *y += &self.delta;
+
+                                // test for convergence
+                                NLProblem::ctest(problem, y, &self.delta.view(), tol, w).and_then(
+                                    |converged| {
+                                        if converged {
+                                            // if successful update Jacobian status and return
+                                            self.jcur = false;
+                                            Ok(true)
+                                        } else {
+                                            self.curiter += 1;
+                                            if self.curiter >= self.maxiters {
+                                                Ok(false)
+                                            } else {
+                                                // compute the nonlinear residual, store in delta
+                                                problem.sys(y, &mut self.delta).and(Ok(false))
+                                            }
+                                        }
+                                    },
+                                )
+                            });
+
+                        // check if the iteration should continue; otherwise exit Newton loop
                         if retval.is_err() {
                             break retval;
                         }
-                    }
-                    Err(_) => {
-                        //if (retval != SUN_NLS_CONTINUE) break;
-                        break retval.map(|_| ());
-                    }
-                }
-            }; // end of Newton iteration loop
+                        /*
+                        else { continue; }
+                        */
+                    }; // end of Newton iteration loop
+
+                    retval
+                });
 
             // all inner-loop results go here
 
-            // If there is a recoverable convergence failure and the Jacobian-related data appears
-            // not to be current, increment the convergence failure count and loop again with a
-            // call to lsetup in which jbad is TRUE. Otherwise break out and return.
-            match retval {
+            match &retval {
                 Ok(_) => {
                     return retval;
                 }
 
-                Err(_) => {
-                    if !self.jcur {
-                        self.nconvfails += 1;
-                        call_lsetup = true;
-                        jbad = true;
-                        continue 'outer;
-                    } else {
-                        break 'outer retval;
+                Err(error) => {
+                    // If there is a recoverable convergence failure and the Jacobian-related data
+                    // appears not to be current, increment the convergence failure count and loop
+                    // again with a call to lsetup in which jbad = true.
+                    if let Some(Error::ConvergenceRecover {}) = error.downcast_ref::<Error>() {
+                        if !self.jcur {
+                            self.nconvfails += 1;
+                            call_lsetup = true;
+                            jbad = true;
+                            continue 'outer;
+                        }
                     }
                 }
             }
+            // Otherwise break out and return.
+            break 'outer retval;
         }; // end of setup loop
 
         // increment number of convergence failures
@@ -259,11 +263,11 @@ mod tests {
         /// f1(x,y,z) = x^2 + y^2 + z^2 - 1 = 0
         /// f2(x,y,z) = 2x^2 + y^2 - 4z     = 0
         /// f3(x,y,z) = 3x^2 - 4y + z^2     = 0
-        fn res<S1, S2>(
+        fn sys<S1, S2>(
             &self,
             y: &ArrayBase<S1, Ix1>,
             f: &mut ArrayBase<S2, Ix1>,
-        ) -> Result<(), Error>
+        ) -> Result<(), failure::Error>
         where
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
             S2: DataMut<Elem = <Self as ModelSpec>::Scalar>,
@@ -279,7 +283,7 @@ mod tests {
             y: &ArrayBase<S1, Ix1>,
             _f: &ArrayView<<Self as ModelSpec>::Scalar, Ix1>,
             _jbad: bool,
-        ) -> bool
+        ) -> Result<bool, failure::Error>
         where
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
         {
@@ -291,19 +295,26 @@ mod tests {
             /* setup the linear solver */
             //retval = SUNLinSolSetup(Imem->LS, Imem->A);
 
-            //return(retval);
-            true
+            Ok(true)
         }
 
-        fn lsolve<S1, S2>(&self, _y: &ArrayBase<S1, Ix1>, b: &mut ArrayBase<S2, Ix1>)
+        fn lsolve<S1, S2>(
+            &self,
+            _y: &ArrayBase<S1, Ix1>,
+            b: &mut ArrayBase<S2, Ix1>,
+        ) -> Result<(), failure::Error>
         where
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
             S2: DataMut<Elem = <Self as ModelSpec>::Scalar>,
         {
+            // Solve self.A * b = b
             //retval = SUNLinSolSolve(Imem->LS, Imem->A, Imem->x, b, ZERO);
             //N_VScale(ONE, Imem->x, b);
             use ndarray_linalg::*;
-            self.A.solve_inplace(b).unwrap();
+            self.A
+                .solve_inplace(b)
+                .map(|_| ())
+                .map_err(failure::Error::from)
         }
 
         fn ctest<S1, S2, S3>(
@@ -312,7 +323,7 @@ mod tests {
             del: &ArrayBase<S2, Ix1>,
             tol: <Self as ModelSpec>::Scalar,
             ewt: &ArrayBase<S3, Ix1>,
-        ) -> Result<bool, Error>
+        ) -> Result<bool, failure::Error>
         where
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
             S2: Data<Elem = <Self as ModelSpec>::Scalar>,
