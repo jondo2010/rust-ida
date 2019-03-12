@@ -1,7 +1,21 @@
 use log::error;
 use ndarray::*;
 
+use num_traits::{
+    cast::{FromPrimitive, NumCast, ToPrimitive},
+    identities::{One, Zero},
+    Float, NumAssignRef, NumRef,
+};
+
+/*
+num_traits::float::FloatConst
+        + num_traits::NumRef
+        + num_traits::NumAssignRef
+        + ScalarOperand
+        */
+
 use crate::constants::*;
+use crate::ida_ls::*;
 use crate::nonlinear::*;
 use crate::traits::*;
 
@@ -21,7 +35,10 @@ pub enum IdaSolveStatus {
 
 /// Structure containing the parameters for the numerical integration.
 #[derive(Debug, Clone)]
-pub struct Ida<F: IdaModel, NLS: NLSolver> {
+pub struct Ida<
+    F: IdaModel,
+    /*NLS: NLSolver*/
+> {
     f: F,
     //dt: <F::Scalar as AssociatedReal>::Real,
     //x: Array<F::Scalar, Ix1>,
@@ -196,10 +213,10 @@ pub struct Ida<F: IdaModel, NLS: NLSolver> {
     ida_Zvecs: Array<F::Scalar, Ix2>,
 }
 
-impl<F, NLS> Ida<F, NLS>
+impl<F /*, NLS*/> Ida<F /*, NLS*/>
 where
     F: IdaModel,
-    F::Scalar: num_traits::Float
+    <F as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
         + num_traits::NumAssignRef
@@ -241,10 +258,10 @@ where
             //ida_errfp       = stderr;
             ida_maxord: MAXORD_DEFAULT as usize,
             ida_mxstep: MXSTEP_DEFAULT as u64,
-            ida_hmax_inv: F::Scalar::from(HMAX_INV_DEFAULT).unwrap(),
+            ida_hmax_inv: NumCast::from(HMAX_INV_DEFAULT).unwrap(),
             ida_hin: F::Scalar::zero(),
             ida_epsNewt: F::Scalar::zero(),
-            ida_epcon: F::Scalar::from(EPCON).unwrap(),
+            ida_epcon: NumCast::from(EPCON).unwrap(),
             ida_toldel: F::Scalar::zero(),
             ida_maxnef: MXNEF as u64,
             ida_maxncf: MXNCF as u64,
@@ -331,6 +348,10 @@ where
             //ida_hused: <F::Scalar as AssociatedReal>::Real::from_f64(0.0),
             ida_cj: F::Scalar::zero(),
             ida_cjlast: F::Scalar::zero(),
+            ida_cjold: F::Scalar::zero(),
+            ida_cjratio: F::Scalar::zero(),
+            ida_oldnrm: F::Scalar::zero(),
+            ida_ss: F::Scalar::zero(),
 
             ida_cvals: Array::zeros(MXORDP1),
             ida_dvals: Array::zeros(MAXORD_DEFAULT),
@@ -809,7 +830,7 @@ where
                 //                                                i       i-1          1
                 // c_i^(i) can be always updated since c_i^(i) = -----  --------  ... -----
                 //                                               psi_j  psi_{j-1}     psi_1
-                cjk[i] = cjk[i - 1] * F::Scalar::from(i as f64).unwrap() / self.ida_psi[i - 1];
+                cjk[i] = cjk[i - 1] * NumCast::from(i as f64).unwrap() / self.ida_psi[i - 1];
                 psij_1 = self.ida_psi[i - 1];
             }
 
@@ -817,7 +838,7 @@ where
             //j does not need to go till kused
             //for(j=i+1; j<=self.ida_kused-k+i; j++) {
             for j in i + 1..self.ida_kused - k + 1 + 1 {
-                cjk[j] = (F::Scalar::from(i as f64).unwrap() * cjk_1[j - 1]
+                cjk[j] = (NumCast::from(i as f64).unwrap() * cjk_1[j - 1]
                     + cjk[j - 1] * (delt + psij_1))
                     / self.ida_psi[j - 1];
                 psij_1 = self.ida_psi[j - 1];
@@ -1319,7 +1340,7 @@ where
                 temp1 = temp2 + self.ida_hh;
                 self.ida_alpha[i] = self.ida_hh / temp1;
                 self.ida_sigma[i] =
-                    self.ida_sigma[i - 1] * self.ida_alpha[i] * F::Scalar::from(i).unwrap();
+                    self.ida_sigma[i - 1] * self.ida_alpha[i] * NumCast::from(i).unwrap();
                 self.ida_gamma[i] = self.ida_gamma[i - 1] + self.ida_alpha[i - 1] / self.ida_hh;
             }
             self.ida_psi[self.ida_kk] = temp1;
@@ -1328,7 +1349,7 @@ where
         let mut alphas = F::Scalar::zero();
         let mut alpha0 = F::Scalar::zero();
         for i in 0..self.ida_kk {
-            alphas -= F::Scalar::one() / F::Scalar::from(i + 1).unwrap();
+            alphas -= F::Scalar::one() / NumCast::from(i + 1).unwrap();
             alpha0 -= self.ida_alpha[i];
         }
 
@@ -1367,27 +1388,26 @@ where
         if self.ida_nst == 0 {
             self.ida_cjold = self.ida_cj;
             self.ida_ss = F::Scalar::twenty();
-            if (self.ida_lsetup) {
-                callLSetup = true;
-            }
+            //if (self.ida_lsetup) { callLSetup = true; }
         }
 
         // Decide if lsetup is to be called
 
         if self.ida_lsetup {
             self.ida_cjratio = self.ida_cj / self.ida_cjold;
-            temp1 = (ONE - XRATE) / (ONE + XRATE);
-            temp2 = ONE / temp1;
-            if (self.ida_cjratio < temp1 || self.ida_cjratio > temp2) {
+            let temp1 = NumCast::from((1.0 - XRATE) / (1.0 + XRATE)).unwrap();
+            let temp2 = temp1.recip();
+            if self.ida_cjratio < temp1 || self.ida_cjratio > temp2 {
                 callLSetup = true;
             }
-            if (self.ida_cj != self.ida_cjlast) {
+            if self.ida_cj != self.ida_cjlast {
                 self.ida_ss = F::Scalar::hundred();
             }
         }
 
         // initial guess for the correction to the predictor
-        N_VConst(ZERO, self.ida_delta);
+        //N_VConst(ZERO, self.ida_delta);
+        self.ida_delta = Array::zeros(self.f.model_size());
 
         // call nonlinear solver setup if it exists
         /*
@@ -1409,7 +1429,7 @@ where
             IDA_mem,
         );
 
-        /* update yy and yp based on the final correction from the nonlinear solve */
+        // update yy and yp based on the final correction from the nonlinear solve
         N_VLinearSum(ONE, self.ida_yypredict, ONE, self.ida_ee, self.ida_yy);
         N_VLinearSum(
             ONE,
@@ -1419,10 +1439,8 @@ where
             self.ida_yp,
         );
 
-        /* return if nonlinear solver failed */
-        if (retval != IDA_SUCCESS) {
-            return (retval);
-        };
+        // return if nonlinear solver failed */
+        //if (retval != IDA_SUCCESS) { return (retval); };
 
         /* If otherwise successful, check and enforce inequality constraints. */
     }
@@ -1490,7 +1508,7 @@ where
         // Compute error for order k.
         let enorm_k = self.wrms_norm(&self.ida_ee, &self.ida_ewt, self.ida_suppressalg);
         let err_k = self.ida_sigma[self.ida_kk] * enorm_k;
-        let terr_k = err_k * F::Scalar::from(self.ida_kk + 1).unwrap();
+        let terr_k = err_k * NumCast::from(self.ida_kk + 1).unwrap();
 
         let mut err_km1 = F::Scalar::zero(); // estimated error at k-1
         let mut err_km2 = F::Scalar::zero(); // estimated error at k-2
@@ -1502,7 +1520,7 @@ where
             self.ida_delta = &self.ida_phi.index_axis(Axis(0), self.ida_kk) + &self.ida_ee;
             let enorm_km1 = self.wrms_norm(&self.ida_delta, &self.ida_ewt, self.ida_suppressalg);
             err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
-            let terr_km1 = err_km1 * F::Scalar::from(self.ida_kk).unwrap();
+            let terr_km1: F::Scalar = err_km1 * NumCast::from(self.ida_kk).unwrap();
 
             if self.ida_kk > 2 {
                 // Compute error at order k-2
@@ -1514,7 +1532,7 @@ where
                 let enorm_km2 =
                     self.wrms_norm(&self.ida_delta, &self.ida_ewt, self.ida_suppressalg);
                 err_km2 = self.ida_sigma[self.ida_kk - 2] * enorm_km2;
-                let terr_km2 = err_km2 * F::Scalar::from(self.ida_kk - 1).unwrap();
+                let terr_km2 = err_km2 * NumCast::from(self.ida_kk - 1).unwrap();
 
                 // Decrease order if errors are reduced
                 if terr_km1.max(terr_km2) <= terr_k {
@@ -1522,7 +1540,7 @@ where
                 }
             } else {
                 // Decrease order to 1 if errors are reduced by at least 1/2
-                if terr_km1 <= (terr_k * F::Scalar::from(0.5).unwrap()) {
+                if terr_km1 <= (terr_k * F::Scalar::half()) {
                     self.ida_knew = self.ida_kk - 1;
                 }
             }
@@ -1656,7 +1674,7 @@ where
         if self.ida_phase == 0 {
             if self.ida_nst > 1 {
                 self.ida_kk += 1;
-                let mut hnew = F::Scalar::from(2.0).unwrap() * self.ida_hh;
+                let mut hnew = F::Scalar::two() * self.ida_hh;
                 let tmp = hnew.abs() * self.ida_hmax_inv;
                 if tmp > F::Scalar::one() {
                     hnew /= tmp;
@@ -1692,21 +1710,21 @@ where
                 //N_VLinearSum(ONE, self.ida_ee, -ONE, self.ida_phi[self.ida_kk + 1], self.ida_tempv1);
                 let ida_tempv1 = &self.ida_ee - &self.ida_phi.index_axis(Axis(0), self.ida_kk + 1);
                 let enorm = self.wrms_norm(&ida_tempv1, &self.ida_ewt, self.ida_suppressalg);
-                err_kp1 = enorm / F::Scalar::from(self.ida_kk + 2).unwrap();
+                err_kp1 = enorm / NumCast::from(self.ida_kk + 2).unwrap();
 
                 // Choose among orders k-1, k, k+1 using local truncation error norms.
 
-                let terr_k = F::Scalar::from(self.ida_kk + 1).unwrap() * err_k;
-                let terr_kp1 = F::Scalar::from(self.ida_kk + 2).unwrap() * err_kp1;
+                let terr_k: F::Scalar = NumCast::from(self.ida_kk + 1).unwrap() * err_k;
+                let terr_kp1 = NumCast::from(self.ida_kk + 2).unwrap() * err_kp1;
 
                 if self.ida_kk == 1 {
-                    if terr_kp1 >= F::Scalar::from(0.5).unwrap() * terr_k {
+                    if terr_kp1 >= F::Scalar::half() * terr_k {
                         action = Action::Maintain;
                     } else {
                         action = Action::Raise;
                     }
                 } else {
-                    let terr_km1 = F::Scalar::from(self.ida_kk).unwrap() * err_km1;
+                    let terr_km1 = NumCast::from(self.ida_kk).unwrap() * err_km1;
                     if terr_km1 <= terr_k.min(terr_kp1) {
                         action = Action::Lower;
                     } else if terr_kp1 >= terr_k {
@@ -1740,7 +1758,7 @@ where
             self.ida_rr = {
                 let base = F::Scalar::two() * err_knew + F::Scalar::pt0001();
                 let arg =
-                    -F::Scalar::one() / (F::Scalar::from(self.ida_kk).unwrap() + F::Scalar::one());
+                    -F::Scalar::one() / (NumCast::from(self.ida_kk).unwrap() + F::Scalar::one());
                 base.powf(arg)
             };
 

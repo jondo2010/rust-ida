@@ -25,12 +25,17 @@ pub enum Error {
     //SUN_NLS_VECTOROP_ERR
 }
 
-pub trait NLProblem: ModelSpec {
+pub trait NLProblem<M, NLS>
+where
+    M: ModelSpec,
+    NLS: NLSolver<M>,
+{
     /// `sys` evaluates the nonlinear system `F(y)` for ROOTFIND type modules or `G(y)` for
     /// FIXEDPOINT type modules.
     ///
     /// # Arguments
     ///
+    /// * `nls` is the nonlinear solver
     /// * `y` is the state vector at which the nonlinear system should be evaluated.
     /// * `f` is the output vector containing `F(y)` or `G(y)`, depending on the solver type.
     ///
@@ -41,18 +46,20 @@ pub trait NLProblem: ModelSpec {
     /// * `Err(_) for an unrecoverable error
     fn sys<S1, S2>(
         &self,
+        nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         f: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
-        S1: Data<Elem = <Self as ModelSpec>::Scalar>,
-        S2: DataMut<Elem = <Self as ModelSpec>::Scalar>;
+        S1: Data<Elem = M::Scalar>,
+        S2: DataMut<Elem = M::Scalar>;
 
     /// `lsetup` is called by integrators to provide the nonlinear solver with access to its linear
     /// solver setup function.
     ///
     /// # Arguments
     ///
+    /// * `nls` is the nonlinear solver
     /// * `y` is the state vector at which the linear system should be setup.
     /// * `F` is the value of the nonlinear system function at y.
     /// * `jbad` is an input indicating whether the nonlinear solver believes that A has gone stale
@@ -73,12 +80,13 @@ pub trait NLProblem: ModelSpec {
     /// functions.
     fn lsetup<S1>(
         &mut self,
+        nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
-        F: &ArrayView<<Self as ModelSpec>::Scalar, Ix1>,
+        F: &ArrayView<M::Scalar, Ix1>,
         jbad: bool,
     ) -> Result<bool, failure::Error>
     where
-        S1: Data<Elem = <Self as ModelSpec>::Scalar>,
+        S1: Data<Elem = M::Scalar>,
     {
         Ok(false)
     }
@@ -102,18 +110,20 @@ pub trait NLProblem: ModelSpec {
     /// this system or do not use sunlinsol linear solvers may ignore these functions.
     fn lsolve<S1, S2>(
         &self,
+        nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         b: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
-        S1: Data<Elem = <Self as ModelSpec>::Scalar>,
-        S2: DataMut<Elem = <Self as ModelSpec>::Scalar>;
+        S1: Data<Elem = M::Scalar>,
+        S2: DataMut<Elem = M::Scalar>;
 
     /// `ctest` is an integrator-specific convergence test for nonlinear solvers and are typically
     /// supplied by each integrator, but users may supply custom problem-specific versions as desired.
     ///
     /// # Arguments
     ///
+    /// * `nls` is the nonlinear solver
     /// * `y` is the current nonlinear iterate.
     /// * `del` is the difference between the current and prior nonlinear iterates.
     /// * `tol` is the nonlinear solver tolerance.
@@ -133,18 +143,19 @@ pub trait NLProblem: ModelSpec {
     /// convergence criteria may ignore these functions.
     fn ctest<S1, S2, S3>(
         &self,
+        nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         del: &ArrayBase<S2, Ix1>,
-        tol: <Self as ModelSpec>::Scalar,
+        tol: M::Scalar,
         ewt: &ArrayBase<S3, Ix1>,
     ) -> Result<bool, failure::Error>
     where
-        S1: Data<Elem = <Self as ModelSpec>::Scalar>,
-        S2: Data<Elem = <Self as ModelSpec>::Scalar>,
-        S3: Data<Elem = <Self as ModelSpec>::Scalar>;
+        S1: Data<Elem = M::Scalar>,
+        S2: Data<Elem = M::Scalar>,
+        S3: Data<Elem = M::Scalar>;
 }
 
-pub trait NLSolver<P: NLProblem> {
+pub trait NLSolver<M: ModelSpec> {
     /// Solves the nonlinear system `F(y)=0` or `G(y)=y`.
     ///
     /// # Arguments
@@ -171,16 +182,28 @@ pub trait NLSolver<P: NLProblem> {
     ///
     /// * `Err(Error::ConvergenceRecover)` - the iteration appears to be diverging, try to recover.
     /// * `Err(_)` - an unrecoverable error occurred.
-    fn solve<S1, S2>(
+    fn solve<P, S1, S2>(
         &mut self,
         problem: &mut P,
         y0: &ArrayBase<S1, Ix1>,
         y: &mut ArrayBase<S2, Ix1>,
         w: &ArrayBase<S1, Ix1>,
-        tol: P::Scalar,
+        tol: M::Scalar,
         call_lsetup: bool,
     ) -> Result<(), failure::Error>
     where
-        S1: Data<Elem = P::Scalar>,
-        S2: DataMut<Elem = P::Scalar>;
+        P: NLProblem<M, Self>,
+        S1: Data<Elem = M::Scalar>,
+        S2: DataMut<Elem = M::Scalar>;
+
+    /// get the total number on nonlinear iterations (optional)
+    fn get_num_iters(&self) -> usize {
+        0
+    }
+
+    /// get the iteration count for the current nonlinear solve
+    fn get_cur_iter(&self) -> usize;
+
+    /// get the total number on nonlinear solve convergence failures (optional)
+    fn get_num_conv_fails(&self) -> usize;
 }
