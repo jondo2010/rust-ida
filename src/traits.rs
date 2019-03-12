@@ -1,6 +1,6 @@
 //! Basic traits for problem specification
 
-use ndarray::*;
+use ndarray::prelude::*;
 
 /// Model specification
 pub trait ModelSpec: Clone {
@@ -13,7 +13,7 @@ pub trait Residual: ModelSpec {
     /// Nonlinear residual function
     fn residual<'a, S>(&mut self, v: &'a mut ArrayBase<S, Ix1>) -> &'a mut ArrayBase<S, Ix1>
     where
-        S: DataMut<Elem = Self::Scalar>;
+        S: ndarray::DataMut<Elem = Self::Scalar>;
 
     fn res<S1, S2, S3>(
         &self,
@@ -36,13 +36,16 @@ pub trait Jacobian: ModelSpec {
         yp: &ArrayView<S, Ix1>,
     ) -> ()
     where
-        S: DataMut<Elem = Self::Scalar>;
+        S: ndarray::DataMut<Elem = Self::Scalar>;
 }
 
 /// Core implementation for explicit schemes
 pub trait IdaModel: Residual + Jacobian {}
 
-impl<T> IdaModel for T where T: Residual + Jacobian {}
+impl<T> IdaModel for T
+where
+    T: Residual + Jacobian
+{}
 
 /// Constants for Ida
 pub trait IdaConst {
@@ -124,7 +127,7 @@ impl IdaConst for f64 {
 pub trait NormRms<A, S, D>
 where
     A: num_traits::float::Float,
-    S: Data<Elem = A>,
+    S: ndarray::Data<Elem = A>,
     D: Dimension,
 {
     /// Weighted root-mean-square norm
@@ -134,9 +137,9 @@ where
 pub trait NormRmsMasked<A, S, D, B>
 where
     A: num_traits::float::Float,
-    S: Data<Elem = A>,
+    S: ndarray::Data<Elem = A>,
     D: Dimension,
-    B: Data<Elem = bool>,
+    B: ndarray::Data<Elem = bool>,
 {
     /// Weighted, masked root-mean-square norm
     fn norm_wrms_masked(&self, w: &ArrayBase<S, D>, id: &ArrayBase<B, D>) -> A;
@@ -145,8 +148,8 @@ where
 impl<A, S1, S2, D> NormRms<A, S1, D> for ArrayBase<S2, D>
 where
     A: num_traits::float::Float,
-    S1: Data<Elem = A>,
-    S2: Data<Elem = A>,
+    S1: ndarray::Data<Elem = A>,
+    S2: ndarray::Data<Elem = A>,
     D: Dimension,
 {
     fn norm_wrms(&self, w: &ArrayBase<S1, D>) -> A {
@@ -162,10 +165,10 @@ where
 impl<A, S1, S2, D, B> NormRmsMasked<A, S1, D, B> for ArrayBase<S2, D>
 where
     A: num_traits::float::Float,
-    S1: Data<Elem = A>,
-    S2: Data<Elem = A>,
+    S1: ndarray::Data<Elem = A>,
+    S2: ndarray::Data<Elem = A>,
     D: Dimension,
-    B: Data<Elem = bool>,
+    B: ndarray::Data<Elem = bool>,
 {
     fn norm_wrms_masked(&self, w: &ArrayBase<S1, D>, id: &ArrayBase<B, D>) -> A {
         let mask = id.map(|x| if *x { A::one() } else { A::zero() });

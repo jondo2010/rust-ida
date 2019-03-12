@@ -7,13 +7,6 @@ use num_traits::{
     Float, NumAssignRef, NumRef,
 };
 
-/*
-num_traits::float::FloatConst
-        + num_traits::NumRef
-        + num_traits::NumAssignRef
-        + ScalarOperand
-        */
-
 use crate::constants::*;
 use crate::ida_nls::*;
 use crate::linear::*;
@@ -58,7 +51,6 @@ where
     ida_suppressalg: bool,
 
     // Divided differences array and associated minor arrays
-
     /// phi = (maxord+1) arrays of divided differences
     ida_phi: Array<P::Scalar, Ix2>,
     /// differences in t (sums of recent step sizes)
@@ -73,7 +65,6 @@ where
     ida_gamma: Array1<P::Scalar>,
 
     // Vectors
-
     /// error weight vector
     pub(super) ida_ewt: Array<P::Scalar, Ix1>,
     /// work space for y vector (= user's yret)
@@ -227,7 +218,7 @@ where
 
 impl<P, LS, NLS> Ida<P, LS, NLS>
 where
-    P: IdaModel,
+    P: IdaModel + NLProblem<P, NLS>,
     LS: LSolver<P>,
     NLS: NLSolver<P>,
     <P as ModelSpec>::Scalar: num_traits::Float
@@ -261,8 +252,6 @@ where
             //ida_uround: UNIT_ROUNDOFF,
 
             // Set default values for integrator optional inputs
-            //ida_res:         = NULL,
-            //ida_user_data:   = NULL,
             ida_itol: ToleranceType::TolNN,
             //ida_user_efun   = SUNFALSE;
             //ida_efun        = NULL;
@@ -301,9 +290,9 @@ where
             //ida_lrw = 25 + 5*MXORDP1;
             //ida_liw = 38;
 
-            /* Initialize nonlinear solver pointer */
-            //self.NLS    = NULL;
-            //self.ownNLS = SUNFALSE;
+            // Initialize nonlinear solver pointer
+            nls: NLS::new(problem.model_size(), MAXNLSIT),
+            ls: LS::new(),
             ida_phi: ida_phi,
 
             ida_psi: Array::zeros(MXORDP1),
@@ -329,9 +318,6 @@ where
 
             //ida_irfnd = 0;
 
-            nls: NLS::new(problem.model_size(), MAXNLSIT),
-            ls: LS::new(),
-
             // Initialize root-finding variables
 
             //ida_glo: Array::zeros(),
@@ -352,7 +338,6 @@ where
             ida_tstop: P::Scalar::zero(),
 
             ida_kk: 0,
-            //ida_kused: 0,
             ida_knew: 0,
             ida_phase: 0,
             ida_ns: 0,
@@ -382,6 +367,10 @@ where
             ida_rtol: P::Scalar::zero(),
             ida_Satol: P::Scalar::zero(),
             ida_Vatol: Array::zeros(MXORDP1),
+
+            ida_savres: Array::zeros(yy0.raw_dim()),
+            ida_yp: Array::zeros(yy0.raw_dim()),
+            ida_yy: Array::zeros(yy0.raw_dim()),
         }
     }
 
@@ -828,6 +817,7 @@ where
         let mut psij_1 = P::Scalar::zero();
 
         for i in 0..k + 1 {
+            let scalar_i: P::Scalar = NumCast::from(i as f64).unwrap();
             // The below reccurence is used to compute the k-th derivative of the solution:
             //    c_j^(k) = ( k * c_{j-1}^(k-1) + c_{j-1}^{k} (Delta+psi_{j-1}) ) / psi_j
             //
@@ -847,7 +837,7 @@ where
                 //                                                i       i-1          1
                 // c_i^(i) can be always updated since c_i^(i) = -----  --------  ... -----
                 //                                               psi_j  psi_{j-1}     psi_1
-                cjk[i] = cjk[i - 1] * NumCast::from(i as f64).unwrap() / self.ida_psi[i - 1];
+                cjk[i] = cjk[i - 1] * scalar_i / self.ida_psi[i - 1];
                 psij_1 = self.ida_psi[i - 1];
             }
 
@@ -855,9 +845,8 @@ where
             //j does not need to go till kused
             //for(j=i+1; j<=self.ida_kused-k+i; j++) {
             for j in i + 1..self.ida_kused - k + 1 + 1 {
-                cjk[j] = (NumCast::from(i as f64).unwrap() * cjk_1[j - 1]
-                    + cjk[j - 1] * (delt + psij_1))
-                    / self.ida_psi[j - 1];
+                cjk[j] =
+                    (scalar_i * cjk_1[j - 1] + cjk[j - 1] * (delt + psij_1)) / self.ida_psi[j - 1];
                 psij_1 = self.ida_psi[j - 1];
             }
 
@@ -1352,13 +1341,13 @@ where
             self.ida_gamma[0] = P::Scalar::zero();
             self.ida_sigma[0] = P::Scalar::one();
             for i in 1..self.ida_kk + 1 {
+                let scalar_i: P::Scalar = NumCast::from(i).unwrap();
                 let temp2 = self.ida_psi[i - 1];
                 self.ida_psi[i - 1] = temp1;
                 self.ida_beta[i] = self.ida_beta[i - 1] * (self.ida_psi[i - 1] / temp2);
                 temp1 = temp2 + self.ida_hh;
                 self.ida_alpha[i] = self.ida_hh / temp1;
-                self.ida_sigma[i] =
-                    self.ida_sigma[i - 1] * self.ida_alpha[i] * NumCast::from(i).unwrap();
+                self.ida_sigma[i] = self.ida_sigma[i - 1] * self.ida_alpha[i] * scalar_i;
                 self.ida_gamma[i] = self.ida_gamma[i - 1] + self.ida_alpha[i - 1] / self.ida_hh;
             }
             self.ida_psi[self.ida_kk] = temp1;
@@ -1367,7 +1356,8 @@ where
         let mut alphas = P::Scalar::zero();
         let mut alpha0 = P::Scalar::zero();
         for i in 0..self.ida_kk {
-            alphas -= P::Scalar::one() / NumCast::from(i + 1).unwrap();
+            let scalar_i: P::Scalar = NumCast::from(i + 1).unwrap();
+            alphas -= P::Scalar::one() / scalar_i;
             alpha0 -= self.ida_alpha[i];
         }
 
@@ -1412,21 +1402,21 @@ where
 
         // Decide if lsetup is to be called
 
-        if self.ida_lsetup {
-            self.ida_cjratio = self.ida_cj / self.ida_cjold;
-            let temp1 = NumCast::from((1.0 - XRATE) / (1.0 + XRATE)).unwrap();
-            let temp2 = temp1.recip();
-            if self.ida_cjratio < temp1 || self.ida_cjratio > temp2 {
-                callLSetup = true;
-            }
-            if self.ida_cj != self.ida_cjlast {
-                self.ida_ss = P::Scalar::hundred();
-            }
+        //if self.ida_lsetup {
+        self.ida_cjratio = self.ida_cj / self.ida_cjold;
+        let temp1: P::Scalar = NumCast::from((1.0 - XRATE) / (1.0 + XRATE)).unwrap();
+        let temp2 = temp1.recip();
+        if self.ida_cjratio < temp1 || self.ida_cjratio > temp2 {
+            callLSetup = true;
         }
+        if self.ida_cj != self.ida_cjlast {
+            self.ida_ss = P::Scalar::hundred();
+        }
+        //}
 
         // initial guess for the correction to the predictor
         //N_VConst(ZERO, self.ida_delta);
-        self.ida_delta = Array::zeros(self.f.model_size());
+        self.ida_delta = Array::zeros(self.problem.model_size());
 
         // call nonlinear solver setup if it exists
         /*
@@ -1467,7 +1457,9 @@ where
         // return if nonlinear solver failed */
         //if (retval != IDA_SUCCESS) { return (retval); };
 
-        /* If otherwise successful, check and enforce inequality constraints. */
+        // If otherwise successful, check and enforce inequality constraints.
+
+        Ok(())
     }
 
     /// IDAPredict
@@ -2025,9 +2017,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::ida::Ida;
+    //use crate::ida::Ida;
+    use super::*;
     use crate::lorenz63::Lorenz63;
-    use ndarray::*;
+    //use ndarray::*;
     use nearly_eq::*;
 
     #[test]
@@ -2113,8 +2106,9 @@ mod tests {
         let cj = 2.2429958724574930e-09;
         let cjlast = 2.4672954597032423e-09;
 
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, _, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
         ida.ida_hh = hh;

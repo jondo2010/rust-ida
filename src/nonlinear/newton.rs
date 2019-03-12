@@ -4,7 +4,7 @@ use crate::nonlinear::traits::*;
 use crate::traits::ModelSpec;
 
 #[derive(Debug)]
-struct Newton<M: ModelSpec> {
+pub struct Newton<M: ModelSpec> {
     /// Newton update vector
     delta: Array1<M::Scalar>,
     /// Jacobian status, current = `true` / stale = `false`
