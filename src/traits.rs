@@ -14,6 +14,17 @@ pub trait Residual: ModelSpec {
     fn residual<'a, S>(&mut self, v: &'a mut ArrayBase<S, Ix1>) -> &'a mut ArrayBase<S, Ix1>
     where
         S: DataMut<Elem = Self::Scalar>;
+
+    fn res<S1, S2, S3>(
+        &self,
+        tres: Self::Scalar,
+        yy: &ArrayBase<S1, Ix1>,
+        yp: &ArrayBase<S2, Ix1>,
+        resval: &mut ArrayBase<S3, Ix1>,
+    ) where
+        S1: ndarray::Data<Elem = Self::Scalar>,
+        S2: ndarray::Data<Elem = Self::Scalar>,
+        S3: ndarray::DataMut<Elem = Self::Scalar>;
 }
 
 pub trait Jacobian: ModelSpec {

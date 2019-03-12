@@ -37,3 +37,6 @@ pub const EPCON: f64 = 0.33;
 pub const MAXBACKS: u32 = 100;
 /// constant for updating Jacobian/preconditioner
 pub const XRATE: f64 = 0.25;
+
+/// default max number of nonlinear iterations
+pub const MAXNLSIT: usize = 4;

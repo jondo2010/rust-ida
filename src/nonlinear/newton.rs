@@ -19,8 +19,12 @@ struct Newton<M: ModelSpec> {
     nconvfails: usize,
 }
 
-impl<M: ModelSpec> Newton<M> {
-    pub fn new(size: usize, maxiters: usize) -> Self {
+impl<M> NLSolver<M> for Newton<M>
+where
+    M: ModelSpec,
+    M::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + std::fmt::Debug,
+{
+    fn new(size: usize, maxiters: usize) -> Self {
         Newton {
             delta: Array::zeros(size),
             jcur: false,
@@ -30,42 +34,10 @@ impl<M: ModelSpec> Newton<M> {
             nconvfails: 0,
         }
     }
-}
 
-impl<M> NLSolver<M> for Newton<M>
-where
-    M: ModelSpec,
-    M::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + std::fmt::Debug,
-{
-    /// # Arguments
-    ///
-    /// * `problem` -
-    /// * `y0` -
-    /// * `y` -
-    /// * `w` -
-    /// * `tol` -
-    /// * `call_lsetup` -
-    ///
-    /// Note: The SUNNonlinLSetupFn function sets up the linear system `Ax = b` where `A = ∂F/∂y` is
-    /// the linearization of the nonlinear residual function `F(y) = 0` (when using sunlinsol direct
-    /// linear solvers) or calls the user-defined preconditioner setup function (when using
-    /// sunlinsol iterative linear solvers). sunnonlinsol implementations that do not require
-    /// solving this system, do not utilize sunlinsol linear solvers, or use sunlinsol linear
-    /// solvers that do not require setup may set this operation to NULL.
-    ///
-    /// Performs the nonlinear solve `F(y) = 0`
-    ///
-    /// # Returns
-    ///
-    /// * Ok(()) - Successfully converged on a solution
-    ///
-    /// # Errors
-    ///
-    /// * `Err(Error::ConvergenceRecover)` - the iteration appears to be diverging, try to recover.
-    /// * `Err(_)` - an unrecoverable error occurred.
-    fn solve<P, S1, S2>(
+    fn solve<NLP, S1, S2>(
         &mut self,
-        problem: &mut P,
+        problem: &NLP,
         y0: &ArrayBase<S1, Ix1>,
         y: &mut ArrayBase<S2, Ix1>,
         w: &ArrayBase<S1, Ix1>,
@@ -73,7 +45,7 @@ where
         call_lsetup: bool,
     ) -> Result<(), failure::Error>
     where
-        P: NLProblem<M, Self>,
+        NLP: NLProblem<M, Self>,
         S1: Data<Elem = M::Scalar>,
         S2: DataMut<Elem = M::Scalar>,
     {
@@ -175,6 +147,18 @@ where
         // all error returns exit here
         retval
     }
+
+    fn get_num_iters(&self) -> usize {
+        self.niters
+    }
+
+    fn get_cur_iter(&self) -> usize {
+        self.curiter
+    }
+
+    fn get_num_conv_fails(&self) -> usize {
+        self.nconvfails
+    }
 }
 
 #[cfg(test)]
@@ -236,18 +220,18 @@ mod tests {
         /// f2(x,y,z) = 2x^2 + y^2 - 4z     = 0
         /// f3(x,y,z) = 3x^2 - 4y + z^2     = 0
         fn sys<S1, S2>(
-            &self,
+            &mut self,
             _nls: &NLS,
-            y: &ArrayBase<S1, Ix1>,
-            f: &mut ArrayBase<S2, Ix1>,
+            ycor: &ArrayBase<S1, Ix1>,
+            res: &mut ArrayBase<S2, Ix1>,
         ) -> Result<(), failure::Error>
         where
             S1: Data<Elem = <Self as ModelSpec>::Scalar>,
             S2: DataMut<Elem = <Self as ModelSpec>::Scalar>,
         {
-            f[0] = y[0].powi(2) + y[1].powi(2) + y[2].powi(2) - 1.0;
-            f[1] = 2.0 * y[0].powi(2) + y[1].powi(2) - 4.0 * y[2];
-            f[2] = 3.0 * y[0].powi(2) - 4.0 * y[1] + y[2].powi(2);
+            res[0] = ycor[0].powi(2) + ycor[1].powi(2) + ycor[2].powi(2) - 1.0;
+            res[1] = 2.0 * ycor[0].powi(2) + ycor[1].powi(2) - 4.0 * ycor[2];
+            res[2] = 3.0 * ycor[0].powi(2) - 4.0 * ycor[1] + ycor[2].powi(2);
             Ok(())
         }
 
@@ -269,7 +253,7 @@ mod tests {
         }
 
         fn lsolve<S1, S2>(
-            &self,
+            &mut self,
             _nls: &NLS,
             _y: &ArrayBase<S1, Ix1>,
             b: &mut ArrayBase<S2, Ix1>,

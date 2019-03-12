@@ -1,7 +1,7 @@
 use failure::Fail;
 use ndarray::*;
 
-use crate::traits::{ModelSpec, Residual};
+use crate::traits::ModelSpec;
 
 #[derive(Debug, Fail)]
 pub enum Error {
@@ -45,10 +45,10 @@ where
     /// * `Err()` for a recoverable error,
     /// * `Err(_) for an unrecoverable error
     fn sys<S1, S2>(
-        &self,
+        &mut self,
         nls: &NLS,
-        y: &ArrayBase<S1, Ix1>,
-        f: &mut ArrayBase<S2, Ix1>,
+        ycor: &ArrayBase<S1, Ix1>,
+        res: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
@@ -109,7 +109,7 @@ where
     /// of the nonlinear residual function F(y) = 0. Implementations that do not require solving
     /// this system or do not use sunlinsol linear solvers may ignore these functions.
     fn lsolve<S1, S2>(
-        &self,
+        &mut self,
         nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         b: &mut ArrayBase<S2, Ix1>,
@@ -156,6 +156,14 @@ where
 }
 
 pub trait NLSolver<M: ModelSpec> {
+    /// Create a new NLSolver
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The problem size
+    /// * `maxiters` - The maximum number of iterations per solve attempt
+    fn new(size: usize, maxiters: usize) -> Self;
+
     /// Solves the nonlinear system `F(y)=0` or `G(y)=y`.
     ///
     /// # Arguments
@@ -182,9 +190,9 @@ pub trait NLSolver<M: ModelSpec> {
     ///
     /// * `Err(Error::ConvergenceRecover)` - the iteration appears to be diverging, try to recover.
     /// * `Err(_)` - an unrecoverable error occurred.
-    fn solve<P, S1, S2>(
+    fn solve<NLP, S1, S2>(
         &mut self,
-        problem: &mut P,
+        problem: &NLP,
         y0: &ArrayBase<S1, Ix1>,
         y: &mut ArrayBase<S2, Ix1>,
         w: &ArrayBase<S1, Ix1>,
@@ -192,7 +200,8 @@ pub trait NLSolver<M: ModelSpec> {
         call_lsetup: bool,
     ) -> Result<(), failure::Error>
     where
-        P: NLProblem<M, Self>,
+        Self: std::marker::Sized,
+        NLP: NLProblem<M, Self>,
         S1: Data<Elem = M::Scalar>,
         S2: DataMut<Elem = M::Scalar>;
 

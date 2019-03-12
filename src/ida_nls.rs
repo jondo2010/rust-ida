@@ -2,6 +2,7 @@ use ndarray::prelude::*;
 
 use super::ida::Ida;
 use super::traits::{IdaConst, IdaModel};
+use crate::linear::LSolver;
 use crate::nonlinear::{NLProblem, NLSolver};
 use crate::traits::ModelSpec;
 
@@ -83,9 +84,10 @@ where
 }
 */
 
-impl<M, NLS> NLProblem<M, NLS> for Ida<M>
+impl<M, LS, NLS> NLProblem<M, NLS> for Ida<M, LS, NLS>
 where
     M: IdaModel,
+    LS: LSolver<M>,
     NLS: NLSolver<M>,
     M::Scalar: num_traits::Float
         + num_traits::float::FloatConst
@@ -95,21 +97,26 @@ where
         + std::fmt::Debug
         + IdaConst,
 {
-    //fn idaNlsResidual(N_Vector ycor, N_Vector res) { }
     fn sys<S1, S2>(
-        &self,
-        y: &ArrayBase<S1, Ix1>,
-        f: &mut ArrayBase<S2, Ix1>,
+        &mut self,
+        nls: &NLS,
+        ycor: &ArrayBase<S1, Ix1>,
+        res: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: ndarray::Data<Elem = M::Scalar>,
         S2: ndarray::DataMut<Elem = M::Scalar>,
     {
         // update yy and yp based on the current correction
-        N_VLinearSum(ONE, self.ida_yypredict, ONE, ycor, self.ida_yy);
-        N_VLinearSum(ONE, self.ida_yppredict, self.ida_cj, ycor, self.ida_yp);
+        //N_VLinearSum(ONE, self.ida_yypredict, ONE, ycor, self.ida_yy);
+        self.ida_yy = self.ida_yypredict + ycor;
+        //N_VLinearSum(ONE, self.ida_yppredict, self.ida_cj, ycor, self.ida_yp);
+        self.ida_yp = self.ida_yypredict + ycor * self.ida_cj;
 
         // evaluate residual
+        self.problem
+            .res(self.ida_tn, &self.ida_yy, &self.ida_yp, res);
+        /*
         retval = self.ida_res(
             self.ida_tn,
             self.ida_yy,
@@ -117,12 +124,13 @@ where
             res,
             self.ida_user_data,
         );
+        */
 
         // increment the number of residual evaluations
         self.ida_nre += 1;
 
         // save a copy of the residual vector in savres
-        N_VScale(ONE, res, self.ida_savres);
+        self.ida_savres.assign(res);
 
         //if (retval < 0) return(IDA_RES_FAIL);
         //if (retval > 0) return(IDA_RES_RECVR);
@@ -132,25 +140,69 @@ where
 
     fn lsetup<S1>(
         &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        F: &ArrayView<M::Scalar, Ix1>,
+        nls: &NLS,
+        ycor: &ArrayBase<S1, Ix1>,
+        res: &ArrayView<M::Scalar, Ix1>,
         jbad: bool,
     ) -> Result<bool, failure::Error>
     where
         S1: ndarray::Data<Elem = M::Scalar>,
     {
-        Ok(false)
+        use num_traits::identities::One;
+
+        self.ida_nsetups += 1;
+        self.ls.ls_setup(&self.ida_yy, &self.ida_yp, res);
+        /*
+        let retval = self.ida_lsetup(
+            IDA_mem,
+            self.ida_yy,
+            self.ida_yp,
+            res,
+            self.ida_tempv1,
+            self.ida_tempv2,
+            self.ida_tempv3,
+        );
+        */
+
+        // update Jacobian status
+        //*jcur = SUNTRUE;
+
+        // update convergence test constants
+        self.ida_cjold = self.ida_cj;
+        self.ida_cjratio = M::Scalar::one();
+        self.ida_ss = M::Scalar::twenty();
+
+        //if (retval < 0) return(IDA_LSETUP_FAIL);
+        //if (retval > 0) return(IDA_LSETUP_RECVR);
+
+        //return(IDA_SUCCESS);
+
+        Ok(true)
     }
 
+    // idaNlsLSolve
     fn lsolve<S1, S2>(
-        &self,
-        y: &ArrayBase<S1, Ix1>,
-        b: &mut ArrayBase<S2, Ix1>,
+        &mut self,
+        nls: &NLS,
+        ycor: &ArrayBase<S1, Ix1>,
+        delta: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: ndarray::Data<Elem = M::Scalar>,
         S2: ndarray::DataMut<Elem = M::Scalar>,
     {
+        self.ls.ls_solve(
+            delta,
+            &self.ida_ewt,
+            &self.ida_yy,
+            &self.ida_yp,
+            &self.ida_savres,
+        );
+        //retval = IDA_mem->ida_lsolve(IDA_mem, delta, IDA_mem->ida_ewt, IDA_mem->ida_yy, IDA_mem->ida_yp, IDA_mem->ida_savres);
+
+        //if (retval < 0) return(IDA_LSOLVE_FAIL);
+        //if (retval > 0) return(IDA_LSOLVE_RECVR);
+
         Ok(())
     }
 
@@ -171,6 +223,8 @@ where
         //realtype rate;
 
         use crate::traits::NormRms;
+        use num_traits::identities::One;
+        use num_traits::{Float, NumCast};
         // compute the norm of the correction
         let delnrm = del.norm_wrms(ewt);
 
@@ -185,13 +239,13 @@ where
             }
         } else {
             let rate =
-                (delnrm / self.ida_oldnrm).powr(M::Scalar::one() / NumCast::from(m).unwrap());
+                (delnrm / self.ida_oldnrm).powf(M::Scalar::one() / NumCast::from(m).unwrap());
             //rate = SUNRpowerR(delnrm / self.ida_oldnrm, M::Scalar::one() / m);
             //if (rate > RATEMAX) return(SUN_NLS_CONV_RECVR);
             self.ida_ss = rate / (M::Scalar::one() - rate);
         }
 
-        if self.ida_ss*delnrm <= tol {
+        if self.ida_ss * delnrm <= tol {
             return Ok(true);
         }
 
