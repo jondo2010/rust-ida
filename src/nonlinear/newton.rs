@@ -45,7 +45,8 @@ where
         call_lsetup: bool,
     ) -> Result<(), failure::Error>
     where
-        NLP: NLProblem<M, Self>,
+        //for<'a> &'a mut NLP: NLProblem<M, Self>,
+        NLP: NLProblem<M>,
         S1: Data<Elem = M::Scalar>,
         S2: DataMut<Elem = M::Scalar>,
     {
@@ -54,18 +55,20 @@ where
         // assume the Jacobian is good
         let mut jbad = false;
 
+        let mut call_lsetup = call_lsetup;
+
         // looping point for attempts at solution of the nonlinear system: Evaluate the nonlinear
         // residual function (store in delta) Setup the linear solver if necessary Preform Newton
         // iteraion
         let retval: Result<(), failure::Error> = 'outer: loop {
             // compute the nonlinear residual, store in delta
             let retval = problem
-                .sys(&self, y0, &mut self.delta)
+                .sys(y0, &mut self.delta)
                 .and_then(|_| {
                     // if indicated, setup the linear system
                     if call_lsetup {
                         problem
-                            .lsetup(&self, y0, &self.delta.view(), jbad)
+                            .lsetup(y0, &self.delta.view(), jbad)
                             .map(|jcur| self.jcur = jcur)
                     } else {
                         Ok(())
@@ -83,12 +86,12 @@ where
                         // compute the negative of the residual for the linear system rhs
                         self.delta.mapv_inplace(M::Scalar::neg);
                         // solve the linear system to get Newton update delta
-                        let retval = problem.lsolve(&self, y, &mut self.delta).and_then(|_| {
+                        let retval = problem.lsolve(y, &mut self.delta).and_then(|_| {
                             // update the Newton iterate
                             *y += &self.delta;
                             // test for convergence
                             problem
-                                .ctest(&self, y, &self.delta.view(), tol, w)
+                                .ctest(y, &self.delta.view(), tol, w)
                                 .and_then(|converged| {
                                     if converged {
                                         // if successful update Jacobian status and return
@@ -101,7 +104,7 @@ where
                                         } else {
                                             // compute the nonlinear residual, store in delta
                                             // Ok(false) will continue to iterate 'inner
-                                            problem.sys(&self, y, &mut self.delta).and(Ok(false))
+                                            problem.sys(y, &mut self.delta).and(Ok(false))
                                         }
                                     }
                                 })
@@ -210,10 +213,7 @@ mod tests {
         }
     }
 
-    impl<NLS> NLProblem<TestProblem, NLS> for TestProblem
-    where
-        NLS: NLSolver<TestProblem>,
-    {
+    impl NLProblem<TestProblem> for TestProblem {
         /// Nonlinear residual function
         ///
         /// f1(x,y,z) = x^2 + y^2 + z^2 - 1 = 0
@@ -221,7 +221,6 @@ mod tests {
         /// f3(x,y,z) = 3x^2 - 4y + z^2     = 0
         fn sys<S1, S2>(
             &mut self,
-            _nls: &NLS,
             ycor: &ArrayBase<S1, Ix1>,
             res: &mut ArrayBase<S2, Ix1>,
         ) -> Result<(), failure::Error>
@@ -237,7 +236,6 @@ mod tests {
 
         fn lsetup<S1>(
             &mut self,
-            _nls: &NLS,
             y: &ArrayBase<S1, Ix1>,
             _f: &ArrayView<<Self as ModelSpec>::Scalar, Ix1>,
             _jbad: bool,
@@ -254,7 +252,6 @@ mod tests {
 
         fn lsolve<S1, S2>(
             &mut self,
-            _nls: &NLS,
             _y: &ArrayBase<S1, Ix1>,
             b: &mut ArrayBase<S2, Ix1>,
         ) -> Result<(), failure::Error>
@@ -274,7 +271,6 @@ mod tests {
 
         fn ctest<S1, S2, S3>(
             &mut self,
-            _nls: &NLS,
             y: &ArrayBase<S1, Ix1>,
             del: &ArrayBase<S2, Ix1>,
             tol: <Self as ModelSpec>::Scalar,

@@ -218,7 +218,7 @@ where
 
 impl<P, LS, NLS> Ida<P, LS, NLS>
 where
-    P: IdaModel + NLProblem<P, NLS>,
+    P: IdaModel,
     LS: LSolver<P>,
     NLS: NLSolver<P>,
     <P as ModelSpec>::Scalar: num_traits::Float
@@ -1430,14 +1430,16 @@ where
         */
 
         // solve the nonlinear system
+        /*
         self.nls.solve(
-            &mut self.problem,
+            self,
             &self.ida_delta,
             &mut self.ida_ee,
             &self.ida_ewt,
             self.ida_epsNewt,
             callLSetup,
         );
+        */
         /*
         retval = SUNNonlinSolSolve(
             self.NLS,
@@ -2111,7 +2113,7 @@ mod tests {
         let cjlast = 2.4672954597032423e-09;
 
         let problem = Lorenz63::default();
-        let mut ida: Ida<_, _, Newton<_>> =
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
@@ -2289,8 +2291,9 @@ mod tests {
         let err_km1 = 3.531162835377502;
         let nflag = true;
 
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
         ida.ida_kk = kk;
@@ -2368,8 +2371,9 @@ mod tests {
         let err_km1 = 0.455601916633899;
         let nflag = false;
 
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
         ida.ida_kk = kk;
@@ -2442,8 +2446,9 @@ mod tests {
         ];
         let kk = 2;
 
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
         ida.ida_kk = kk;
@@ -2522,8 +2527,9 @@ mod tests {
         let cvals_after = array![0.8333333333333334, 0.7142857142857142, 1., 1., 1., 0.];
         let beta_after = array![1., 1., 1., 1.2, 1.4, 1.];
 
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
         ida.ida_tn = 765020.5513257229;
@@ -2568,8 +2574,9 @@ mod tests {
         #[rustfmt::skip]
         let beta_after = array![1., 2., 3., 4.8, 7.199999999999999, 10.28571428571428];
 
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
         ida.ida_tn = 4480988928.431009;
@@ -2689,8 +2696,9 @@ mod tests {
         ];
         let beta_after = array![1., 2., 3., 4., 4.864864864864866, 6.370656370656372];
 
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
         ida.ida_tn = 15295021.33422961;
@@ -2744,8 +2752,10 @@ mod tests {
         let maxord = 5;
 
         // Set preconditions:
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![0., 0., 0.], array![0., 0., 0.]);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+
         ida.ida_nst = nst;
         ida.ida_kk = kk;
         ida.ida_hh = hh;
@@ -2865,9 +2875,9 @@ mod tests {
             1.569173718962504e-16,
         ];
 
-        let f = Lorenz63::default();
-        let mut ida = Ida::new(f, array![1., 2., 3.], array![4., 5., 6.]);
-        //println!("{:#?}", i);
+        let problem = Lorenz63::default();
+        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         ida.ida_hh = hh;
         ida.ida_tn = tn;

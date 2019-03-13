@@ -22,7 +22,10 @@ pub trait LSolver<M: ModelSpec> {
     where
         S1: ndarray::Data<Elem = M::Scalar>,
         S2: ndarray::Data<Elem = M::Scalar>,
-        S3: ndarray::Data<Elem = M::Scalar>;
+        S3: ndarray::Data<Elem = M::Scalar>,
+    {
+        Ok(())
+    }
 
     /// idaLsSolve
     ///
@@ -43,5 +46,26 @@ pub trait LSolver<M: ModelSpec> {
     where
         S1: ndarray::DataMut<Elem = M::Scalar>,
         S2: ndarray::Data<Elem = M::Scalar>,
-        S3: ndarray::Data<Elem = M::Scalar>;
+        S3: ndarray::Data<Elem = M::Scalar>,
+    {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct Dense<M: ModelSpec> {
+    x: M::Scalar,
+}
+
+impl<M> LSolver<M> for Dense<M>
+where
+    M: ModelSpec,
+    M::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
+{
+    fn new() -> Self {
+        use num_traits::identities::Zero;
+        Dense {
+            x: M::Scalar::zero(),
+        }
+    }
 }

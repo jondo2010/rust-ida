@@ -25,10 +25,9 @@ pub enum Error {
     //SUN_NLS_VECTOROP_ERR
 }
 
-pub trait NLProblem<M, NLS>
+pub trait NLProblem<M>
 where
     M: ModelSpec,
-    NLS: NLSolver<M>,
 {
     /// `sys` evaluates the nonlinear system `F(y)` for ROOTFIND type modules or `G(y)` for
     /// FIXEDPOINT type modules.
@@ -46,7 +45,6 @@ where
     /// * `Err(_) for an unrecoverable error
     fn sys<S1, S2>(
         &mut self,
-        nls: &NLS,
         ycor: &ArrayBase<S1, Ix1>,
         res: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
@@ -80,7 +78,6 @@ where
     /// functions.
     fn lsetup<S1>(
         &mut self,
-        nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         F: &ArrayView<M::Scalar, Ix1>,
         jbad: bool,
@@ -110,7 +107,6 @@ where
     /// this system or do not use sunlinsol linear solvers may ignore these functions.
     fn lsolve<S1, S2>(
         &mut self,
-        nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         b: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
@@ -143,7 +139,6 @@ where
     /// convergence criteria may ignore these functions.
     fn ctest<S1, S2, S3>(
         &mut self,
-        nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         del: &ArrayBase<S2, Ix1>,
         tol: M::Scalar,
@@ -201,7 +196,8 @@ pub trait NLSolver<M: ModelSpec> {
     ) -> Result<(), failure::Error>
     where
         Self: std::marker::Sized,
-        NLP: NLProblem<M, Self>,
+        //for<'a> &'a mut NLP: NLProblem<M, Self>,
+        NLP: NLProblem<M>,
         S1: Data<Elem = M::Scalar>,
         S2: DataMut<Elem = M::Scalar>;
 

@@ -6,12 +6,12 @@ use crate::linear::LSolver;
 use crate::nonlinear::{NLProblem, NLSolver};
 use crate::traits::ModelSpec;
 
+/*
 #[derive(Clone, Debug)]
 struct IDANLProblem {
     A: Array<f64, Ix2>,
     x: Array<f64, Ix1>,
     // Linear solver, matrix and vector objects/pointers
-    /*
     SUNLinearSolver LS;   // generic linear solver object
     SUNMatrix J;          // J = dF/dy + cj*dF/dy'
     N_Vector ytemp;       // temp vector used by IDAAtimesDQ
@@ -66,8 +66,8 @@ struct IDANLProblem {
     IDALsJacTimesSetupFn jtsetup;
     IDALsJacTimesVecFn jtimes;
     void *jt_data;
-    */
 }
+*/
 
 /*
 impl<F> NLProblem for Ida<F>
@@ -84,12 +84,12 @@ where
 }
 */
 
-impl<M, LS, NLS> NLProblem<M, NLS> for Ida<M, LS, NLS>
+impl<P, LS, NLS> NLProblem<P> for Ida<P, LS, NLS>
 where
-    M: IdaModel,
-    LS: LSolver<M>,
-    NLS: NLSolver<M>,
-    M::Scalar: num_traits::Float
+    P: IdaModel,
+    LS: LSolver<P>,
+    NLS: NLSolver<P>,
+    <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
         + num_traits::NumAssignRef
@@ -99,13 +99,12 @@ where
 {
     fn sys<S1, S2>(
         &mut self,
-        nls: &NLS,
         ycor: &ArrayBase<S1, Ix1>,
         res: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
-        S1: ndarray::Data<Elem = M::Scalar>,
-        S2: ndarray::DataMut<Elem = M::Scalar>,
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
     {
         // update yy and yp based on the current correction
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, ycor, self.ida_yy);
@@ -142,13 +141,12 @@ where
 
     fn lsetup<S1>(
         &mut self,
-        nls: &NLS,
         ycor: &ArrayBase<S1, Ix1>,
-        res: &ArrayView<M::Scalar, Ix1>,
+        res: &ArrayView<P::Scalar, Ix1>,
         jbad: bool,
     ) -> Result<bool, failure::Error>
     where
-        S1: ndarray::Data<Elem = M::Scalar>,
+        S1: ndarray::Data<Elem = P::Scalar>,
     {
         use num_traits::identities::One;
 
@@ -171,8 +169,8 @@ where
 
         // update convergence test constants
         self.ida_cjold = self.ida_cj;
-        self.ida_cjratio = M::Scalar::one();
-        self.ida_ss = M::Scalar::twenty();
+        self.ida_cjratio = P::Scalar::one();
+        self.ida_ss = P::Scalar::twenty();
 
         //if (retval < 0) return(IDA_LSETUP_FAIL);
         //if (retval > 0) return(IDA_LSETUP_RECVR);
@@ -185,13 +183,12 @@ where
     // idaNlsLSolve
     fn lsolve<S1, S2>(
         &mut self,
-        nls: &NLS,
         ycor: &ArrayBase<S1, Ix1>,
         delta: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
-        S1: ndarray::Data<Elem = M::Scalar>,
-        S2: ndarray::DataMut<Elem = M::Scalar>,
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
     {
         self.ls.ls_solve(
             delta,
@@ -210,16 +207,15 @@ where
 
     fn ctest<S1, S2, S3>(
         &mut self,
-        nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         del: &ArrayBase<S2, Ix1>,
-        tol: M::Scalar,
+        tol: P::Scalar,
         ewt: &ArrayBase<S3, Ix1>,
     ) -> Result<bool, failure::Error>
     where
-        S1: ndarray::Data<Elem = M::Scalar>,
-        S2: ndarray::Data<Elem = M::Scalar>,
-        S3: ndarray::Data<Elem = M::Scalar>,
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::Data<Elem = P::Scalar>,
+        S3: ndarray::Data<Elem = P::Scalar>,
     {
         //realtype delnrm;
         //realtype rate;
@@ -231,20 +227,20 @@ where
         let delnrm = del.norm_wrms(ewt);
 
         // get the current nonlinear solver iteration count
-        let m = nls.get_cur_iter();
+        let m = self.nls.get_cur_iter();
 
         // test for convergence, first directly, then with rate estimate.
         if m == 0 {
             self.ida_oldnrm = delnrm;
-            if delnrm <= M::Scalar::pt0001() * self.ida_toldel {
+            if delnrm <= P::Scalar::pt0001() * self.ida_toldel {
                 return Ok(true);
             }
         } else {
-            let rate =
-                (delnrm / self.ida_oldnrm).powf(M::Scalar::one() / <M::Scalar as NumCast>::from(m).unwrap());
+            let rate = (delnrm / self.ida_oldnrm)
+                .powf(P::Scalar::one() / <P::Scalar as NumCast>::from(m).unwrap());
             //rate = SUNRpowerR(delnrm / self.ida_oldnrm, M::Scalar::one() / m);
             //if (rate > RATEMAX) return(SUN_NLS_CONV_RECVR);
-            self.ida_ss = rate / (M::Scalar::one() - rate);
+            self.ida_ss = rate / (P::Scalar::one() - rate);
         }
 
         if self.ida_ss * delnrm <= tol {
