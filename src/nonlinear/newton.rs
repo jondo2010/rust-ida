@@ -37,7 +37,7 @@ where
 
     fn solve<NLP, S1, S2>(
         &mut self,
-        problem: &NLP,
+        problem: &mut NLP,
         y0: &ArrayBase<S1, Ix1>,
         y: &mut ArrayBase<S2, Ix1>,
         w: &ArrayBase<S1, Ix1>,
@@ -273,7 +273,7 @@ mod tests {
         }
 
         fn ctest<S1, S2, S3>(
-            &self,
+            &mut self,
             _nls: &NLS,
             y: &ArrayBase<S1, Ix1>,
             del: &ArrayBase<S2, Ix1>,

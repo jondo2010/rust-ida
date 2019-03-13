@@ -142,7 +142,7 @@ where
     /// root-mean-squared norm with error weight vector `ewt`. Modules utilizing their own
     /// convergence criteria may ignore these functions.
     fn ctest<S1, S2, S3>(
-        &self,
+        &mut self,
         nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         del: &ArrayBase<S2, Ix1>,
@@ -192,7 +192,7 @@ pub trait NLSolver<M: ModelSpec> {
     /// * `Err(_)` - an unrecoverable error occurred.
     fn solve<NLP, S1, S2>(
         &mut self,
-        problem: &NLP,
+        problem: &mut NLP,
         y0: &ArrayBase<S1, Ix1>,
         y: &mut ArrayBase<S2, Ix1>,
         w: &ArrayBase<S1, Ix1>,

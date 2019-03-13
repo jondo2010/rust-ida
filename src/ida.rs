@@ -233,6 +233,8 @@ where
     ///
     /// *Panics" if ModelSpec::Scalar is unable to convert any constant initialization value.
     pub fn new(problem: P, yy0: Array<P::Scalar, Ix1>, yp0: Array<P::Scalar, Ix1>) -> Self {
+        assert_eq!(problem.model_size(), yy0.len());
+
         // Initialize the phi array
         let mut ida_phi = Array::zeros(problem.model_size())
             .broadcast([&[MXORDP1], yy0.shape()].concat())
@@ -291,7 +293,7 @@ where
             //ida_liw = 38;
 
             // Initialize nonlinear solver pointer
-            nls: NLS::new(problem.model_size(), MAXNLSIT),
+            nls: NLS::new(yy0.len(), MAXNLSIT),
             ls: LS::new(),
             ida_phi: ida_phi,
 
@@ -1450,9 +1452,11 @@ where
 
         // update yy and yp based on the final correction from the nonlinear solve
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, self.ida_ee, self.ida_yy);
-        self.ida_yy = self.ida_yypredict + self.ida_ee;
+        self.ida_yy = &self.ida_yypredict + &self.ida_ee;
         //N_VLinearSum( ONE, self.ida_yppredict, self.ida_cj, self.ida_ee, self.ida_yp,);
-        self.ida_yp = self.ida_yppredict + self.ida_ee * self.ida_cj;
+        //self.ida_yp = &self.ida_yppredict + (&self.ida_ee * self.ida_cj);
+        self.ida_yp.assign(&self.ida_yppredict);
+        self.ida_yp.scaled_add(self.ida_cj, &self.ida_ee);
 
         // return if nonlinear solver failed */
         //if (retval != IDA_SUCCESS) { return (retval); };
@@ -1525,7 +1529,7 @@ where
         // Compute error for order k.
         let enorm_k = self.wrms_norm(&self.ida_ee, &self.ida_ewt, self.ida_suppressalg);
         let err_k = self.ida_sigma[self.ida_kk] * enorm_k;
-        let terr_k = err_k * NumCast::from(self.ida_kk + 1).unwrap();
+        let terr_k = err_k * <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap();
 
         let mut err_km1 = P::Scalar::zero(); // estimated error at k-1
         let mut err_km2 = P::Scalar::zero(); // estimated error at k-2
@@ -1537,7 +1541,7 @@ where
             self.ida_delta = &self.ida_phi.index_axis(Axis(0), self.ida_kk) + &self.ida_ee;
             let enorm_km1 = self.wrms_norm(&self.ida_delta, &self.ida_ewt, self.ida_suppressalg);
             err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
-            let terr_km1: P::Scalar = err_km1 * NumCast::from(self.ida_kk).unwrap();
+            let terr_km1: P::Scalar = err_km1 * <P::Scalar as NumCast>::from(self.ida_kk).unwrap();
 
             if self.ida_kk > 2 {
                 // Compute error at order k-2
@@ -1549,7 +1553,7 @@ where
                 let enorm_km2 =
                     self.wrms_norm(&self.ida_delta, &self.ida_ewt, self.ida_suppressalg);
                 err_km2 = self.ida_sigma[self.ida_kk - 2] * enorm_km2;
-                let terr_km2 = err_km2 * NumCast::from(self.ida_kk - 1).unwrap();
+                let terr_km2 = err_km2 * <P::Scalar as NumCast>::from(self.ida_kk - 1).unwrap();
 
                 // Decrease order if errors are reduced
                 if terr_km1.max(terr_km2) <= terr_k {
@@ -1727,12 +1731,12 @@ where
                 //N_VLinearSum(ONE, self.ida_ee, -ONE, self.ida_phi[self.ida_kk + 1], self.ida_tempv1);
                 let ida_tempv1 = &self.ida_ee - &self.ida_phi.index_axis(Axis(0), self.ida_kk + 1);
                 let enorm = self.wrms_norm(&ida_tempv1, &self.ida_ewt, self.ida_suppressalg);
-                err_kp1 = enorm / NumCast::from(self.ida_kk + 2).unwrap();
+                err_kp1 = enorm / <P::Scalar as NumCast>::from(self.ida_kk + 2).unwrap();
 
                 // Choose among orders k-1, k, k+1 using local truncation error norms.
 
-                let terr_k: P::Scalar = NumCast::from(self.ida_kk + 1).unwrap() * err_k;
-                let terr_kp1 = NumCast::from(self.ida_kk + 2).unwrap() * err_kp1;
+                let terr_k = <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap() * err_k;
+                let terr_kp1 = <P::Scalar as NumCast>::from(self.ida_kk + 2).unwrap() * err_kp1;
 
                 if self.ida_kk == 1 {
                     if terr_kp1 >= P::Scalar::half() * terr_k {
@@ -1741,7 +1745,7 @@ where
                         action = Action::Raise;
                     }
                 } else {
-                    let terr_km1 = NumCast::from(self.ida_kk).unwrap() * err_km1;
+                    let terr_km1 = <P::Scalar as NumCast>::from(self.ida_kk).unwrap() * err_km1;
                     if terr_km1 <= terr_k.min(terr_kp1) {
                         action = Action::Lower;
                     } else if terr_kp1 >= terr_k {
@@ -1774,8 +1778,8 @@ where
             //ida_rr = SUNRpowerR( TWO * err_knew + PT0001, -ONE/(self.ida_kk + 1) );
             self.ida_rr = {
                 let base = P::Scalar::two() * err_knew + P::Scalar::pt0001();
-                let arg =
-                    -P::Scalar::one() / (NumCast::from(self.ida_kk).unwrap() + P::Scalar::one());
+                let arg = -P::Scalar::one()
+                    / (<P::Scalar as NumCast>::from(self.ida_kk).unwrap() + P::Scalar::one());
                 base.powf(arg)
             };
 

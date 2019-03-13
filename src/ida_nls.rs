@@ -109,9 +109,11 @@ where
     {
         // update yy and yp based on the current correction
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, ycor, self.ida_yy);
-        self.ida_yy = self.ida_yypredict + ycor;
+        self.ida_yy = &self.ida_yypredict + ycor;
         //N_VLinearSum(ONE, self.ida_yppredict, self.ida_cj, ycor, self.ida_yp);
-        self.ida_yp = self.ida_yypredict + ycor * self.ida_cj;
+        //self.ida_yp = &self.ida_yppredict + ycor * self.ida_cj;
+        self.ida_yp.assign(&self.ida_yppredict);
+        self.ida_yp.scaled_add(self.ida_cj, ycor);
 
         // evaluate residual
         self.problem
@@ -207,7 +209,7 @@ where
     }
 
     fn ctest<S1, S2, S3>(
-        &self,
+        &mut self,
         nls: &NLS,
         y: &ArrayBase<S1, Ix1>,
         del: &ArrayBase<S2, Ix1>,
@@ -239,7 +241,7 @@ where
             }
         } else {
             let rate =
-                (delnrm / self.ida_oldnrm).powf(M::Scalar::one() / NumCast::from(m).unwrap());
+                (delnrm / self.ida_oldnrm).powf(M::Scalar::one() / <M::Scalar as NumCast>::from(m).unwrap());
             //rate = SUNRpowerR(delnrm / self.ida_oldnrm, M::Scalar::one() / m);
             //if (rate > RATEMAX) return(SUN_NLS_CONV_RECVR);
             self.ida_ss = rate / (M::Scalar::one() - rate);
