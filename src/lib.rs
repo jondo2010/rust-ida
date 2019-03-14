@@ -275,7 +275,7 @@ where
             ida_maxncf: MXNCF as u64,
             ida_suppressalg: false,
             //ida_id          = NULL;
-            ida_constraints: Array::zeros(yy0.raw_dim()),
+            ida_constraints: Array::zeros(problem.model_size()),
             ida_constraintsSet: false,
             ida_tstopset: false,
 
@@ -304,8 +304,8 @@ where
             ida_sigma: Array::zeros(MXORDP1),
             ida_gamma: Array::zeros(MXORDP1),
 
-            ida_delta: Array::zeros(yy0.raw_dim()),
-            ida_id: Array::from_elem(yy0.raw_dim(), false),
+            ida_delta: Array::zeros(problem.model_size()),
+            ida_id: Array::from_elem(problem.model_size(), false),
 
             // Initialize all the counters and other optional output values
             ida_nst: 0,
@@ -333,8 +333,8 @@ where
             //ida_mxgnull  = 1;
 
             // Not from ida.c...
-            ida_ewt: Array::zeros(yy0.raw_dim()),
-            ida_ee: Array::zeros(yy0.raw_dim()),
+            ida_ewt: Array::zeros(problem.model_size()),
+            ida_ee: Array::zeros(problem.model_size()),
 
             ida_tstop: P::Scalar::zero(),
 
@@ -416,13 +416,13 @@ where
     /// IDA_ERR_FAIL
     /// IDA_REP_RES_ERR
     /// IDA_RES_FAIL
-    fn solve<S1, S2>(
+    pub fn solve<S1, S2>(
         &mut self,
         tout: P::Scalar,
         tret: &mut P::Scalar,
         yret: &mut ArrayBase<S1, Ix1>,
         ypret: &mut ArrayBase<S2, Ix1>,
-        itask: &IdaTask,
+        itask: IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error>
     where
         S1: ndarray::DataMut<Elem = P::Scalar>,
@@ -585,7 +585,7 @@ where
 
             // Now test for all other stop conditions.
 
-            let istate = self.stop_test1(tout, tret, yret, ypret, itask)?;
+            let istate = self.stop_test1(tout, tret, yret, ypret, &itask)?;
             //let istate = IDAStopTest1(tout, tret, yret, ypret, itask);
             //if istate != CONTINUE_STEPS { return (istate); }
         }
@@ -738,7 +738,7 @@ where
 
             // Now check all other stop conditions.
 
-            self.stop_test2(tout, tret, yret, ypret, itask)?;
+            self.stop_test2(tout, tret, yret, ypret, &itask)?;
         } // End of step loop
 
         //return(istate);

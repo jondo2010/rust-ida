@@ -4,6 +4,23 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug test 'Roberts'",
+            "sourceLanguages": ["rust"],
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test",
+                    "roberts",
+                ],
+            },
+            //"program": "${cargo:program}",
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug unit tests in library 'ida'",
             "sourceLanguages": ["rust"],
             "cargo": {
