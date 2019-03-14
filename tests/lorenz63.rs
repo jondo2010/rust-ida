@@ -1,9 +1,11 @@
 //! Lorenz three-variables system
 //! https://en.wikipedia.org/wiki/Lorenz_system
+//!
 
-use ndarray::*;
+#[feature(test)]
+use ndarray::prelude::*;
 
-use crate::traits::*;
+use ida::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Lorenz63 {
@@ -38,18 +40,18 @@ impl ModelSpec for Lorenz63 {
 }
 
 impl Residual for Lorenz63 {
-    fn residual<'a, S>(&mut self, v: &'a mut ArrayBase<S, Ix1>) -> &'a mut ArrayBase<S, Ix1>
-    where
-        S: DataMut<Elem = Self::Scalar>,
-    {
-        let x = v[0];
-        let y = v[1];
-        let z = v[2];
-        v[0] = self.p * (y - x);
-        v[1] = x * (self.r - z) - y;
-        v[2] = x * y - self.b * z;
-        v
-    }
+    //fn residual<'a, S>(&mut self, v: &'a mut ArrayBase<S, Ix1>) -> &'a mut ArrayBase<S, Ix1>
+    //where
+    //    S: DataMut<Elem = Self::Scalar>,
+    //{
+    //    let x = v[0];
+    //    let y = v[1];
+    //    let z = v[2];
+    //    v[0] = self.p * (y - x);
+    //    v[1] = x * (self.r - z) - y;
+    //    v[2] = x * y - self.b * z;
+    //    v
+    //}
 
     fn res<S1, S2, S3>(
         &self,

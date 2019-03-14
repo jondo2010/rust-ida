@@ -1,10 +1,9 @@
 use ndarray::prelude::*;
 
-use super::ida::Ida;
-use super::traits::{IdaConst, IdaProblem};
-use crate::linear::LSolver;
-use crate::nonlinear::{NLProblem, NLSolver};
-use crate::traits::ModelSpec;
+use super::constants::IdaConst;
+use super::linear::LSolver;
+use super::nonlinear::NLProblem;
+use super::traits::IdaProblem;
 
 /*
 #[derive(Clone, Debug)]

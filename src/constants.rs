@@ -40,3 +40,80 @@ pub const XRATE: f64 = 0.25;
 
 /// default max number of nonlinear iterations
 pub const MAXNLSIT: usize = 4;
+
+/// Constants for Ida
+pub trait IdaConst {
+    type Scalar: num_traits::Float;
+    fn half() -> Self;
+    fn quarter() -> Self;
+    fn twothirds() -> Self;
+    fn onept5() -> Self;
+    fn two() -> Self;
+    fn four() -> Self;
+    fn five() -> Self;
+    fn ten() -> Self;
+    fn twelve() -> Self;
+    fn twenty() -> Self;
+    fn hundred() -> Self;
+    fn pt9() -> Self;
+    fn pt99() -> Self;
+    fn pt1() -> Self;
+    fn pt01() -> Self;
+    fn pt001() -> Self;
+    fn pt0001() -> Self;
+}
+
+impl IdaConst for f64 {
+    type Scalar = Self;
+    fn half() -> Self {
+        0.5
+    }
+    fn quarter() -> Self {
+        0.25
+    }
+    fn twothirds() -> Self {
+        0.667
+    }
+    fn onept5() -> Self {
+        1.5
+    }
+    fn two() -> Self {
+        2.0
+    }
+    fn four() -> Self {
+        4.0
+    }
+    fn five() -> Self {
+        5.0
+    }
+    fn ten() -> Self {
+        10.0
+    }
+    fn twelve() -> Self {
+        12.0
+    }
+    fn twenty() -> Self {
+        20.0
+    }
+    fn hundred() -> Self {
+        100.
+    }
+    fn pt9() -> Self {
+        0.9
+    }
+    fn pt99() -> Self {
+        0.99
+    }
+    fn pt1() -> Self {
+        0.1
+    }
+    fn pt01() -> Self {
+        0.01
+    }
+    fn pt001() -> Self {
+        0.001
+    }
+    fn pt0001() -> Self {
+        0.0001
+    }
+}

@@ -166,8 +166,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::array;
     use crate::traits::ModelSpec;
+    use ndarray::array;
     use nearly_eq::assert_nearly_eq;
 
     #[derive(Clone, Debug)]
