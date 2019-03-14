@@ -15,12 +15,22 @@ pub trait Residual: ModelSpec {
     where
         S: ndarray::DataMut<Elem = Self::Scalar>;
 
+    /// This function computes the problem residual for given values of the independent variable t, state vector y, and derivative ˙y. Arguments tt is the current value of the independent variable.
+    ///
+    /// # Arguments
+    ///
+    /// * `tt` is the current value of the independent variable.
+    /// * `yy` is the current value of the dependent variable vector, `y(t)`.
+    /// * `yp` is the current value of `y'(t)`.
+    /// * `rr` is the output residual vector `F(t, y, y')`.
+    ///
+    /// An IDAResFn function type should return a value of 0 if successful, a positive value if a recoverable error occurred (e.g. yy has an illegal value), or a negative value if a nonrecoverable error occurred. In the last case, the integrator halts. If a recoverable error occurred, the integrator will attempt to correct and retry.
     fn res<S1, S2, S3>(
         &self,
-        tres: Self::Scalar,
+        tt: Self::Scalar,
         yy: &ArrayBase<S1, Ix1>,
         yp: &ArrayBase<S2, Ix1>,
-        resval: &mut ArrayBase<S3, Ix1>,
+        rr: &mut ArrayBase<S3, Ix1>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
         S2: ndarray::Data<Elem = Self::Scalar>,
@@ -28,24 +38,41 @@ pub trait Residual: ModelSpec {
 }
 
 pub trait Jacobian: ModelSpec {
-    /// Calculate the Jacobian
-    fn jacobian<S>(
-        &mut self,
+    /// This function computes the Jacobian matrix J of the DAE system (or an approximation to it)
+    ///
+    /// # Arguments
+    ///
+    /// * `tt` is the current value of the independent variable `t`.
+    /// * `cj` is the scalar in the system Jacobian, proportional to the inverse of the step.
+    /// * `size` (α in Eq. (2.5)).
+    /// * `yy` is the current value of the dependent variable vector, `y(t)`.
+    /// * `yp` is the current value of `y'(t)`.
+    /// * `rr` is the current value of the residual vector `F(t, y, y')`.
+    /// * `j` is the output (approximate) Jacobian matrix, `J = ∂F/∂y + cj ∂F/∂y'`.
+    ///
+    /// # Return value
+    ///
+    /// Should return 0 if successful, a positive value if a recoverable error occurred, or a negative value if a nonrecoverable error occurred. In the case of a recoverable eror return, the integrator will attempt to recover by reducing the stepsize, and hence changing α in
+    fn jac<S1, S2, S3, S4>(
+        &self,
+        tt: Self::Scalar,
         cj: Self::Scalar,
-        yy: &ArrayView<S, Ix1>,
-        yp: &ArrayView<S, Ix1>,
-    ) -> ()
-    where
-        S: ndarray::DataMut<Elem = Self::Scalar>;
+        size: Self::Scalar,
+        yy: &ArrayBase<S1, Ix1>,
+        yp: &ArrayBase<S2, Ix1>,
+        rr: &ArrayBase<S3, Ix1>,
+        j: &mut ArrayBase<S4, Ix2>,
+    ) where
+        S1: ndarray::Data<Elem = Self::Scalar>,
+        S2: ndarray::Data<Elem = Self::Scalar>,
+        S3: ndarray::Data<Elem = Self::Scalar>,
+        S4: ndarray::DataMut<Elem = Self::Scalar>;
 }
 
 /// Core implementation for explicit schemes
-pub trait IdaModel: Residual + Jacobian {}
+pub trait IdaProblem: Residual + Jacobian {}
 
-impl<T> IdaModel for T
-where
-    T: Residual + Jacobian
-{}
+impl<T> IdaProblem for T where T: Residual + Jacobian {}
 
 /// Constants for Ida
 pub trait IdaConst {

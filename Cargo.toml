@@ -18,7 +18,7 @@ keywords = ["math", "differential"]
 travis-ci = { repository = "jondo2010/ida-rs", branch = "master" }
 
 [features]
-default   = ["ndarray-linalg/openblas"]
+default   = ["ndarray-linalg/netlib"]
 
 [dependencies]
 log = { version = "0.4.6", features = ["std"] }

@@ -1,16 +1,17 @@
 use log::error;
-use ndarray::*;
+use ndarray::{prelude::*, s, Slice};
 
 use num_traits::{
-    cast::{FromPrimitive, NumCast, ToPrimitive},
+    cast::{NumCast, ToPrimitive},
     identities::{One, Zero},
-    Float, NumAssignRef, NumRef,
+    Float,
 };
 
 use crate::constants::*;
-use crate::ida_nls::*;
+use crate::ida_nls::IdaNLProblem;
 use crate::linear::*;
 use crate::nonlinear::*;
+use crate::norm_rms::*;
 use crate::traits::*;
 
 pub use crate::error::IdaError;
@@ -31,12 +32,10 @@ pub enum IdaSolveStatus {
 #[derive(Debug, Clone)]
 pub struct Ida<P, LS, NLS>
 where
-    P: IdaModel,
+    P: IdaProblem,
     LS: LSolver<P>,
     NLS: NLSolver<P>,
 {
-    pub(super) problem: P,
-
     ida_itol: ToleranceType,
     /// relative tolerance
     ida_rtol: P::Scalar,
@@ -66,23 +65,13 @@ where
 
     // Vectors
     /// error weight vector
-    pub(super) ida_ewt: Array<P::Scalar, Ix1>,
-    /// work space for y vector (= user's yret)
-    pub(super) ida_yy: Array<P::Scalar, Ix1>,
-    /// work space for y' vector (= user's ypret)
-    pub(super) ida_yp: Array<P::Scalar, Ix1>,
-    /// predicted y vector
-    pub(super) ida_yypredict: Array<P::Scalar, Ix1>,
-    /// predicted y' vector
-    pub(super) ida_yppredict: Array<P::Scalar, Ix1>,
+    ida_ewt: Array<P::Scalar, Ix1>,
     /// residual vector
     ida_delta: Array<P::Scalar, Ix1>,
     /// bit vector for diff./algebraic components
     ida_id: Array<bool, Ix1>,
     /// vector of inequality constraint options
     //ida_constraints: Array1<<P::Scalar as AssociatedReal>::Real>,
-    /// saved residual vector
-    pub(super) ida_savres: Array<P::Scalar, Ix1>,
     /// accumulated corrections to y vector, but set equal to estimated local errors upon successful return
     ida_ee: Array<P::Scalar, Ix1>,
 
@@ -122,27 +111,27 @@ where
     /// rr = hnext / hused
     ida_rr: P::Scalar,
     /// current internal value of t
-    pub(super) ida_tn: P::Scalar,
+    //pub(super) ida_tn: P::Scalar,
     /// value of tret previously returned by IDASolve
     ida_tretlast: P::Scalar,
     /// current value of scalar (-alphas/hh) in Jacobian
-    pub(super) ida_cj: P::Scalar,
+    //pub(super) ida_cj: P::Scalar,
     /// cj value saved from last successful step
     ida_cjlast: P::Scalar,
     /// cj value saved from last call to lsetup
-    pub(super) ida_cjold: P::Scalar,
+    //pub(super) ida_cjold: P::Scalar,
     /// ratio of cj values: cj/cjold
-    pub(super) ida_cjratio: P::Scalar,
+    //pub(super) ida_cjratio: P::Scalar,
     /// scalar used in Newton iteration convergence test
-    pub(super) ida_ss: P::Scalar,
+    //pub(super) ida_ss: P::Scalar,
     /// norm of previous nonlinear solver update
-    pub(super) ida_oldnrm: P::Scalar,
+    //pub(super) ida_oldnrm: P::Scalar,
     /// test constant in Newton convergence test
     ida_epsNewt: P::Scalar,
     /// coeficient of the Newton covergence test
     ida_epcon: P::Scalar,
     /// tolerance in direct test on Newton corrections
-    pub(super) ida_toldel: P::Scalar,
+    //pub(super) ida_toldel: P::Scalar,
 
     // Limits
     /// max numer of convergence failures
@@ -162,7 +151,7 @@ where
     /// number of internal steps taken
     ida_nst: u64,
     /// number of function (res) calls
-    pub(super) ida_nre: u64,
+    //pub(super) ida_nre: u64,
     /// number of corrector convergence failures
     ida_ncfn: u64,
     /// number of error test failures
@@ -170,19 +159,13 @@ where
     /// number of Newton iterations performed
     ida_nni: u64,
     /// number of lsetup calls
-    pub(super) ida_nsetups: u64,
+    //pub(super) ida_nsetups: u64,
     // Arrays for Fused Vector Operations
     ida_cvals: Array1<P::Scalar>,
     ida_dvals: Array1<P::Scalar>,
 
     /// tolerance scale factor (saved value)
     ida_tolsf: P::Scalar,
-
-    /// Nonlinear Solver
-    pub(super) nls: NLS,
-
-    /// Linear Solver
-    pub(super) ls: LS,
 
     // Rootfinding Data
 
@@ -214,22 +197,28 @@ where
     // Arrays for Fused Vector Operations
     ida_Xvecs: Array<P::Scalar, Ix2>,
     ida_Zvecs: Array<P::Scalar, Ix2>,
+
+    /// Nonlinear Solver
+    pub(super) nls: NLS,
+
+    /// Nonlinear problem
+    nlp: IdaNLProblem<P, LS>,
 }
 
 impl<P, LS, NLS> Ida<P, LS, NLS>
 where
-    P: IdaModel,
+    P: IdaProblem,
     LS: LSolver<P>,
     NLS: NLSolver<P>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
         + num_traits::NumAssignRef
-        + ScalarOperand
+        + ndarray::ScalarOperand
         + std::fmt::Debug
         + IdaConst,
 {
-    /// Creates a new IdaModel given a ModelSpec, initial Arrays of yy0 and yyp
+    /// Creates a new IdaProblem given a ModelSpec, initial Arrays of yy0 and yyp
     ///
     /// *Panics" if ModelSpec::Scalar is unable to convert any constant initialization value.
     pub fn new(problem: P, yy0: Array<P::Scalar, Ix1>, yp0: Array<P::Scalar, Ix1>) -> Self {
@@ -248,7 +237,6 @@ where
 
         //IDAResFn res, realtype t0, N_Vector yy0, N_Vector yp0
         Self {
-            problem: problem,
             // Set unit roundoff in IDA_mem
             // NOTE: Use P::Scalar::epsilon() instead!
             //ida_uround: UNIT_ROUNDOFF,
@@ -267,7 +255,6 @@ where
             ida_hin: P::Scalar::zero(),
             ida_epsNewt: P::Scalar::zero(),
             ida_epcon: NumCast::from(EPCON).unwrap(),
-            ida_toldel: P::Scalar::zero(),
             ida_maxnef: MXNEF as u64,
             ida_maxncf: MXNCF as u64,
             ida_suppressalg: false,
@@ -275,6 +262,8 @@ where
             //ida_constraints: Array::zeros(yy0.raw_dim()),
             ida_constraintsSet: false,
             ida_tstopset: false,
+
+            ida_cjlast: P::Scalar::zero(),
 
             // set the saved value maxord_alloc
             //ida_maxord_alloc = MAXORD_DEFAULT;
@@ -291,10 +280,6 @@ where
             /* Initialize lrw and liw */
             //ida_lrw = 25 + 5*MXORDP1;
             //ida_liw = 38;
-
-            // Initialize nonlinear solver pointer
-            nls: NLS::new(yy0.len(), MAXNLSIT),
-            ls: LS::new(),
             ida_phi: ida_phi,
 
             ida_psi: Array::zeros(MXORDP1),
@@ -308,11 +293,9 @@ where
 
             // Initialize all the counters and other optional output values
             ida_nst: 0,
-            ida_nre: 0,
             ida_ncfn: 0,
             ida_netf: 0,
             ida_nni: 0,
-            ida_nsetups: 0,
             ida_kused: 0,
             ida_hused: P::Scalar::zero(),
             ida_tolsf: P::Scalar::one(),
@@ -345,34 +328,23 @@ where
             ida_ns: 0,
 
             ida_rr: P::Scalar::zero(),
-            ida_tn: P::Scalar::zero(),
             ida_tretlast: P::Scalar::zero(),
             ida_h0u: P::Scalar::zero(),
             ida_hh: P::Scalar::zero(),
             //ida_hused: <P::Scalar as AssociatedReal>::Real::from_f64(0.0),
-            ida_cj: P::Scalar::zero(),
-            ida_cjlast: P::Scalar::zero(),
-            ida_cjold: P::Scalar::zero(),
-            ida_cjratio: P::Scalar::zero(),
-            ida_oldnrm: P::Scalar::zero(),
-            ida_ss: P::Scalar::zero(),
-
             ida_cvals: Array::zeros(MXORDP1),
             ida_dvals: Array::zeros(MAXORD_DEFAULT),
 
             ida_Xvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
             ida_Zvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
 
-            ida_yypredict: Array::zeros(yy0.raw_dim()),
-            ida_yppredict: Array::zeros(yy0.raw_dim()),
-
             ida_rtol: P::Scalar::zero(),
             ida_Satol: P::Scalar::zero(),
             ida_Vatol: Array::zeros(MXORDP1),
 
-            ida_savres: Array::zeros(yy0.raw_dim()),
-            ida_yp: Array::zeros(yy0.raw_dim()),
-            ida_yy: Array::zeros(yy0.raw_dim()),
+            // Initialize nonlinear solver
+            nls: NLS::new(yy0.len(), MAXNLSIT),
+            nlp: IdaNLProblem::new(problem),
         }
     }
 
@@ -437,10 +409,10 @@ where
         itask: &IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error>
     where
-        S1: DataMut<Elem = P::Scalar>,
-        S2: DataMut<Elem = P::Scalar>,
-        ArrayBase<S1, Ix1>: IntoNdProducer,
-        ArrayBase<S2, Ix1>: IntoNdProducer,
+        S1: ndarray::DataMut<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
+        ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
+        ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
     {
         if self.ida_nst == 0 {
             // This is the first call
@@ -456,14 +428,14 @@ where
 
             // On first call, check for tout - tn too small, set initial hh, check for approach to tstop, and scale phi[1] by hh. Also check for zeros of root function g at and near t0.
 
-            let tdist = (tout - self.ida_tn).abs();
+            let tdist = (tout - self.nlp.ida_tn).abs();
             if tdist == P::Scalar::zero() {
                 Err(IdaError::IllegalInput {
                     msg: format!("tout too close to t0 to start integration."),
                 })?
             }
             let troundoff =
-                P::Scalar::two() * P::Scalar::epsilon() * (self.ida_tn.abs() + tout.abs());
+                P::Scalar::two() * P::Scalar::epsilon() * (self.nlp.ida_tn.abs() + tout.abs());
             if tdist < troundoff {
                 Err(IdaError::IllegalInput {
                     msg: format!("tout too close to t0 to start integration."),
@@ -472,7 +444,7 @@ where
 
             self.ida_hh = self.ida_hin;
             if (self.ida_hh != P::Scalar::zero())
-                && ((tout - self.ida_tn) * self.ida_hh < P::Scalar::zero())
+                && ((tout - self.nlp.ida_tn) * self.ida_hh < P::Scalar::zero())
             {
                 Err(IdaError::IllegalInput {
                     msg: format!("Initial step is not towards tout."),
@@ -489,7 +461,7 @@ where
                 if ypnorm > P::Scalar::two() / self.ida_hh {
                     self.ida_hh = P::Scalar::half() / ypnorm;
                 }
-                if tout < self.ida_tn {
+                if tout < self.nlp.ida_tn {
                     self.ida_hh = -self.ida_hh;
                 }
             }
@@ -500,18 +472,20 @@ where
             }
 
             if self.ida_tstopset {
-                if (self.ida_tstop - self.ida_tn) * self.ida_hh <= P::Scalar::zero() {
+                if (self.ida_tstop - self.nlp.ida_tn) * self.ida_hh <= P::Scalar::zero() {
                     Err(IdaError::IllegalInput {
                         msg: format!(
                             "The value tstop = {:?} \
                              is behind current t = {:?} \
                              in the direction of integration.",
-                            self.ida_tstop, self.ida_tn
+                            self.ida_tstop, self.nlp.ida_tn
                         ),
                     })?
                 }
-                if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh > P::Scalar::zero() {
-                    self.ida_hh = (self.ida_tstop - self.ida_tn)
+                if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+                    > P::Scalar::zero()
+                {
+                    self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
                         * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
                 }
             }
@@ -525,7 +499,7 @@ where
             self.r_check1()?;
             //  ier = IDARcheck1(IDA_mem);
             //  if (ier == IDA_RTFUNC_FAIL) {
-            //    IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck1", MSG_RTFUNC_FAILED, self.ida_tn);
+            //    IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck1", MSG_RTFUNC_FAILED, self.nlp.ida_tn);
             //    return(IDA_RTFUNC_FAIL);
             //  }
             //}
@@ -536,7 +510,7 @@ where
 
             // Set the convergence test constants epsNewt and toldel
             self.ida_epsNewt = self.ida_epcon;
-            self.ida_toldel = P::Scalar::pt001() * self.ida_epsNewt;
+            self.nlp.ida_toldel = P::Scalar::pt001() * self.ida_epsNewt;
         } // end of first-call block.
 
         // Call lperf function and set nstloc for later performance testing.
@@ -570,14 +544,14 @@ where
 
                 /* If tn is distinct from tretlast (within roundoff),
                    check remaining interval for roots */
-                troundoff = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
-                if ( SUNRabs(self.ida_tn - self.ida_tretlast) > troundoff ) {
+                troundoff = HUNDRED * self.ida_uround * (SUNRabs(self.nlp.ida_tn) + SUNRabs(self.ida_hh));
+                if ( SUNRabs(self.nlp.ida_tn - self.ida_tretlast) > troundoff ) {
                 ier = IDARcheck3(IDA_mem);
                 if (ier == IDA_SUCCESS) {     /* no root found */
                 self.ida_irfnd = 0;
                 if ((irfndp == 1) && (itask == IDA_ONE_STEP)) {
-                self.ida_tretlast = *tret = self.ida_tn;
-                ier = IDAGetSolution(IDA_mem, self.ida_tn, yret, ypret);
+                self.ida_tretlast = *tret = self.nlp.ida_tn;
+                ier = IDAGetSolution(IDA_mem, self.nlp.ida_tn, yret, ypret);
                 return(IDA_SUCCESS);
                 }
                 } else if (ier == RTFOUND) {  /* a new root was found */
@@ -606,13 +580,13 @@ where
             // Check for too many steps taken.
 
             if (self.ida_mxstep > 0) && (nstloc >= self.ida_mxstep) {
-                *tret = self.ida_tn;
-                self.ida_tretlast = self.ida_tn;
+                *tret = self.nlp.ida_tn;
+                self.ida_tretlast = self.nlp.ida_tn;
                 // Here yy=yret and yp=ypret already have the current solution.
                 Err(IdaError::IllegalInput {
                     msg: format!(
                         "At t = {:?}, mxstep steps taken before reaching tout.",
-                        self.ida_tn
+                        self.nlp.ida_tn
                     ),
                 })?
                 //istate = IDA_TOO_MUCH_WORK;
@@ -626,30 +600,30 @@ where
             // Reset and check ewt (if not first call).
 
             if self.ida_nst > 0 {
-                //ier = self.ida_efun(self.ida_phi[0], self.ida_ewt, self.ida_edata);
+                //ier = self.ida_efun(self.ida_phi[0], self.nlp.ida_ewt, self.ida_edata);
                 let ier = 0;
 
                 if ier != 0 {
-                    self.get_solution(self.ida_tn, yret, ypret);
-                    *tret = self.ida_tn;
-                    self.ida_tretlast = self.ida_tn;
+                    self.get_solution(self.nlp.ida_tn, yret, ypret);
+                    *tret = self.nlp.ida_tn;
+                    self.ida_tretlast = self.nlp.ida_tn;
 
                     match self.ida_itol {
                         ToleranceType::TolWF => {
-                            //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_FAIL, self.ida_tn);
+                            //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_FAIL, self.nlp.ida_tn);
                             Err(IdaError::IllegalInput {
                                 msg: format!(
                                     "At t = {:?} the user-provide EwtSet function failed.",
-                                    self.ida_tn
+                                    self.nlp.ida_tn
                                 ),
                             })?
                         }
                         _ => {
-                            //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_BAD, self.ida_tn);
+                            //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_BAD, self.nlp.ida_tn);
                             Err(IdaError::IllegalInput {
                                 msg: format!(
                                     "At t = {:?} some ewt component has become <= 0.0.",
-                                    self.ida_tn
+                                    self.nlp.ida_tn
                                 ),
                             })?
                         }
@@ -671,16 +645,16 @@ where
             if self.ida_tolsf > P::Scalar::one() {
                 self.ida_tolsf *= P::Scalar::ten();
 
-                *tret = self.ida_tn;
-                self.ida_tretlast = self.ida_tn;
+                *tret = self.nlp.ida_tn;
+                self.ida_tretlast = self.nlp.ida_tn;
                 if self.ida_nst > 0 {
-                    let ier = self.get_solution(self.ida_tn, yret, ypret);
+                    let ier = self.get_solution(self.nlp.ida_tn, yret, ypret);
                 }
-                //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_TOO_MUCH_ACC, self.ida_tn);
+                //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_TOO_MUCH_ACC, self.nlp.ida_tn);
                 //istate = IDA_TOO_MUCH_ACC;
                 //break;
                 Err(IdaError::TooMuchAccuracy {
-                    t: self.ida_tn.to_f64().unwrap(),
+                    t: self.nlp.ida_tn.to_f64().unwrap(),
                 })?
             }
 
@@ -691,11 +665,11 @@ where
             // Process all failed-step cases, and exit loop.
 
             sflag.map_err(|err| {
-                let ier = self.get_solution(self.ida_tn, yret, ypret);
+                let ier = self.get_solution(self.nlp.ida_tn, yret, ypret);
                 match ier {
                     Ok(_) => {
-                        *tret = self.ida_tn;
-                        self.ida_tretlast = self.ida_tn;
+                        *tret = self.nlp.ida_tn;
+                        self.ida_tretlast = self.nlp.ida_tn;
                     }
                     Err(e2) => {
                         error!("Error occured with get_solution: {:?}", e2.as_fail());
@@ -778,7 +752,7 @@ where
         dky: &mut ArrayBase<S, Ix1>,
     ) -> Result<(), failure::Error>
     where
-        S: DataMut<Elem = P::Scalar>,
+        S: ndarray::DataMut<Elem = P::Scalar>,
     {
         /*
         IDAMem IDA_mem;
@@ -798,16 +772,16 @@ where
 
         let tfuzz = P::Scalar::hundred()
             * P::Scalar::epsilon()
-            * (self.ida_tn.abs() + self.ida_hh.abs())
+            * (self.nlp.ida_tn.abs() + self.ida_hh.abs())
             * self.ida_hh.signum();
-        let tp = self.ida_tn - self.ida_hused - tfuzz;
+        let tp = self.nlp.ida_tn - self.ida_hused - tfuzz;
         if (t - tp) * self.ida_hh < P::Scalar::zero() {
             Err(IdaError::BadTimeValue {
                 t: t.to_f64().unwrap(),
-                tdiff: (self.ida_tn - self.ida_hused).to_f64().unwrap(),
-                tcurr: self.ida_tn.to_f64().unwrap(),
+                tdiff: (self.nlp.ida_tn - self.ida_hused).to_f64().unwrap(),
+                tcurr: self.nlp.ida_tn.to_f64().unwrap(),
             })?
-            //IDAProcessError(IDA_mem, IDA_BAD_T, "IDA", "IDAGetDky", MSG_BAD_T, t, self.ida_tn-self.ida_hused, self.ida_tn);
+            //IDAProcessError(IDA_mem, IDA_BAD_T, "IDA", "IDAGetDky", MSG_BAD_T, t, self.nlp.ida_tn-self.ida_hused, self.nlp.ida_tn);
             //return(IDA_BAD_T);
         }
 
@@ -815,7 +789,7 @@ where
         let mut cjk = Array::zeros(MXORDP1);
         let mut cjk_1 = Array::zeros(MXORDP1);
 
-        let delt = t - self.ida_tn;
+        let delt = t - self.nlp.ida_tn;
         let mut psij_1 = P::Scalar::zero();
 
         for i in 0..k + 1 {
@@ -899,8 +873,8 @@ where
         weight: &mut ArrayBase<S2, Ix1>,
     ) -> bool
     where
-        S1: Data<Elem = P::Scalar>,
-        S2: DataMut<Elem = P::Scalar>,
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
     {
         match self.ida_itol {
             ToleranceType::TolSS => self.ewt_set_ss(ycur, weight),
@@ -922,8 +896,8 @@ where
         weight: &mut ArrayBase<S2, Ix1>,
     ) -> bool
     where
-        S1: Data<Elem = P::Scalar>,
-        S2: DataMut<Elem = P::Scalar>,
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
     {
         let tempv1 = ycur.mapv(|x| (self.ida_rtol * x.abs()) + self.ida_Satol);
         //self.ida_tempv1.zip_mut_with(ycur, |z, &a| { *z = });
@@ -958,8 +932,8 @@ where
         weight: &mut ArrayBase<S2, Ix1>,
     ) -> bool
     where
-        S1: Data<Elem = P::Scalar>,
-        S2: DataMut<Elem = P::Scalar>,
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
     {
         /*
         N_VAbs(ycur, self.ida_tempv1);
@@ -998,21 +972,21 @@ where
         itask: &IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error>
     where
-        S1: DataMut<Elem = P::Scalar>,
-        S2: DataMut<Elem = P::Scalar>,
-        ArrayBase<S1, Ix1>: IntoNdProducer,
-        ArrayBase<S2, Ix1>: IntoNdProducer,
+        S1: ndarray::DataMut<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
+        ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
+        ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
     {
         match itask {
             IdaTask::Normal => {
                 if self.ida_tstopset {
                     // Test for tn past tstop, tn = tretlast, tn past tout, tn near tstop.
-                    if (self.ida_tn - self.ida_tstop) * self.ida_hh > P::Scalar::zero() {
-                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.ida_tn);
+                    if (self.nlp.ida_tn - self.ida_tstop) * self.ida_hh > P::Scalar::zero() {
+                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.nlp.ida_tn);
                         //return(IDA_ILL_INPUT);
                         Err(IdaError::BadStopTime {
                             tstop: self.ida_tstop.to_f64().unwrap(),
-                            t: self.ida_tn.to_f64().unwrap(),
+                            t: self.nlp.ida_tn.to_f64().unwrap(),
                         })?
                     }
                 }
@@ -1026,7 +1000,7 @@ where
                     return Ok(IdaSolveStatus::Success);
                 }
 
-                if (self.ida_tn - tout) * self.ida_hh >= P::Scalar::zero() {
+                if (self.nlp.ida_tn - tout) * self.ida_hh >= P::Scalar::zero() {
                     self.get_solution(tout, yret, ypret)?;
                     self.ida_tretlast = tout;
                     *tret = tout;
@@ -1036,13 +1010,13 @@ where
                 if self.ida_tstopset {
                     let troundoff = P::Scalar::hundred()
                         * P::Scalar::epsilon()
-                        * (self.ida_tn.abs() + self.ida_hh.abs());
-                    if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
+                        * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
+                    if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
                         /*
                         self.get_solution(self.ida_tstop, yret, ypret)
                             .map_err(|e| IdaError::BadStopTime {
                                 tstop: self.ida_tstop.to_f64().unwrap(),
-                                t: self.ida_tn.to_f64().unwrap(),
+                                t: self.nlp.ida_tn.to_f64().unwrap(),
                             })
                             .and_then(|_| {
                                 self.ida_tretlast = self.ida_tstop;
@@ -1051,16 +1025,16 @@ where
                             })
                         */
                         //if (ier != IDA_SUCCESS) {
-                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.ida_tn);
+                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.nlp.ida_tn);
                         //return(IDA_ILL_INPUT);
                         //}
                         //return Ok(IdaSolveStatus::TStop);
                     }
 
-                    if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+                    if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
                         > P::Scalar::zero()
                     {
-                        self.ida_hh = (self.ida_tstop - self.ida_tn)
+                        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
                             * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
                     }
                 }
@@ -1099,15 +1073,15 @@ where
         itask: &IdaTask,
     ) -> Result<(), IdaError>
     where
-        S1: Data<Elem = P::Scalar>,
-        S2: DataMut<Elem = P::Scalar>,
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
     {
         unimplemented!()
         /*
         match itask {
             IdaTask::Normal => {
                 // Test for tn past tout.
-                if (self.ida_tn - tout) * self.ida_hh >= P::Scalar::zero() {
+                if (self.nlp.ida_tn - tout) * self.ida_hh >= P::Scalar::zero() {
                     // /* ier = */ IDAGetSolution(IDA_mem, tout, yret, ypret);
                     *tret = tout;
                     self.ida_tretlast = tout;
@@ -1119,20 +1093,20 @@ where
                     // Test for tn at tstop and for tn near tstop
                     let troundoff = P::Scalar::hundred()
                         * P::Scalar::epsilon()
-                        * (self.ida_tn.abs() + self.ida_hh.abs());
-                    if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
+                        * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
+                    if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
                         /* ier = */
         self.get_solution(self.ida_tstop, yret, ypret);
          *tret = self.ida_tretlast = self.ida_tstop;
         self.ida_tstopset = false;
         //return(IDA_TSTOP_RETURN);
 
-        //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.ida_tn.to_f64().unwrap(), })?
+        //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.nlp.ida_tn.to_f64().unwrap(), })?
         }
-        if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+        if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
         > P::Scalar::zero()
         {
-        self.ida_hh = (self.ida_tstop - self.ida_tn)
+        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
          * (P::Scalar::one() - P::Scalar::four() * self.ida_uround);
         }
         }
@@ -1145,8 +1119,8 @@ where
         /* Test for tn at tstop and for tn near tstop */
         let troundoff = P::Scalar::hundred()
          * P::Scalar::epsilon()
-         * (self.ida_tn.abs() + self.ida_hh.abs());
-        if (self.ida_tn - self.ida_tstop).abs() <= troundoff {
+         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
+        if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
         /* ier = */
         //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
          *tret = self.ida_tretlast = self.ida_tstop;
@@ -1155,15 +1129,15 @@ where
         self.get_solution(tout, yret, ypret)?;
         //return(IDA_TSTOP_RETURN);
         }
-        if (self.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+        if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
         > P::Scalar::zero()
         {
-        self.ida_hh = (self.ida_tstop - self.ida_tn)
+        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
          * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
         }
         }
 
-        *tret = self.ida_tretlast = self.ida_tn;
+        *tret = self.ida_tretlast = self.nlp.ida_tn;
         //return (IDA_SUCCESS);
         }
         }
@@ -1220,7 +1194,7 @@ where
         //int nflag, kflag;
         let mut ck = P::Scalar::one();
 
-        let saved_t = self.ida_tn;
+        let saved_t = self.nlp.ida_tn;
         //ncf = nef = 0;
 
         if self.ida_nst == 0 {
@@ -1228,7 +1202,7 @@ where
             self.ida_kused = 0;
             self.ida_hused = P::Scalar::one();
             self.ida_psi[0] = self.ida_hh;
-            self.ida_cj = P::Scalar::one() / self.ida_hh;
+            self.nlp.ida_cj = self.ida_hh.recip();
             self.ida_phase = 0;
             self.ida_ns = 0;
         }
@@ -1252,11 +1226,11 @@ where
             // If tn is past tstop (by roundoff), reset it to tstop.
             //-----------------------------------------------------
 
-            self.ida_tn += self.ida_hh;
+            self.nlp.ida_tn += self.ida_hh;
             if self.ida_tstopset
-                && ((self.ida_tn - self.ida_tstop) * self.ida_hh > P::Scalar::one())
+                && ((self.nlp.ida_tn - self.ida_tstop) * self.ida_hh > P::Scalar::one())
             {
-                self.ida_tn = self.ida_tstop;
+                self.nlp.ida_tn = self.ida_tstop;
             }
 
             //-----------------------
@@ -1364,8 +1338,8 @@ where
         }
 
         // compute leading coefficient cj
-        self.ida_cjlast = self.ida_cj;
-        self.ida_cj = -alphas / self.ida_hh;
+        self.ida_cjlast = self.nlp.ida_cj;
+        self.nlp.ida_cj = -alphas / self.ida_hh;
 
         // compute variable stepsize error coefficient ck
         let mut ck = (self.ida_alpha[self.ida_kk] + alphas - alpha0).abs();
@@ -1397,30 +1371,32 @@ where
         let mut callLSetup = false;
 
         if self.ida_nst == 0 {
-            self.ida_cjold = self.ida_cj;
-            self.ida_ss = P::Scalar::twenty();
+            self.nlp.ida_cjold = self.nlp.ida_cj;
+            self.nlp.ida_ss = P::Scalar::twenty();
             //if (self.ida_lsetup) { callLSetup = true; }
         }
 
         // Decide if lsetup is to be called
 
         //if self.ida_lsetup {
-        self.ida_cjratio = self.ida_cj / self.ida_cjold;
+        self.nlp.ida_cjratio = self.nlp.ida_cj / self.nlp.ida_cjold;
         let temp1: P::Scalar = NumCast::from((1.0 - XRATE) / (1.0 + XRATE)).unwrap();
         let temp2 = temp1.recip();
-        if self.ida_cjratio < temp1 || self.ida_cjratio > temp2 {
+        if self.nlp.ida_cjratio < temp1 || self.nlp.ida_cjratio > temp2 {
             callLSetup = true;
         }
-        if self.ida_cj != self.ida_cjlast {
-            self.ida_ss = P::Scalar::hundred();
+        if self.nlp.ida_cj != self.ida_cjlast {
+            self.nlp.ida_ss = P::Scalar::hundred();
         }
         //}
 
         // initial guess for the correction to the predictor
         //N_VConst(ZERO, self.ida_delta);
-        self.ida_delta = Array::zeros(self.problem.model_size());
+        //TODO Fix this
+        self.ida_delta = Array::zeros(self.nlp.problem.model_size());
 
         // call nonlinear solver setup if it exists
+        self.nls.setup(&mut self.ida_delta);
         /*
         if ((self.NLS)->ops->setup) {
           retval = SUNNonlinSolSetup(self.NLS, self.ida_delta, IDA_mem);
@@ -1430,22 +1406,21 @@ where
         */
 
         // solve the nonlinear system
-        /*
         self.nls.solve(
-            self,
+            &mut self.nlp,
             &self.ida_delta,
             &mut self.ida_ee,
             &self.ida_ewt,
             self.ida_epsNewt,
             callLSetup,
-        );
-        */
+        )?;
+
         /*
         retval = SUNNonlinSolSolve(
             self.NLS,
             self.ida_delta,
             self.ida_ee,
-            self.ida_ewt,
+            self.nlp.ida_ewt,
             self.ida_epsNewt,
             callLSetup,
             IDA_mem,
@@ -1454,11 +1429,11 @@ where
 
         // update yy and yp based on the final correction from the nonlinear solve
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, self.ida_ee, self.ida_yy);
-        self.ida_yy = &self.ida_yypredict + &self.ida_ee;
+        self.nlp.ida_yy = &self.nlp.ida_yypredict + &self.ida_ee;
         //N_VLinearSum( ONE, self.ida_yppredict, self.ida_cj, self.ida_ee, self.ida_yp,);
         //self.ida_yp = &self.ida_yppredict + (&self.ida_ee * self.ida_cj);
-        self.ida_yp.assign(&self.ida_yppredict);
-        self.ida_yp.scaled_add(self.ida_cj, &self.ida_ee);
+        self.nlp.ida_yp.assign(&self.nlp.ida_yppredict);
+        self.nlp.ida_yp.scaled_add(self.nlp.ida_cj, &self.ida_ee);
 
         // return if nonlinear solver failed */
         //if (retval != IDA_SUCCESS) { return (retval); };
@@ -1487,7 +1462,10 @@ where
                 .unwrap()
                 .reversed_axes();
 
-            let mut yypredict = self.ida_yypredict.slice_axis_mut(Axis(0), Slice::from(0..));
+            let mut yypredict = self
+                .nlp
+                .ida_yypredict
+                .slice_axis_mut(Axis(0), Slice::from(0..));
 
             yypredict.assign(&(&phi * &cvals).sum_axis(Axis(0)));
         }
@@ -1506,7 +1484,10 @@ where
                 .unwrap()
                 .reversed_axes();
 
-            let mut yppredict = self.ida_yppredict.slice_axis_mut(Axis(0), Slice::from(0..));
+            let mut yppredict = self
+                .nlp
+                .ida_yppredict
+                .slice_axis_mut(Axis(0), Slice::from(0..));
 
             yppredict.assign(&(&phi * &gamma).sum_axis(Axis(0)));
         }
@@ -1582,7 +1563,7 @@ where
     ///
     ///
     fn restore(&mut self, saved_t: P::Scalar) -> () {
-        self.ida_tn = saved_t;
+        self.nlp.ida_tn = saved_t;
 
         // Restore psi[0 .. kk] = psi[1 .. kk + 1] - hh
         for j in 1..self.ida_kk + 1 {
@@ -1595,7 +1576,7 @@ where
 
         if self.ida_ns <= self.ida_kk {
             // cvals[0 .. kk-ns+1] = 1 / beta[ns .. kk+1]
-            Zip::from(
+            ndarray::Zip::from(
                 &mut self
                     .ida_cvals
                     .slice_mut(s![0..self.ida_kk - self.ida_ns + 1]),
@@ -1861,26 +1842,26 @@ where
         ypret: &'a mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
-        S1: DataMut<Elem = P::Scalar>,
-        S2: DataMut<Elem = P::Scalar>,
-        ArrayBase<S1, Ix1>: IntoNdProducer,
-        ArrayBase<S2, Ix1>: IntoNdProducer,
+        S1: ndarray::DataMut<Elem = P::Scalar>,
+        S2: ndarray::DataMut<Elem = P::Scalar>,
+        ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
+        ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
     {
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
-        //tfuzz = HUNDRED * self.ida_uround * (SUNRabs(self.ida_tn) + SUNRabs(self.ida_hh));
+        //tfuzz = HUNDRED * self.ida_uround * (SUNRabs(self.nlp.ida_tn) + SUNRabs(self.ida_hh));
 
         let mut tfuzz = P::Scalar::hundred()
             * P::Scalar::epsilon()
-            * (self.ida_tn.abs() + self.ida_hh.abs())
+            * (self.nlp.ida_tn.abs() + self.ida_hh.abs())
             * self.ida_hh.signum();
         //if self.ida_hh < P::Scalar::zero() { tfuzz = -tfuzz; }
-        let tp = self.ida_tn - self.ida_hused - tfuzz;
+        let tp = self.nlp.ida_tn - self.ida_hused - tfuzz;
         if (t - tp) * self.ida_hh < P::Scalar::zero() {
             Err(IdaError::BadTimeValue {
                 t: t.to_f64().unwrap(),
-                tdiff: (self.ida_tn - self.ida_hused).to_f64().unwrap(),
-                tcurr: self.ida_tn.to_f64().unwrap(),
+                tdiff: (self.nlp.ida_tn - self.ida_hused).to_f64().unwrap(),
+                tcurr: self.nlp.ida_tn.to_f64().unwrap(),
             })?;
         }
 
@@ -1892,7 +1873,7 @@ where
         };
 
         // Accumulate multiples of columns phi[j] into yret and ypret.
-        let delt = t - self.ida_tn;
+        let delt = t - self.nlp.ida_tn;
         let mut c = P::Scalar::one();
         let mut d = P::Scalar::zero();
         let mut gam = delt / self.ida_psi[0];
@@ -1940,12 +1921,16 @@ where
     ///
     /// mask = SUNFALSE       when the call is made from the nonlinear solver.
     /// mask = suppressalg otherwise.
-    pub fn wrms_norm<S1: Data<Elem = P::Scalar>, S2: Data<Elem = P::Scalar>>(
+    pub fn wrms_norm<S1, S2>(
         &self,
         x: &ArrayBase<S1, Ix1>,
         w: &ArrayBase<S2, Ix1>,
         mask: bool,
-    ) -> P::Scalar {
+    ) -> P::Scalar
+    where
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::Data<Elem = P::Scalar>,
+    {
         if mask {
             x.norm_wrms_masked(w, &self.ida_id)
         } else {
@@ -1969,8 +1954,8 @@ where
 
         //for (i = 0; i < self.ida_nrtfn; i++)
         //  self.ida_iroots[i] = 0;
-        //self.ida_tlo = self.ida_tn;
-        //self.ida_ttol = ((self.ida_tn).abs() + (self.ida_hh).abs())
+        //self.ida_tlo = self.nlp.ida_tn;
+        //self.ida_ttol = ((self.nlp.ida_tn).abs() + (self.ida_hh).abs())
         //    * P::Scalar::epsilon()
         //    * P::Scalar::from(100.0).unwrap();
 
@@ -1985,7 +1970,7 @@ where
         );
         */
         self.ida_nge = 1;
-        //retval.map_err(|e| IdaError::RootFunctionFail{t: self.ida_tn.to_f64().unwrap() })?;
+        //retval.map_err(|e| IdaError::RootFunctionFail{t: self.nlp.ida_tn.to_f64().unwrap() })?;
 
         /*
         zroot = SUNFALSE;
@@ -2026,7 +2011,7 @@ mod tests {
     //use crate::ida::Ida;
     use super::*;
     use crate::lorenz63::Lorenz63;
-    //use ndarray::*;
+    use ndarray::*;
     use nearly_eq::*;
 
     #[test]
@@ -2129,7 +2114,7 @@ mod tests {
         ida.ida_phi.assign(&ida_phi);
         ida.ida_psi.assign(&ida_psi);
         ida.ida_cjlast = cjlast;
-        ida.ida_cj = cj;
+        ida.nlp.ida_cj = cj;
 
         // Call the function under test
         let ck = ida.set_coeffs();
@@ -2228,7 +2213,7 @@ mod tests {
         assert_nearly_eq!(ida.ida_phi, ida_phi);
         assert_nearly_eq!(ida.ida_psi, ida_psi);
         assert_nearly_eq!(ida.ida_cjlast, cjlast);
-        assert_nearly_eq!(ida.ida_cj, cj);
+        assert_nearly_eq!(ida.nlp.ida_cj, cj);
         assert_nearly_eq!(ck, ck_expect);
     }
 
@@ -2454,8 +2439,8 @@ mod tests {
         ida.ida_kk = kk;
         ida.ida_phi.assign(&ida_phi);
         ida.ida_gamma.assign(&ida_gamma);
-        ida.ida_yypredict.assign(&ida_yypredict);
-        ida.ida_yppredict.assign(&ida_yppredict);
+        ida.nlp.ida_yypredict.assign(&ida_yypredict);
+        ida.nlp.ida_yppredict.assign(&ida_yppredict);
 
         // Call the function under test
         ida.predict();
@@ -2506,8 +2491,8 @@ mod tests {
 
         assert_eq!(ida.ida_kk, kk);
         assert_nearly_eq!(ida.ida_phi, ida_phi, 1e-9);
-        assert_nearly_eq!(ida.ida_yypredict, ida_yypredict, 1e-9);
-        assert_nearly_eq!(ida.ida_yppredict, ida_yppredict, 1e-9);
+        assert_nearly_eq!(ida.nlp.ida_yypredict, ida_yypredict, 1e-9);
+        assert_nearly_eq!(ida.nlp.ida_yppredict, ida_yppredict, 1e-9);
     }
 
     #[test]
@@ -2532,7 +2517,7 @@ mod tests {
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
-        ida.ida_tn = 765020.5513257229;
+        ida.nlp.ida_tn = 765020.5513257229;
         ida.ida_ns = 3;
         ida.ida_kk = 4;
         ida.ida_hh = 47467.05706123715;
@@ -2544,7 +2529,7 @@ mod tests {
         // Call the function under test
         ida.restore(saved_t);
 
-        assert_nearly_eq!(ida.ida_tn, saved_t);
+        assert_nearly_eq!(ida.nlp.ida_tn, saved_t);
         assert_eq!(ida.ida_ns, 3);
         assert_eq!(ida.ida_kk, 4);
         assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
@@ -2579,7 +2564,7 @@ mod tests {
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
-        ida.ida_tn = 4480988928.431009;
+        ida.nlp.ida_tn = 4480988928.431009;
         ida.ida_ns = 1;
         ida.ida_kk = 4;
         ida.ida_hh = 857870592.1885694;
@@ -2591,7 +2576,7 @@ mod tests {
         // Call the function under test
         ida.restore(saved_t);
 
-        assert_nearly_eq!(ida.ida_tn, saved_t);
+        assert_nearly_eq!(ida.nlp.ida_tn, saved_t);
         assert_eq!(ida.ida_ns, 1);
         assert_eq!(ida.ida_kk, 4);
         assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
@@ -2701,7 +2686,7 @@ mod tests {
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
-        ida.ida_tn = 15295021.33422961;
+        ida.nlp.ida_tn = 15295021.33422961;
         ida.ida_ns = 1;
         ida.ida_kk = 5;
         ida.ida_hh = 1656116.685489699;
@@ -2713,7 +2698,7 @@ mod tests {
         // Call the function under test
         ida.restore(saved_t);
 
-        assert_nearly_eq!(ida.ida_tn, saved_t);
+        assert_nearly_eq!(ida.nlp.ida_tn, saved_t);
         assert_eq!(ida.ida_ns, 1);
         assert_eq!(ida.ida_kk, 5);
         assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
@@ -2880,7 +2865,7 @@ mod tests {
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         ida.ida_hh = hh;
-        ida.ida_tn = tn;
+        ida.nlp.ida_tn = tn;
         ida.ida_kused = kused;
         ida.ida_hused = hused;
         ida.ida_phi.assign(&ida_phi);

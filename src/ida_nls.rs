@@ -1,7 +1,7 @@
 use ndarray::prelude::*;
 
 use super::ida::Ida;
-use super::traits::{IdaConst, IdaModel};
+use super::traits::{IdaConst, IdaProblem};
 use crate::linear::LSolver;
 use crate::nonlinear::{NLProblem, NLSolver};
 use crate::traits::ModelSpec;
@@ -84,18 +84,93 @@ where
 }
 */
 
-impl<P, LS, NLS> NLProblem<P> for Ida<P, LS, NLS>
+/// State variables involved in the Non-linear problem
+#[derive(Debug, Clone)]
+pub struct IdaNLProblem<P, LS>
 where
-    P: IdaModel,
+    P: IdaProblem,
     LS: LSolver<P>,
-    NLS: NLSolver<P>,
-    <P as ModelSpec>::Scalar: num_traits::Float
-        + num_traits::float::FloatConst
-        + num_traits::NumRef
-        + num_traits::NumAssignRef
-        + ndarray::ScalarOperand
-        + std::fmt::Debug
-        + IdaConst,
+{
+    // Vectors
+    /// work space for y vector (= user's yret)
+    pub(super) ida_yy: Array<P::Scalar, Ix1>,
+    /// work space for y' vector (= user's ypret)
+    pub(super) ida_yp: Array<P::Scalar, Ix1>,
+    /// predicted y vector
+    pub(super) ida_yypredict: Array<P::Scalar, Ix1>,
+    /// predicted y' vector
+    pub(super) ida_yppredict: Array<P::Scalar, Ix1>,
+
+    /// saved residual vector
+    pub(super) ida_savres: Array<P::Scalar, Ix1>,
+    /// current internal value of t
+    pub(super) ida_tn: P::Scalar,
+
+    /// current value of scalar (-alphas/hh) in Jacobian
+    pub(super) ida_cj: P::Scalar,
+    /// cj value saved from last call to lsetup
+    pub(super) ida_cjold: P::Scalar,
+    /// ratio of cj values: cj/cjold
+    pub(super) ida_cjratio: P::Scalar,
+    /// scalar used in Newton iteration convergence test
+    pub(super) ida_ss: P::Scalar,
+    /// norm of previous nonlinear solver update
+    pub(super) ida_oldnrm: P::Scalar,
+    /// tolerance in direct test on Newton corrections
+    pub(super) ida_toldel: P::Scalar,
+
+    /// number of function (res) calls
+    pub(super) ida_nre: u64,
+
+    /// number of lsetup calls
+    pub(super) ida_nsetups: u64,
+
+    /// Linear Solver
+    pub(super) ls: LS,
+
+    pub(super) problem: P,
+}
+
+impl<P, LS> IdaNLProblem<P, LS>
+where
+    P: IdaProblem,
+    P::Scalar: IdaConst,
+    LS: LSolver<P>,
+{
+    /// * `size` - The problem size
+    pub fn new(problem: P) -> Self {
+        use num_traits::identities::Zero;
+        IdaNLProblem {
+            ida_yp: Array::zeros(problem.model_size()),
+            ida_yy: Array::zeros(problem.model_size()),
+            ida_yypredict: Array::zeros(problem.model_size()),
+            ida_yppredict: Array::zeros(problem.model_size()),
+
+            ida_savres: Array::zeros(problem.model_size()),
+            ida_tn: P::Scalar::zero(),
+
+            ida_cj: P::Scalar::zero(),
+
+            ida_cjold: P::Scalar::zero(),
+            ida_cjratio: P::Scalar::zero(),
+            ida_ss: P::Scalar::zero(),
+            ida_oldnrm: P::Scalar::zero(),
+            ida_toldel: P::Scalar::zero(),
+            ida_nre: 0,
+            ida_nsetups: 0,
+
+            ls: LS::new(),
+
+            problem,
+        }
+    }
+}
+
+impl<P, LS> NLProblem<P> for IdaNLProblem<P, LS>
+where
+    P: IdaProblem,
+    P::Scalar: IdaConst + ndarray::ScalarOperand,
+    LS: LSolver<P>,
 {
     fn sys<S1, S2>(
         &mut self,
@@ -117,15 +192,6 @@ where
         // evaluate residual
         self.problem
             .res(self.ida_tn, &self.ida_yy, &self.ida_yp, res);
-        /*
-        retval = self.ida_res(
-            self.ida_tn,
-            self.ida_yy,
-            self.ida_yp,
-            res,
-            self.ida_user_data,
-        );
-        */
 
         // increment the number of residual evaluations
         self.ida_nre += 1;
@@ -152,17 +218,6 @@ where
 
         self.ida_nsetups += 1;
         self.ls.ls_setup(&self.ida_yy, &self.ida_yp, res);
-        /*
-        let retval = self.ida_lsetup(
-            IDA_mem,
-            self.ida_yy,
-            self.ida_yp,
-            res,
-            self.ida_tempv1,
-            self.ida_tempv2,
-            self.ida_tempv3,
-        );
-        */
 
         // update Jacobian status
         //*jcur = SUNTRUE;
@@ -180,7 +235,6 @@ where
         Ok(true)
     }
 
-    // idaNlsLSolve
     fn lsolve<S1, S2>(
         &mut self,
         ycor: &ArrayBase<S1, Ix1>,
@@ -190,6 +244,7 @@ where
         S1: ndarray::Data<Elem = P::Scalar>,
         S2: ndarray::DataMut<Elem = P::Scalar>,
     {
+        /*
         self.ls.ls_solve(
             delta,
             &self.ida_ewt,
@@ -197,6 +252,7 @@ where
             &self.ida_yp,
             &self.ida_savres,
         );
+        */
         //retval = IDA_mem->ida_lsolve(IDA_mem, delta, IDA_mem->ida_ewt, IDA_mem->ida_yy, IDA_mem->ida_yp, IDA_mem->ida_savres);
 
         //if (retval < 0) return(IDA_LSOLVE_FAIL);
@@ -220,14 +276,15 @@ where
         //realtype delnrm;
         //realtype rate;
 
-        use crate::traits::NormRms;
+        use crate::norm_rms::NormRms;
         use num_traits::identities::One;
         use num_traits::{Float, NumCast};
         // compute the norm of the correction
         let delnrm = del.norm_wrms(ewt);
 
         // get the current nonlinear solver iteration count
-        let m = self.nls.get_cur_iter();
+        //let m = self.nls.get_cur_iter();
+        let m = 0;
 
         // test for convergence, first directly, then with rate estimate.
         if m == 0 {
@@ -238,7 +295,7 @@ where
         } else {
             let rate = (delnrm / self.ida_oldnrm)
                 .powf(P::Scalar::one() / <P::Scalar as NumCast>::from(m).unwrap());
-            //rate = SUNRpowerR(delnrm / self.ida_oldnrm, M::Scalar::one() / m);
+            //rate = SUNRpowerR(delnrm / self.ida_oldnrm, P::Scalar::one() / m);
             //if (rate > RATEMAX) return(SUN_NLS_CONV_RECVR);
             self.ida_ss = rate / (P::Scalar::one() - rate);
         }

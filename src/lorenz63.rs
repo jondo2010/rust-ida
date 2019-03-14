@@ -67,14 +67,20 @@ impl Residual for Lorenz63 {
 }
 
 impl Jacobian for Lorenz63 {
-    fn jacobian<S>(
-        &mut self,
+    fn jac<S1, S2, S3, S4>(
+        &self,
+        tt: Self::Scalar,
         cj: Self::Scalar,
-        yy: &ArrayView<S, Ix1>,
-        yp: &ArrayView<S, Ix1>,
-    ) -> ()
-    where
-        S: DataMut<Elem = Self::Scalar>,
+        size: Self::Scalar,
+        yy: &ArrayBase<S1, Ix1>,
+        yp: &ArrayBase<S2, Ix1>,
+        rr: &ArrayBase<S3, Ix1>,
+        j: &mut ArrayBase<S4, Ix2>,
+    ) where
+        S1: ndarray::Data<Elem = Self::Scalar>,
+        S2: ndarray::Data<Elem = Self::Scalar>,
+        S3: ndarray::Data<Elem = Self::Scalar>,
+        S4: ndarray::DataMut<Elem = Self::Scalar>,
     {
         unimplemented!();
     }

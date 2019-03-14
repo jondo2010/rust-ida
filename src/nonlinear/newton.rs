@@ -1,4 +1,4 @@
-use ndarray::*;
+use ndarray::prelude::*;
 
 use crate::nonlinear::traits::*;
 use crate::traits::ModelSpec;
@@ -45,10 +45,9 @@ where
         call_lsetup: bool,
     ) -> Result<(), failure::Error>
     where
-        //for<'a> &'a mut NLP: NLProblem<M, Self>,
         NLP: NLProblem<M>,
-        S1: Data<Elem = M::Scalar>,
-        S2: DataMut<Elem = M::Scalar>,
+        S1: ndarray::Data<Elem = M::Scalar>,
+        S2: ndarray::DataMut<Elem = M::Scalar>,
     {
         use std::ops::Neg;
 
@@ -167,14 +166,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nonlinear::traits::*;
+    use ndarray::array;
     use crate::traits::ModelSpec;
-    use ndarray::*;
     use nearly_eq::assert_nearly_eq;
 
     #[derive(Clone, Debug)]
     struct TestProblem {
-        A: Array<f64, Ix2>,
+        a: Array<f64, Ix2>,
         x: Array<f64, Ix1>,
     }
 
@@ -200,9 +198,9 @@ mod tests {
             j: &mut ArrayBase<S3, Ix2>,
         ) -> Result<(), failure::Error>
         where
-            S1: Data<Elem = f64>,
-            S2: Data<Elem = f64>,
-            S3: DataMut<Elem = f64>,
+            S1: ndarray::Data<Elem = f64>,
+            S2: ndarray::Data<Elem = f64>,
+            S3: ndarray::DataMut<Elem = f64>,
         {
             j.assign(&array![
                 [2.0 * y[0], 2.0 * y[1], 2.0 * y[2]],
@@ -225,8 +223,8 @@ mod tests {
             res: &mut ArrayBase<S2, Ix1>,
         ) -> Result<(), failure::Error>
         where
-            S1: Data<Elem = <Self as ModelSpec>::Scalar>,
-            S2: DataMut<Elem = <Self as ModelSpec>::Scalar>,
+            S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
+            S2: ndarray::DataMut<Elem = <Self as ModelSpec>::Scalar>,
         {
             res[0] = ycor[0].powi(2) + ycor[1].powi(2) + ycor[2].powi(2) - 1.0;
             res[1] = 2.0 * ycor[0].powi(2) + ycor[1].powi(2) - 4.0 * ycor[2];
@@ -241,10 +239,10 @@ mod tests {
             _jbad: bool,
         ) -> Result<bool, failure::Error>
         where
-            S1: Data<Elem = <Self as ModelSpec>::Scalar>,
+            S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
         {
             // compute the Jacobian
-            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.A).map(|_| true)
+            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a).map(|_| true)
 
             // setup the linear solver
             //retval = SUNLinSolSetup(Imem->LS, Imem->A);
@@ -256,14 +254,14 @@ mod tests {
             b: &mut ArrayBase<S2, Ix1>,
         ) -> Result<(), failure::Error>
         where
-            S1: Data<Elem = <Self as ModelSpec>::Scalar>,
-            S2: DataMut<Elem = <Self as ModelSpec>::Scalar>,
+            S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
+            S2: ndarray::DataMut<Elem = <Self as ModelSpec>::Scalar>,
         {
             // Solve self.A * b = b
             //retval = SUNLinSolSolve(Imem->LS, Imem->A, Imem->x, b, ZERO);
             //N_VScale(ONE, Imem->x, b);
             use ndarray_linalg::*;
-            self.A
+            self.a
                 .solve_inplace(b)
                 .map(|_| ())
                 .map_err(failure::Error::from)
@@ -271,17 +269,17 @@ mod tests {
 
         fn ctest<S1, S2, S3>(
             &mut self,
-            y: &ArrayBase<S1, Ix1>,
+            _y: &ArrayBase<S1, Ix1>,
             del: &ArrayBase<S2, Ix1>,
             tol: <Self as ModelSpec>::Scalar,
             ewt: &ArrayBase<S3, Ix1>,
         ) -> Result<bool, failure::Error>
         where
-            S1: Data<Elem = <Self as ModelSpec>::Scalar>,
-            S2: Data<Elem = <Self as ModelSpec>::Scalar>,
-            S3: Data<Elem = <Self as ModelSpec>::Scalar>,
+            S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
+            S2: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
+            S3: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
         {
-            use crate::traits::NormRms;
+            use crate::norm_rms::NormRms;
             // compute the norm of the correction
             let delnrm = del.norm_wrms(ewt);
 
@@ -294,14 +292,14 @@ mod tests {
     #[test]
     fn test_newton() {
         // approximate solution
-        let Y = array![
+        let y_exp = array![
             0.785196933062355226,
             0.496611392944656396,
             0.369922830745872357
         ];
 
         let mut p = TestProblem {
-            A: Array::zeros((3, 3)),
+            a: Array::zeros((3, 3)),
             x: Array::zeros(3),
         };
 
@@ -317,15 +315,13 @@ mod tests {
             .solve(&mut p, &y0, &mut y, &w, 1e-2, true)
             .expect("Should have converged.");
 
-        dbg!(&newton);
-
         let expected_err = array![-0.00578453, 1.0143e-08, 1.47767e-08];
 
         // print the solution
         println!("Solution: y = {:?}", y);
-        println!("Solution Error = {:?}", &y - &Y);
+        println!("Solution Error = {:?}", &y - &y_exp);
         println!("Number of nonlinear iterations: {}", newton.niters);
 
-        assert_nearly_eq!(&y - &Y, expected_err, 1e-9);
+        assert_nearly_eq!(&y - &y_exp, expected_err, 1e-9);
     }
 }

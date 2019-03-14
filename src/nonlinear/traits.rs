@@ -34,7 +34,6 @@ where
     ///
     /// # Arguments
     ///
-    /// * `nls` is the nonlinear solver
     /// * `y` is the state vector at which the nonlinear system should be evaluated.
     /// * `f` is the output vector containing `F(y)` or `G(y)`, depending on the solver type.
     ///
@@ -45,8 +44,8 @@ where
     /// * `Err(_) for an unrecoverable error
     fn sys<S1, S2>(
         &mut self,
-        ycor: &ArrayBase<S1, Ix1>,
-        res: &mut ArrayBase<S2, Ix1>,
+        y: &ArrayBase<S1, Ix1>,
+        f: &mut ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
@@ -57,9 +56,8 @@ where
     ///
     /// # Arguments
     ///
-    /// * `nls` is the nonlinear solver
     /// * `y` is the state vector at which the linear system should be setup.
-    /// * `F` is the value of the nonlinear system function at y.
+    /// * `f` is the value of the nonlinear system function at y.
     /// * `jbad` is an input indicating whether the nonlinear solver believes that A has gone stale
     ///     (`true`) or not (`false`).
     ///
@@ -78,9 +76,9 @@ where
     /// functions.
     fn lsetup<S1>(
         &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        F: &ArrayView<M::Scalar, Ix1>,
-        jbad: bool,
+        _y: &ArrayBase<S1, Ix1>,
+        _f: &ArrayView<M::Scalar, Ix1>,
+        _jbad: bool,
     ) -> Result<bool, failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
@@ -159,6 +157,24 @@ pub trait NLSolver<M: ModelSpec> {
     /// * `maxiters` - The maximum number of iterations per solve attempt
     fn new(size: usize, maxiters: usize) -> Self;
 
+    /// Description
+    /// The optional function SUNNonlinSolSetup performs any solver setup needed for a nonlinear solve.
+    ///
+    /// # Arguments
+    /// NLS (SUNNonlinearSolver) a sunnonlinsol object.
+    /// y (N Vector) the initial iteration passed to the nonlinear solver.
+    ///
+    /// Return value
+    ///
+    /// The return value retval (of type int) is zero for a successful call and a negative value for a failure.
+    /// Notes sundials integrators call SUNonlinSolSetup before each step attempt. sunnonlinsol implementations that do not require setup may set this operation to NULL.
+    fn setup<S1>(&self, _y: &mut ArrayBase<S1, Ix1>) -> Result<(), failure::Error>
+    where
+        S1: DataMut<Elem = M::Scalar>,
+    {
+        Ok(())
+    }
+
     /// Solves the nonlinear system `F(y)=0` or `G(y)=y`.
     ///
     /// # Arguments
@@ -196,7 +212,6 @@ pub trait NLSolver<M: ModelSpec> {
     ) -> Result<(), failure::Error>
     where
         Self: std::marker::Sized,
-        //for<'a> &'a mut NLP: NLProblem<M, Self>,
         NLP: NLProblem<M>,
         S1: Data<Elem = M::Scalar>,
         S2: DataMut<Elem = M::Scalar>;
