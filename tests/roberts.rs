@@ -83,5 +83,7 @@ fn test_dense() {
 
     let mut ida: Ida<_, Dense<_>, Newton<_>> = Ida::new(problem, yy0, yp0);
 
-    ida.solve(tout, &mut tret, &mut yy.view_mut(), &mut yp.view_mut(), IdaTask::Normal);
+    let res = ida.solve(tout, &mut tret, &mut yy.view_mut(), &mut yp.view_mut(), IdaTask::Normal);
+    dbg!(&ida);
+    res.unwrap();
 }

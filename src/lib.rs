@@ -1,5 +1,3 @@
-#![crate_name = "ida"]
-
 //! The `ida` crate is a pure Rust port of the Implicit Differential-Algebraic solver from the Sundials suite.
 //!
 //! IDA is a general purpose solver for the initial value problem (IVP) for systems of
@@ -1226,7 +1224,7 @@ where
 
         // Looping point for attempts to take a step
 
-        loop {
+        let (err_k, err_km1) = loop {
             //-----------------------
             // Set method coefficients
             //-----------------------
@@ -1254,55 +1252,51 @@ where
             self.predict();
 
             // Nonlinear system solution
-            self.nonlinear_solve()
+            let (err_k, err_km1, converged) = self
+                .nonlinear_solve()
+                .map_err(|err| (P::Scalar::zero(), P::Scalar::zero(), err))
                 .and_then(|res| {
                     // If NLS was successful, perform error test
-                    Ok(self.test_error(ck))
-                })
-                .or(Ok((P::Scalar::zero(), P::Scalar::zero(), false)))
-                .map(|(err_k, err_km1, nflag)| {
-                    // Test for convergence or error test failures
-                    if nflag != true {
-                        // restore and decide what to do
-                        self.restore(saved_t);
-                        kflag = self.handle_n_flag(
-                            nflag, err_k, err_km1, //&self.ida_ncfn,
-                            &mut ncf, //&self.ida_netf,
-                            &mut nef,
-                        );
+                    let (err_k, err_km1, nflag) = self.test_error(ck);
+                    if nflag {
+                        Ok((err_k, err_km1, true))
+                    } else {
+                        Err((err_k, err_km1, failure::Error::from(IdaError::TestFail)))
+                    }
+                }).or_else(|(err_k, err_km1, err)| {
+                // Test for convergence or error test failures
 
-                        // exit on nonrecoverable failure
-                        //if kflag != PREDICT_AGAIN {
-                        //    return (kflag);
-                        //}
+                // restore and decide what to do
+                self.restore(saved_t);
 
+                self.handle_n_flag(err, err_k, err_km1, &mut ncf, &mut nef)
+                    .map(|_| {
                         // recoverable error; predict again
                         if self.ida_nst == 0 {
                             self.reset();
                         }
-                        continue;
-                    }
-                });
 
-            /* kflag == IDA_SUCCESS */
-            break;
-        }
+                        (err_k, err_km1, false)
+                    })
+            })?;
+
+            if converged {
+                break (err_k, err_km1);
+            }
+        };
 
         // Nonlinear system solve and error test were both successful;
         // update data, and consider change of step and/or order
 
-        //self.complete_step(err_k, err_km1);
+        self.complete_step(err_k, err_km1);
 
         //  Rescale ee vector to be the estimated local error
         //  Notes:
-        //    (1) altering the value of ee is permissible since
-        //        it will be overwritten by
-        //        IDASolve()->IDAStep()->IDANls()
-        //        before it is needed again
-        //    (2) the value of ee is only valid if IDAHandleNFlag()
-        //        returns either PREDICT_AGAIN or IDA_SUCCESS
+        //    (1) altering the value of ee is permissible since it will be overwritten by
+        //        solve()->step()->nonlinear_solve() before it is needed again
+        //    (2) the value of ee is only valid if IDAHandleNFlag() returns either
+        //        PREDICT_AGAIN or IDA_SUCCESS
 
-        //N_VScale(ck, self.ida_ee, self.ida_ee);
         self.ida_ee *= ck;
 
         Ok(())
@@ -1453,26 +1447,26 @@ where
             } else {
                 N_VCompare(ONEPT5, self.ida_constraints, self.ida_tempv1);
                 /* a , where a[i] =1. when |c[i]| = 2 ,  c the vector of constraints */
-                N_VProd(self.ida_tempv1, self.ida_constraints, self.ida_tempv1); /* a * c */
-                N_VDiv(self.ida_tempv1, self.ida_ewt, self.ida_tempv1); /* a * c * wt */
-                N_VLinearSum(ONE, self.ida_yy, -PT1, self.ida_tempv1, self.ida_tempv1); /* y - 0.1 * a * c * wt */
-                N_VProd(self.ida_tempv1, self.ida_mm, self.ida_tempv1); /*  v = mm*(y-.1*a*c*wt) */
-                vnorm = IDAWrmsNorm(IDA_mem, self.ida_tempv1, self.ida_ewt, SUNFALSE); /*  ||v|| */
+            N_VProd(self.ida_tempv1, self.ida_constraints, self.ida_tempv1); /* a * c */
+            N_VDiv(self.ida_tempv1, self.ida_ewt, self.ida_tempv1); /* a * c * wt */
+            N_VLinearSum(ONE, self.ida_yy, -PT1, self.ida_tempv1, self.ida_tempv1); /* y - 0.1 * a * c * wt */
+            N_VProd(self.ida_tempv1, self.ida_mm, self.ida_tempv1); /*  v = mm*(y-.1*a*c*wt) */
+            vnorm = IDAWrmsNorm(IDA_mem, self.ida_tempv1, self.ida_ewt, SUNFALSE); /*  ||v|| */
 
-                // If vector v of constraint corrections is small in norm, correct and accept this step
-                if vnorm <= self.ida_epsNewt {
-                    N_VLinearSum(ONE, self.ida_ee, -ONE, self.ida_tempv1, self.ida_ee); /* ee <- ee - v */
-                    return (IDA_SUCCESS);
-                } else {
-                    /* Constraints not met -- reduce h by computing rr = h'/h */
-                    N_VLinearSum(ONE, self.ida_phi[0], -ONE, self.ida_yy, self.ida_tempv1);
-                    N_VProd(self.ida_mm, self.ida_tempv1, self.ida_tempv1);
-                    self.ida_rr = PT9 * N_VMinQuotient(self.ida_phi[0], self.ida_tempv1);
-                    self.ida_rr = SUNMAX(self.ida_rr, PT1);
-                    return (IDA_CONSTR_RECVR);
-                }
+            // If vector v of constraint corrections is small in norm, correct and accept this step
+            if vnorm <= self.ida_epsNewt {
+            N_VLinearSum(ONE, self.ida_ee, -ONE, self.ida_tempv1, self.ida_ee); /* ee <- ee - v */
+            return (IDA_SUCCESS);
+            } else {
+            /* Constraints not met -- reduce h by computing rr = h'/h */
+            N_VLinearSum(ONE, self.ida_phi[0], -ONE, self.ida_yy, self.ida_tempv1);
+            N_VProd(self.ida_mm, self.ida_tempv1, self.ida_tempv1);
+            self.ida_rr = PT9 * N_VMinQuotient(self.ida_phi[0], self.ida_tempv1);
+            self.ida_rr = SUNMAX(self.ida_rr, PT1);
+            return (IDA_CONSTR_RECVR);
             }
-            */
+            }
+             */
         }
 
         Ok(())
@@ -1671,41 +1665,111 @@ where
     ///   IDA_LSOLVE_FAIL
     fn handle_n_flag(
         &mut self,
-        nflag: bool,
+        error: failure::Error,
         err_k: P::Scalar,
         err_km1: P::Scalar,
         //long int *ncfnPtr,
-        ncfPtr: &mut u32,
+        ncfPtr: &mut u64,
         //long int *netfPtr,
-        nefPtr: &mut u32,
-    ) -> Result<(), IdaError> {
+        nefPtr: &mut u64,
+    ) -> Result<(), failure::Error> {
+        use failure::format_err;
+
         self.ida_phase = 1;
 
-        if nflag != false {
-            //-----------------------
-            // Nonlinear solver failed
-            //-----------------------
+        // Try and convert the error into an IdaError
+        error
+            .downcast::<IdaError>()
+            .map_err(|e| {
+                // nonrecoverable failure
+                *ncfPtr += 1; // local counter for convergence failures
+                self.ida_ncfn += 1; // global counter for convergence failures
+                e
+            })
+            .and_then(|error: IdaError| {
+                match error {
+                    IdaError::TestFail => {
+                        // -----------------
+                        // Error Test failed
+                        //------------------
 
-            *ncfPtr += 1; // local counter for convergence failures
-            self.ida_ncfn += 1; // global counter for convergence failures
+                        *nefPtr += 1; // local counter for error test failures
+                        self.ida_netf += 1; // global counter for error test failures
 
-            //if (nflag < 0) {  /* nonrecoverable failure */
-            //  return(nflag);
-            //} else {          /* recoverable failure    */
-            // Reduce step size for a new prediction Note that if nflag=IDA_CONSTR_RECVR then rr was already set in IDANls */
-            if (nflag != IDA_CONSTR_RECVR) {
-                self.ida_rr = P::Scalar::quarter();
-            }
-            self.ida_hh *= self.ida_rr;
+                        if *nefPtr == 1 {
+                            // On first error test failure, keep current order or lower order by one.
+                            // Compute new stepsize based on differences of the solution.
 
-            /* Test if there were too many convergence failures */
-            //if (*ncfPtr < IDA_mem->ida_maxncf)  return(PREDICT_AGAIN);
-            //else if (nflag == IDA_RES_RECVR)    return(IDA_REP_RES_ERR);
-            //else if (nflag == IDA_CONSTR_RECVR) return(IDA_CONSTR_FAIL);
-            //else                                return(IDA_CONV_FAIL);
-            //}
-        }
-        Ok(())
+                            let err_knew = if self.ida_kk == self.ida_knew {
+                                err_k
+                            } else {
+                                err_km1
+                            };
+
+                            self.ida_kk = self.ida_knew;
+                            // rr = 0.9 * (2 * err_knew + 0.0001)^(-1/(kk+1))
+                            self.ida_rr = P::Scalar::pt9()
+                                * (P::Scalar::two() * err_knew + P::Scalar::pt0001()).powf(
+                                    -(<P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap())
+                                        .recip(),
+                                );
+                            self.ida_rr =
+                                P::Scalar::quarter().max(P::Scalar::pt9().min(self.ida_rr));
+                            self.ida_hh *= self.ida_rr;
+
+                            //return(PREDICT_AGAIN);
+                            Ok(())
+                        } else if *nefPtr == 2 {
+                            // On second error test failure, use current order or decrease by one.
+                            // Reduce stepsize by factor of 1/4.
+
+                            self.ida_kk = self.ida_knew;
+                            self.ida_rr = P::Scalar::quarter();
+                            self.ida_hh *= self.ida_rr;
+
+                            //return(PREDICT_AGAIN);
+                            Ok(())
+                        } else if *nefPtr < self.ida_maxnef {
+                            // On third and subsequent error test failures, set order to 1. Reduce
+                            // stepsize by factor of 1/4.
+                            self.ida_kk = 1;
+                            self.ida_rr = P::Scalar::quarter();
+                            self.ida_hh *= self.ida_rr;
+                            //return(PREDICT_AGAIN);
+                            Ok(())
+                        } else {
+                            // Too many error test failures
+                            //return(IDA_ERR_FAIL);
+                            Err(format_err!("IDA_ERR_FAIL"))
+                        }
+                    }
+
+                    _ => {
+                        // recoverable failure
+
+                        *ncfPtr += 1; // local counter for convergence failures
+                        self.ida_ncfn += 1; // global counter for convergence failures
+
+                        // Reduce step size for a new prediction
+                        // Note that if nflag=IDA_CONSTR_RECVR then rr was already set in IDANls
+                        //if (nflag != IDA_CONSTR_RECVR) { self.ida_rr = P::Scalar::quarter() };
+                        self.ida_hh *= self.ida_rr;
+
+                        // Test if there were too many convergence failures
+                        if *ncfPtr < self.ida_maxncf {
+                            //return(PREDICT_AGAIN);
+                            Ok(())
+                        //} else if nflag == IDA_RES_RECVR {
+                        //    return (IDA_REP_RES_ERR);
+                        //} else if nflag == IDA_CONSTR_RECVR {
+                        //    return (IDA_CONSTR_FAIL);
+                        } else {
+                            //return (IDA_CONV_FAIL);
+                            Err(failure::Error::from(IdaError::ConvergenceFail {}))
+                        }
+                    }
+                }
+            })
     }
 
     /// IDAReset
