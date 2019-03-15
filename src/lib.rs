@@ -1007,17 +1007,15 @@ where
 
                 // Test for tout = tretlast, and for tn past tout.
                 if tout == self.ida_tretlast {
-                    //*tret = self.ida_tretlast = tout;
-                    //return(IDA_SUCCESS);
                     self.ida_tretlast = tout;
                     *tret = tout;
                     return Ok(IdaSolveStatus::Success);
                 }
 
                 if (self.nlp.ida_tn - tout) * self.ida_hh >= P::Scalar::zero() {
-                    self.get_solution(tout, yret, ypret)?;
                     self.ida_tretlast = tout;
                     *tret = tout;
+                    self.get_solution(tout, yret, ypret)?;
                     return Ok(IdaSolveStatus::Success);
                 }
 
@@ -1082,16 +1080,16 @@ where
         &mut self,
         tout: P::Scalar,
         tret: &mut P::Scalar,
-        yret: &ArrayBase<S1, Ix1>,
+        yret: &mut ArrayBase<S1, Ix1>,
         ypret: &mut ArrayBase<S2, Ix1>,
         itask: &IdaTask,
-    ) -> Result<(), IdaError>
+    ) -> Result<IdaSolveStatus, failure::Error>
     where
-        S1: ndarray::Data<Elem = P::Scalar>,
+        S1: ndarray::DataMut<Elem = P::Scalar>,
         S2: ndarray::DataMut<Elem = P::Scalar>,
+        ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
+        ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
     {
-        unimplemented!()
-        /*
         match itask {
             IdaTask::Normal => {
                 // Test for tn past tout.
@@ -1103,61 +1101,63 @@ where
                     return Ok(IdaSolveStatus::Success);
                 }
 
-                if (self.ida_tstopset) {
+                if self.ida_tstopset {
                     // Test for tn at tstop and for tn near tstop
                     let troundoff = P::Scalar::hundred()
                         * P::Scalar::epsilon()
                         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
+
                     if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
-                        /* ier = */
-        self.get_solution(self.ida_tstop, yret, ypret);
-         *tret = self.ida_tretlast = self.ida_tstop;
-        self.ida_tstopset = false;
-        //return(IDA_TSTOP_RETURN);
+                        *tret = self.ida_tstop;
+                        self.ida_tretlast = self.ida_tstop;
+                        self.ida_tstopset = false;
+                        self.get_solution(self.ida_tstop, yret, ypret)?;
+                        return Ok(IdaSolveStatus::TStop);
+                    }
 
-        //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.nlp.ida_tn.to_f64().unwrap(), })?
-        }
-        if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-        > P::Scalar::zero()
-        {
-        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
-         * (P::Scalar::one() - P::Scalar::four() * self.ida_uround);
-        }
-        }
+                    if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+                        > P::Scalar::zero()
+                    {
+                        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
+                            * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
+                    }
+                }
 
-        //return(CONTINUE_STEPS);
-        }
+                return Ok(IdaSolveStatus::ContinueSteps);
+                //return(IDA_TSTOP_RETURN);
+                //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.nlp.ida_tn.to_f64().unwrap(), })?
+                //return(CONTINUE_STEPS);
+            } /*
+              IdaTask::OneStep => {
+              if self.ida_tstopset {
+              /* Test for tn at tstop and for tn near tstop */
+              let troundoff = P::Scalar::hundred()
+               * P::Scalar::epsilon()
+               * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
+              if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
+              /* ier = */
+              //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
+               *tret = self.ida_tretlast = self.ida_tstop;
+              self.ida_tstopset = false;
 
-        IdaTask::OneStep => {
-        if self.ida_tstopset {
-        /* Test for tn at tstop and for tn near tstop */
-        let troundoff = P::Scalar::hundred()
-         * P::Scalar::epsilon()
-         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
-        if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
-        /* ier = */
-        //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
-         *tret = self.ida_tretlast = self.ida_tstop;
-        self.ida_tstopset = false;
+              self.get_solution(tout, yret, ypret)?;
+              //return(IDA_TSTOP_RETURN);
+              }
+              if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+              > P::Scalar::zero()
+              {
+              self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
+               * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
+              }
+              }
 
-        self.get_solution(tout, yret, ypret)?;
-        //return(IDA_TSTOP_RETURN);
-        }
-        if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-        > P::Scalar::zero()
-        {
-        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
-         * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
-        }
-        }
-
-        *tret = self.ida_tretlast = self.nlp.ida_tn;
-        //return (IDA_SUCCESS);
-        }
+              *tret = self.ida_tretlast = self.nlp.ida_tn;
+              //return (IDA_SUCCESS);
+              }
+               */
         }
 
         //return IDA_ILL_INPUT;  /* This return should never happen. */
-         */
     }
 
     /// This routine performs one internal IDA step, from tn to tn + hh. It calls other routines to do all the work.
@@ -1263,22 +1263,23 @@ where
                     } else {
                         Err((err_k, err_km1, failure::Error::from(IdaError::TestFail)))
                     }
-                }).or_else(|(err_k, err_km1, err)| {
-                // Test for convergence or error test failures
+                })
+                .or_else(|(err_k, err_km1, err)| {
+                    // Test for convergence or error test failures
 
-                // restore and decide what to do
-                self.restore(saved_t);
+                    // restore and decide what to do
+                    self.restore(saved_t);
 
-                self.handle_n_flag(err, err_k, err_km1, &mut ncf, &mut nef)
-                    .map(|_| {
-                        // recoverable error; predict again
-                        if self.ida_nst == 0 {
-                            self.reset();
-                        }
+                    self.handle_n_flag(err, err_k, err_km1, &mut ncf, &mut nef)
+                        .map(|_| {
+                            // recoverable error; predict again
+                            if self.ida_nst == 0 {
+                                self.reset();
+                            }
 
-                        (err_k, err_km1, false)
-                    })
-            })?;
+                            (err_k, err_km1, false)
+                        })
+                })?;
 
             if converged {
                 break (err_k, err_km1);

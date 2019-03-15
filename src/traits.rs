@@ -43,25 +43,25 @@ pub trait Jacobian: ModelSpec {
     /// # Arguments
     ///
     /// * `tt` is the current value of the independent variable `t`.
-    /// * `cj` is the scalar in the system Jacobian, proportional to the inverse of the step.
-    /// * `size` (α in Eq. (2.5)).
+    /// * `cj` is the scalar in the system Jacobian, proportional to the inverse of the step size (α in Eq. (2.5)).
     /// * `yy` is the current value of the dependent variable vector, `y(t)`.
     /// * `yp` is the current value of `y'(t)`.
     /// * `rr` is the current value of the residual vector `F(t, y, y')`.
-    /// * `j` is the output (approximate) Jacobian matrix, `J = ∂F/∂y + cj ∂F/∂y'`.
+    /// * `jac` is the output (approximate) Jacobian matrix, `J = ∂F/∂y + cj ∂F/∂y'`.
     ///
     /// # Return value
     ///
-    /// Should return 0 if successful, a positive value if a recoverable error occurred, or a negative value if a nonrecoverable error occurred. In the case of a recoverable eror return, the integrator will attempt to recover by reducing the stepsize, and hence changing α in
+    /// Should return 0 if successful, a positive value if a recoverable error occurred, or a
+    /// negative value if a nonrecoverable error occurred. In the case of a recoverable eror
+    /// return, the integrator will attempt to recover by reducing the stepsize, and hence changing α in
     fn jac<S1, S2, S3, S4>(
         &self,
         tt: Self::Scalar,
         cj: Self::Scalar,
-        size: Self::Scalar,
         yy: &ArrayBase<S1, Ix1>,
         yp: &ArrayBase<S2, Ix1>,
         rr: &ArrayBase<S3, Ix1>,
-        j: &mut ArrayBase<S4, Ix2>,
+        jac: &mut ArrayBase<S4, Ix2>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
         S2: ndarray::Data<Elem = Self::Scalar>,

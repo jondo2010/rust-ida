@@ -53,17 +53,27 @@ impl Jacobian for Roberts {
         &self,
         tt: Self::Scalar,
         cj: Self::Scalar,
-        size: Self::Scalar,
         yy: &ArrayBase<S1, Ix1>,
         yp: &ArrayBase<S2, Ix1>,
         rr: &ArrayBase<S3, Ix1>,
-        j: &mut ArrayBase<S4, Ix2>,
+        jac: &mut ArrayBase<S4, Ix2>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
         S2: ndarray::Data<Elem = Self::Scalar>,
         S3: ndarray::Data<Elem = Self::Scalar>,
         S4: ndarray::DataMut<Elem = Self::Scalar>,
     {
+        jac[[0, 0]] = -0.04 - cj;
+        jac[[0, 1]] = 1.0e4 * yy[2];
+        jac[[0, 2]] = 1.0e4 * yy[1];
+
+        jac[[1, 0]] = 0.04;
+        jac[[1, 1]] = -1.0e4 * yy[2] - 6.0e7 * yy[1] - cj;
+        jac[[1, 2]] = -1.0e4 * yy[1];
+
+        jac[[2, 0]] = 1.0;
+        jac[[2, 1]] = 1.0;
+        jac[[2, 2]] = 1.0;
     }
 }
 
@@ -83,7 +93,13 @@ fn test_dense() {
 
     let mut ida: Ida<_, Dense<_>, Newton<_>> = Ida::new(problem, yy0, yp0);
 
-    let res = ida.solve(tout, &mut tret, &mut yy.view_mut(), &mut yp.view_mut(), IdaTask::Normal);
+    let res = ida.solve(
+        tout,
+        &mut tret,
+        &mut yy.view_mut(),
+        &mut yp.view_mut(),
+        IdaTask::Normal,
+    );
     dbg!(&ida);
     res.unwrap();
 }

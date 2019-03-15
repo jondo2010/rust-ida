@@ -3,7 +3,7 @@ use ndarray::prelude::*;
 use super::constants::IdaConst;
 use super::linear::LSolver;
 use super::nonlinear::NLProblem;
-use super::traits::IdaProblem;
+use super::traits::{IdaProblem};
 
 /*
 #[derive(Clone, Debug)]
@@ -128,6 +128,9 @@ where
     pub(super) ls: LS,
 
     pub(super) problem: P,
+
+
+    a: Array<P::Scalar, Ix2>,
 }
 
 impl<P, LS> IdaNLProblem<P, LS>
@@ -159,6 +162,8 @@ where
             ida_nsetups: 0,
 
             ls: LS::new(),
+
+            a: Array::zeros((problem.model_size(),problem.model_size())),
 
             problem,
         }
@@ -217,6 +222,17 @@ where
 
         self.ida_nsetups += 1;
         self.ls.ls_setup(&self.ida_yy, &self.ida_yp, res);
+
+
+        //Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a).map(|_| true)
+        self.problem.jac(
+            self.ida_tn,
+            self.ida_cj,
+            &self.ida_yy,
+            &self.ida_yp,
+            res,
+            &mut self.a.view_mut()
+        );
 
         // update Jacobian status
         //*jcur = SUNTRUE;
