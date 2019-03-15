@@ -1206,12 +1206,10 @@ where
     fn step(&mut self) -> Result<(), failure::Error> {
         //realtype saved_t, ck;
         //realtype err_k, err_km1;
-        //int ncf, nef;
         //int nflag, kflag;
         let mut ck = P::Scalar::one();
 
         let saved_t = self.nlp.ida_tn;
-        //ncf = nef = 0;
 
         if self.ida_nst == 0 {
             self.ida_kk = 1;
@@ -1223,9 +1221,8 @@ where
             self.ida_ns = 0;
         }
 
-        /* To prevent 'unintialized variable' warnings */
-        //err_k = ZERO;
-        //err_km1 = ZERO;
+        let mut ncf = 0; // local counter for convergence failures
+        let mut nef = 0; // local counter for error test failures
 
         // Looping point for attempts to take a step
 
@@ -1257,35 +1254,35 @@ where
             self.predict();
 
             // Nonlinear system solution
-            let nflag = self.nonlinear_solve();
+            self.nonlinear_solve()
+                .and_then(|res| {
+                    // If NLS was successful, perform error test
+                    Ok(self.test_error(ck))
+                })
+                .or(Ok((P::Scalar::zero(), P::Scalar::zero(), false)))
+                .map(|(err_k, err_km1, nflag)| {
+                    // Test for convergence or error test failures
+                    if nflag != true {
+                        // restore and decide what to do
+                        self.restore(saved_t);
+                        kflag = self.handle_n_flag(
+                            nflag, err_k, err_km1, //&self.ida_ncfn,
+                            &mut ncf, //&self.ida_netf,
+                            &mut nef,
+                        );
 
-            // If NLS was successful, perform error test
-            if nflag.is_ok() {
-                let nflag2 = self.test_error(ck);
-            }
+                        // exit on nonrecoverable failure
+                        //if kflag != PREDICT_AGAIN {
+                        //    return (kflag);
+                        //}
 
-            let err_flags = nflag.map(|_| self.test_error(ck));
-
-            //let (err_k, err_km1, nflag) = self.test_error(ck);
-            let nflag = false;
-
-            // Test for convergence or error test failures
-            if nflag != true {
-                // restore and decide what to do
-                self.restore(saved_t);
-                //kflag = self.handle_n_flag(nflag, err_k, err_km1, &(self.ida_ncfn), &ncf, &(self.ida_netf), &nef);
-
-                // exit on nonrecoverable failure
-                //if kflag != PREDICT_AGAIN {
-                //    return (kflag);
-                //}
-
-                // recoverable error; predict again
-                if self.ida_nst == 0 {
-                    self.reset();
-                }
-                continue;
-            }
+                        // recoverable error; predict again
+                        if self.ida_nst == 0 {
+                            self.reset();
+                        }
+                        continue;
+                    }
+                });
 
             /* kflag == IDA_SUCCESS */
             break;
@@ -1540,11 +1537,11 @@ where
     fn test_error(
         &mut self,
         ck: P::Scalar,
-    ) -> Option<(
+    ) -> (
         P::Scalar, // err_k
         P::Scalar, // err_km1
         bool,      // nflag
-    )> {
+    ) {
         //realtype enorm_k, enorm_km1, enorm_km2;   /* error norms */
         //realtype terr_k, terr_km1, terr_km2;      /* local truncation error norms */
         // Compute error for order k.
@@ -1587,12 +1584,9 @@ where
                 }
             }
         };
+
         // Perform error test
-        if (ck * enorm_k) > P::Scalar::one() {
-            Some((err_k, err_km1, true))
-        } else {
-            None
-        }
+        (err_k, err_km1, (ck * enorm_k) > P::Scalar::one())
     }
 
     /// IDARestore
@@ -1641,7 +1635,10 @@ where
     }
 
     /// IDAHandleNFlag
-    /// This routine handles failures indicated by the input variable nflag. Positive values indicate various recoverable failures while negative values indicate nonrecoverable failures. This routine adjusts the step size for recoverable failures.
+    ///
+    /// This routine handles failures indicated by the input variable nflag. Positive values
+    /// indicate various recoverable failures while negative values indicate nonrecoverable
+    /// failures. This routine adjusts the step size for recoverable failures.
     ///
     ///  Possible nflag values (input):
     ///
@@ -1658,9 +1655,11 @@ where
     ///   ERROR_TEST_FAIL            > 0
     ///
     ///  Possible kflag values (output):
+    /// # Returns
     ///
-    ///   --recoverable--
-    ///   PREDICT_AGAIN
+    /// * Ok(()), Recoverable, PREDICT_AGAIN
+    ///
+    /// * IdaError
     ///
     ///   --nonrecoverable--
     ///   IDA_CONSTR_FAIL
@@ -1672,14 +1671,41 @@ where
     ///   IDA_LSOLVE_FAIL
     fn handle_n_flag(
         &mut self,
-        nflag: u32,
+        nflag: bool,
         err_k: P::Scalar,
-        err_km1: P::Scalar, //long int *ncfnPtr,
-                            //int *ncfPtr,
-                            //long int *netfPtr,
-                            //int *nefPtr
-    ) -> () {
-        unimplemented!();
+        err_km1: P::Scalar,
+        //long int *ncfnPtr,
+        ncfPtr: &mut u32,
+        //long int *netfPtr,
+        nefPtr: &mut u32,
+    ) -> Result<(), IdaError> {
+        self.ida_phase = 1;
+
+        if nflag != false {
+            //-----------------------
+            // Nonlinear solver failed
+            //-----------------------
+
+            *ncfPtr += 1; // local counter for convergence failures
+            self.ida_ncfn += 1; // global counter for convergence failures
+
+            //if (nflag < 0) {  /* nonrecoverable failure */
+            //  return(nflag);
+            //} else {          /* recoverable failure    */
+            // Reduce step size for a new prediction Note that if nflag=IDA_CONSTR_RECVR then rr was already set in IDANls */
+            if (nflag != IDA_CONSTR_RECVR) {
+                self.ida_rr = P::Scalar::quarter();
+            }
+            self.ida_hh *= self.ida_rr;
+
+            /* Test if there were too many convergence failures */
+            //if (*ncfPtr < IDA_mem->ida_maxncf)  return(PREDICT_AGAIN);
+            //else if (nflag == IDA_RES_RECVR)    return(IDA_REP_RES_ERR);
+            //else if (nflag == IDA_CONSTR_RECVR) return(IDA_CONSTR_FAIL);
+            //else                                return(IDA_CONV_FAIL);
+            //}
+        }
+        Ok(())
     }
 
     /// IDAReset
@@ -2371,7 +2397,7 @@ mod tests {
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
-        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck).unwrap();
+        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck);
 
         assert_eq!(ida.ida_knew, knew);
         assert_nearly_eq!(err_k_new, err_k);
@@ -2451,7 +2477,7 @@ mod tests {
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
-        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck).unwrap();
+        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck);
 
         assert_eq!(ida.ida_knew, knew);
         assert_nearly_eq!(err_k_new, err_k);
