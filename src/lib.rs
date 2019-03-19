@@ -1127,34 +1127,35 @@ where
                 //return(IDA_TSTOP_RETURN);
                 //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.nlp.ida_tn.to_f64().unwrap(), })?
                 //return(CONTINUE_STEPS);
-            } /*
-              IdaTask::OneStep => {
-              if self.ida_tstopset {
-              /* Test for tn at tstop and for tn near tstop */
-              let troundoff = P::Scalar::hundred()
-               * P::Scalar::epsilon()
-               * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
-              if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
-              /* ier = */
-              //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
-               *tret = self.ida_tretlast = self.ida_tstop;
-              self.ida_tstopset = false;
+            }
+            IdaTask::OneStep => {
+                if self.ida_tstopset {
+                    // Test for tn at tstop and for tn near tstop
+                    let troundoff = P::Scalar::hundred()
+                        * P::Scalar::epsilon()
+                        * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
+                    if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
+                        /* ier = */
+                        //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
+                        *tret = self.ida_tstop;
+                        self.ida_tretlast = self.ida_tstop;
+                        self.ida_tstopset = false;
+                        self.get_solution(self.ida_tstop, yret, ypret)?;
+                        //return(IDA_TSTOP_RETURN);
+                    }
+                    if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
+                        > P::Scalar::zero()
+                    {
+                        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
+                            * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
+                    }
+                }
 
-              self.get_solution(tout, yret, ypret)?;
-              //return(IDA_TSTOP_RETURN);
-              }
-              if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-              > P::Scalar::zero()
-              {
-              self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
-               * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
-              }
-              }
-
-              *tret = self.ida_tretlast = self.nlp.ida_tn;
-              //return (IDA_SUCCESS);
-              }
-               */
+                *tret = self.nlp.ida_tn;
+                self.ida_tretlast = self.nlp.ida_tn;
+                //return (IDA_SUCCESS);
+                return Ok(IdaSolveStatus::ContinueSteps);
+            }
         }
 
         //return IDA_ILL_INPUT;  /* This return should never happen. */
@@ -2173,7 +2174,6 @@ mod tests {
             &self,
             tt: Self::Scalar,
             cj: Self::Scalar,
-            size: Self::Scalar,
             yy: &ArrayBase<S1, Ix1>,
             yp: &ArrayBase<S2, Ix1>,
             rr: &ArrayBase<S3, Ix1>,

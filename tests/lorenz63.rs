@@ -73,7 +73,6 @@ impl Jacobian for Lorenz63 {
         &self,
         tt: Self::Scalar,
         cj: Self::Scalar,
-        size: Self::Scalar,
         yy: &ArrayBase<S1, Ix1>,
         yp: &ArrayBase<S2, Ix1>,
         rr: &ArrayBase<S3, Ix1>,

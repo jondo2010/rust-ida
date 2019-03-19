@@ -4,6 +4,8 @@ use ndarray::prelude::*;
 
 use crate::traits::ModelSpec;
 
+pub use dense::Dense;
+
 pub trait LSolver<M: ModelSpec> {
     //IDA_mem->ida_linit  = idaLsInitialize;
     fn new() -> Self;

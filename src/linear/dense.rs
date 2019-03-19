@@ -67,54 +67,40 @@ where
 ///
 /// For square matrices (M = N), L is unit lower triangular.
 ///
-/// returns 0 if successful. Otherwise it encountered a zero diagonal element during the factorization. In this case it returns the column index (numbered from one) at which it encountered the zero.
-fn dense_get_rf<M, S1>(matA: &mut ArrayBase<S1, Ix2>, p: &mut Vec<usize>) -> usize
+/// returns 0 if successful. Otherwise it encountered a zero diagonal element during the
+/// factorization. In this case it returns the column index (numbered from one) at which it
+/// encountered the zero.
+fn dense_get_rf<Scalar, S1>(matA: &mut ArrayBase<S1, Ix2>, p: &mut Vec<usize>) -> usize
 where
-    M: ModelSpec,
-    M::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
-    S1: ndarray::DataMut<Elem = M::Scalar>,
+    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
+    S1: ndarray::DataMut<Elem = Scalar>,
 {
     use num_traits::{Float, Zero};
-    //sunindextype i, j, k, l;
-    //realtype *col_j, *col_k;
-    //realtype temp, mult, a_kj;
-
-    let (m, n) = {
-        let shape = matA.shape();
-        (shape[0], shape[1])
-    };
+    let m = matA.rows();
+    let n = matA.cols();
 
     // k-th elimination step number
-    for k in 0..n {
-        let mut col_k = matA.column_mut(k);
-
-        // find l = pivot row number
-        let mut l = k;
-        for i in k + 1..m {
-            if col_k[i].abs() > col_k[l].abs() {
-                l = i;
+    for col in 0..n {
+        // find pivot = pivot row number
+        let mut pivot = col;
+        for row in (col + 1)..m {
+            if matA[[row, col]].abs() > matA[[row, pivot]].abs() {
+                pivot = row;
             }
         }
-        p[k] = l;
+        p[col] = pivot;
 
         // check for zero pivot element
-        if col_k[l] == M::Scalar::zero() {
-            return k + 1;
+        if matA[[pivot, col]] == Scalar::zero() {
+            return col + 1;
         }
 
-        // swap a(k,1:n) and a(l,1:n) if necessary
+        // swap a(k,1:n) and a(pivot,1:n) if necessary
 
-        if l != k {
-            for i in 0..n {
-                matA.swap([i, k], [i, l]);
+        if pivot != col {
+            for row in 0..m {
+                matA.swap([row, col], [row, pivot]);
             }
-            /*
-            {
-                temp = a[i][l];
-                a[i][l] = a[i][k];
-                a[i][k] = temp;
-            }
-            */
         }
 
         // Scale the elements below the diagonal in
@@ -123,25 +109,23 @@ where
         // stores the pivot row multipliers a(i,k)/a(k,k)
         // in a(i,k), i=k+1, ..., m-1.
 
-        let mult = col_k[k].recip();
-        for i in k + 1..m {
-            col_k[i] *= mult;
+        let mult = matA[[col, col]].recip();
+        for row in (col + 1)..m {
+            matA[[row, col]] *= mult;
         }
 
         // row_i = row_i - [a(i,k)/a(k,k)] row_k, i=k+1, ..., m-1
         // row k is the pivot row after swapping with row l.
         // The computation is done one column at a time, column j=k+1, ..., n-1.
-
-        for j in k + 1..n {
-            let mut col_j = matA.column_mut(j);
-            let a_kj = col_j[k];
+        for j in (col + 1)..n {
+            let a_kj = matA[[col, j]];
 
             // a(i,j) = a(i,j) - [a(i,k)/a(k,k)]*a(k,j)
             // a_kj = a(k,j), col_k[i] = - a(i,k)/a(k,k)
 
-            if a_kj != M::Scalar::zero() {
-                for i in k + 1..m {
-                    col_j[i] -= a_kj * col_k[i];
+            if a_kj != Scalar::zero() {
+                for i in (col + 1)..m {
+                    matA[[i, j]] -= a_kj * matA[[i, col]];
                 }
             }
         }
@@ -150,4 +134,37 @@ where
     // return 0 to indicate success
 
     return 0;
+}
+
+#[test]
+fn test_dense_get_rf() {
+    use ndarray::array;
+    use nearly_eq::assert_nearly_eq;
+
+    let mut a1 = array![
+        [-46190.370416726822, 0.0, 0.0086598211441923072,],
+        [0.04, -46242.289343591976, -0.0086598211441923072],
+        [1.0, 1.0, 1.0]
+    ];
+
+    let mut a1_f = array![
+        [-46190.370416726822, 0.0, 0.0086598211441923072],
+        [
+            -8.6598136449485772e-7,
+            -46242.289343591976,
+            -0.008659813644948576
+        ],
+        [
+            -0.000021649534112371443,
+            -0.000021625226912312786,
+            1.00000000e+00
+        ]
+    ];
+
+    let mut p = vec![0, 0, 0];
+    let ret = dense_get_rf(&mut a1, &mut p);
+
+    assert_nearly_eq!(a1, a1_f, 1e-6);
+    assert_eq!(p, vec![0, 1, 2]);
+    assert_eq!(ret, 0);
 }
