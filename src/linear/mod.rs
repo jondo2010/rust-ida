@@ -63,9 +63,9 @@ pub trait LSolver2<M: ModelSpec> {
     /// be called frequently (e.g., with a full Newton method) or infrequently (for a modified
     /// Newton method), based on the type of integrator and/or nonlinear solver requesting the
     /// solves.
-    fn setup<S1>(&mut self, matA: &ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
+    fn setup<S1>(&mut self, matA: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
     where
-        S1: ndarray::Data<Elem = M::Scalar>;
+        S1: ndarray::DataMut<Elem = M::Scalar>;
 
     /// solves a linear system Ax = b.
     ///

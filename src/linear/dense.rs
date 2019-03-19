@@ -3,6 +3,9 @@ use super::*;
 #[derive(Debug)]
 pub struct Dense<M: ModelSpec> {
     x: M::Scalar,
+
+    pivots: Vec<usize>,
+    last_flag: usize,
 }
 
 impl<M> LSolver<M> for Dense<M>
@@ -14,23 +17,41 @@ where
         use num_traits::identities::Zero;
         Dense {
             x: M::Scalar::zero(),
+
+            pivots: Vec::new(),
+            last_flag: 0,
         }
     }
 }
 
-/*
 impl<M> LSolver2<M> for Dense<M>
 where
     M: ModelSpec,
     M::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
 {
-    fn new(size: usize) -> Self {}
+    fn new(size: usize) -> Self {
+        use num_traits::identities::Zero;
+        Dense {
+            x: M::Scalar::zero(),
 
-    fn setup<S1>(&mut self, matA: &ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
+            pivots: Vec::new(),
+            last_flag: 0,
+        }
+    }
+
+    fn setup<S1>(&mut self, matA: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
     where
-        S1: ndarray::Data<Elem = M::Scalar>,
+        S1: ndarray::DataMut<Elem = M::Scalar>,
     {
+        use failure::format_err;
+        // perform LU factorization of input matrix
+        self.last_flag = dense_get_rf(matA, &mut self.pivots);
 
+        if self.last_flag > 0 {
+            Err(format_err!("LUFACT_FAIL"))
+        } else {
+            Ok(())
+        }
     }
 
     fn solve<S1, S2, S3>(
@@ -38,17 +59,20 @@ where
         matA: &mut ArrayBase<S1, Ix2>,
         x: &mut ArrayBase<S2, Ix1>,
         b: &ArrayBase<S3, Ix1>,
-        tol: M::Scalar,
+        _tol: M::Scalar,
     ) -> Result<(), failure::Error>
     where
         S1: ndarray::Data<Elem = M::Scalar>,
         S2: ndarray::DataMut<Elem = M::Scalar>,
         S3: ndarray::Data<Elem = M::Scalar>,
     {
+        // copy b into x
+        x.assign(&b);
 
+        dense_get_rs(matA, &self.pivots, x);
+        Ok(())
     }
 }
-*/
 
 /// Performs the LU factorization of the M by N dense matrix A.
 ///
@@ -60,6 +84,7 @@ where
 ///
 /// 1. p[k] contains the row number of the pivot element chosen at the beginning of elimination
 ///     step k, k=0, 1, ..., N-1.
+/// 
 /// 2. If the unique LU factorization of A is given by PA = LU, where P is a permutation matrix,
 ///     L is a lower trapezoidal matrix with all 1's on the diagonal, and U is an upper triangular
 ///     matrix, then the upper triangular part of A (including its diagonal) contains U and the
@@ -136,8 +161,52 @@ where
     return 0;
 }
 
+
+/// `dense_get_rs` solves the N-dimensional system A x = b using the LU factorization in A and the
+/// pivot information in p computed in `dense_get_rf`. The solution x is returned in b. This routine
+/// cannot fail if the corresponding call to `dense_get_rf` did not fail.
+/// 
+/// Does NOT check for a square matrix!
+fn dense_get_rs<Scalar, S1, S2>(
+    matA: &ArrayBase<S1, Ix2>,
+    p: &Vec<usize>,
+    b: &mut ArrayBase<S2, Ix1>,
+) where
+    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef,
+    S1: ndarray::Data<Elem = Scalar>,
+    S2: ndarray::DataMut<Elem = Scalar>,
+{
+    let n = matA.cols();
+
+    // Permute b, based on pivot information in p
+    for k in 0..n {
+        let pk = p[k];
+        if pk != k {
+            let tmp = b[k];
+            b[k] = b[pk];
+            b[pk] = tmp;
+        }
+    }
+
+    // Solve Ly = b, store solution y in b
+    for k in 0..(n - 1) {
+        for i in (k + 1)..n {
+            b[i] -= matA[[i, k]] * b[k];
+        }
+    }
+
+    // Solve Ux = y, store solution x in b
+    for k in (0..(n - 1)).rev() {
+        b[k] /= matA[[k, k]];
+        for i in 0..k {
+            b[i] -= matA[[i, k]] * b[k];
+        }
+    }
+    b[0] /= matA[[0, 0]];
+}
+
 #[test]
-fn test_dense_get_rf() {
+fn test_dense() {
     use ndarray::array;
     use nearly_eq::assert_nearly_eq;
 
@@ -167,4 +236,14 @@ fn test_dense_get_rf() {
     assert_nearly_eq!(a1, a1_f, 1e-6);
     assert_eq!(p, vec![0, 1, 2]);
     assert_eq!(ret, 0);
+
+    let mut b = array![-0.000000034639284579585095, 0.000022532389959396826, -0.0];
+    let b_exp = array![
+        7.5001558608301906e-13,
+        -4.8726813621044346e-10,
+        4.8651812062436036e-10,
+    ];
+    dense_get_rs(&a1, &p, &mut b);
+
+    assert_nearly_eq!(b, b_exp, 1e-9);
 }
