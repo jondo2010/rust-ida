@@ -3,24 +3,7 @@ use ndarray::prelude::*;
 use super::constants::IdaConst;
 use super::linear::LSolver;
 use super::nonlinear::NLProblem;
-use super::traits::{IdaProblem};
-
-
-
-/*
-impl<F> NLProblem for Ida<F>
-where
-    F: IdaModel,
-    <F as ModelSpec>::Scalar: num_traits::Float
-        + num_traits::float::FloatConst
-        + num_traits::NumRef
-        + num_traits::NumAssignRef
-        + ndarray::ScalarOperand
-        + std::fmt::Debug
-        + IdaConst,
-{
-}
-*/
+use super::traits::IdaProblem;
 
 /// State variables involved in the Non-linear problem
 #[derive(Debug, Clone)]
@@ -68,7 +51,6 @@ where
 
     pub(super) problem: P,
 
-
     a: Array<P::Scalar, Ix2>,
 }
 
@@ -102,7 +84,7 @@ where
 
             ls: LS::new(problem.model_size()),
 
-            a: Array::zeros((problem.model_size(),problem.model_size())),
+            a: Array::zeros((problem.model_size(), problem.model_size())),
 
             problem,
         }
@@ -169,7 +151,7 @@ where
             &self.ida_yy,
             &self.ida_yp,
             res,
-            &mut self.a.view_mut()
+            &mut self.a.view_mut(),
         );
 
         // update Jacobian status
