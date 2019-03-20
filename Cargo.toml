@@ -17,14 +17,14 @@ keywords = ["math", "differential"]
 [badges]
 travis-ci = { repository = "jondo2010/ida-rs", branch = "master" }
 
-[features]
-default   = ["ndarray-linalg/netlib"]
+#[features]
+#default   = ["ndarray-linalg/netlib"]
 
 [dependencies]
 log = { version = "0.4.6", features = ["std"] }
 failure        = { version = "0.1.5" }
 ndarray        = { version = "0.12.1", default-features = true }
-ndarray-linalg = { version = "0.10.0",  default-features = false }
+#ndarray-linalg = { version = "0.10.0",  default-features = false }
 num-traits = "0.2.6"
 nearly_eq = { version = "0.2.4", features = ["ndarray"] }
 pretty_env_logger = "0.3"

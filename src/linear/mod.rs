@@ -6,7 +6,7 @@ use crate::traits::ModelSpec;
 
 pub use dense::Dense;
 
-pub trait LSolver<M: ModelSpec> {
+pub trait LSolver_x<M: ModelSpec> {
     //IDA_mem->ida_linit  = idaLsInitialize;
     fn new() -> Self;
 
@@ -19,9 +19,6 @@ pub trait LSolver<M: ModelSpec> {
         y: &ArrayBase<S1, Ix1>,
         yp: &ArrayBase<S2, Ix1>,
         r: &ArrayBase<S3, Ix1>,
-        //N_Vector vt1,
-        //N_Vector vt2,
-        //N_Vector vt3
     ) -> Result<(), failure::Error>
     where
         S1: ndarray::Data<Elem = M::Scalar>,
@@ -56,7 +53,7 @@ pub trait LSolver<M: ModelSpec> {
     }
 }
 
-pub trait LSolver2<M: ModelSpec> {
+pub trait LSolver<Scalar> {
     fn new(size: usize) -> Self;
 
     /// Performs any linear solver setup needed, based on an updated system sunmatrix A. This may
@@ -65,7 +62,7 @@ pub trait LSolver2<M: ModelSpec> {
     /// solves.
     fn setup<S1>(&mut self, matA: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
     where
-        S1: ndarray::DataMut<Elem = M::Scalar>;
+        S1: ndarray::DataMut<Elem = Scalar>;
 
     /// solves a linear system Ax = b.
     ///
@@ -82,16 +79,16 @@ pub trait LSolver2<M: ModelSpec> {
     /// Iterative solvers: should attempt to solve to the specified tolerance tol in a weighted
     ///     2-norm. If the solver does not support scaling then it should just use a 2-norm.
     fn solve<S1, S2, S3>(
-        &mut self,
-        matA: &mut ArrayBase<S1, Ix2>,
+        &self,
+        matA: &ArrayBase<S1, Ix2>,
         x: &mut ArrayBase<S2, Ix1>,
         b: &ArrayBase<S3, Ix1>,
-        tol: M::Scalar,
+        tol: Scalar,
     ) -> Result<(), failure::Error>
     where
-        S1: ndarray::Data<Elem = M::Scalar>,
-        S2: ndarray::DataMut<Elem = M::Scalar>,
-        S3: ndarray::Data<Elem = M::Scalar>;
+        S1: ndarray::Data<Elem = Scalar>,
+        S2: ndarray::DataMut<Elem = Scalar>,
+        S3: ndarray::Data<Elem = Scalar>;
 
     /// provides left/right scaling vectors for the linear system solve. Here, s1 and s2 are
     /// vectors of positive scale factors containing the diagonal of the matrices S1 and S2 from
@@ -102,7 +99,7 @@ pub trait LSolver2<M: ModelSpec> {
     /// * `s2` diagonal of the matrix S2
     fn set_scaling_vectors<S1, S2>(&mut self, s1: &ArrayBase<S1, Ix1>, s2: &ArrayBase<S2, Ix1>)
     where
-        S1: ndarray::Data<Elem = M::Scalar>,
-        S2: ndarray::Data<Elem = M::Scalar>
+        S1: ndarray::Data<Elem = Scalar>,
+        S2: ndarray::Data<Elem = Scalar>
     {}
 }

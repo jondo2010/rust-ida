@@ -8,19 +8,16 @@ mod constants;
 mod error;
 mod ida_ls;
 mod ida_nls;
-mod linear;
-mod nonlinear;
+pub mod linear;
+pub mod nonlinear;
 mod norm_rms;
-mod traits;
+pub mod traits;
 
 use constants::*;
 use error::IdaError;
 use ida_nls::IdaNLProblem;
 use norm_rms::{NormRms, NormRmsMasked};
-
-pub use linear::*;
-pub use nonlinear::*;
-pub use traits::*;
+use traits::*;
 
 use log::error;
 use ndarray::{prelude::*, s, Slice};
@@ -47,8 +44,8 @@ pub enum IdaSolveStatus {
 pub struct Ida<P, LS, NLS>
 where
     P: IdaProblem,
-    LS: LSolver<P>,
-    NLS: NLSolver<P>,
+    LS: linear::LSolver<P>,
+    NLS: nonlinear::NLSolver<P>,
 {
     ida_itol: ToleranceType,
     /// relative tolerance
@@ -222,8 +219,8 @@ where
 impl<P, LS, NLS> Ida<P, LS, NLS>
 where
     P: IdaProblem,
-    LS: LSolver<P>,
-    NLS: NLSolver<P>,
+    LS: linear::LSolver<P>,
+    NLS: nonlinear::NLSolver<P>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
@@ -2139,7 +2136,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::*;
     use ndarray::*;
     use nearly_eq::*;
 
@@ -2271,7 +2267,7 @@ mod tests {
         let cjlast = 2.4672954597032423e-09;
 
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
@@ -2450,7 +2446,7 @@ mod tests {
         let nflag = true;
 
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
@@ -2530,7 +2526,7 @@ mod tests {
         let nflag = false;
 
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
@@ -2605,7 +2601,7 @@ mod tests {
         let kk = 2;
 
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
@@ -2686,7 +2682,7 @@ mod tests {
         let beta_after = array![1., 1., 1., 1.2, 1.4, 1.];
 
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
@@ -2733,7 +2729,7 @@ mod tests {
         let beta_after = array![1., 2., 3., 4.8, 7.199999999999999, 10.28571428571428];
 
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
@@ -2855,7 +2851,7 @@ mod tests {
         let beta_after = array![1., 2., 3., 4., 4.864864864864866, 6.370656370656372];
 
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         // Set preconditions:
@@ -2911,7 +2907,7 @@ mod tests {
 
         // Set preconditions:
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         ida.ida_nst = nst;
@@ -3034,7 +3030,7 @@ mod tests {
         ];
 
         let problem = Dummy {};
-        let mut ida: Ida<_, Dense<_>, Newton<_>> =
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
             Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
 
         ida.ida_hh = hh;

@@ -1,38 +1,21 @@
 use super::*;
 
-#[derive(Debug)]
-pub struct Dense<M: ModelSpec> {
-    x: M::Scalar,
+#[derive(Clone, Debug)]
+pub struct Dense<Scalar> {
+    x: Scalar,
 
     pivots: Vec<usize>,
     last_flag: usize,
 }
 
-impl<M> LSolver<M> for Dense<M>
+impl<Scalar> LSolver<Scalar> for Dense<Scalar>
 where
-    M: ModelSpec,
-    M::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
-{
-    fn new() -> Self {
-        use num_traits::identities::Zero;
-        Dense {
-            x: M::Scalar::zero(),
-
-            pivots: Vec::new(),
-            last_flag: 0,
-        }
-    }
-}
-
-impl<M> LSolver2<M> for Dense<M>
-where
-    M: ModelSpec,
-    M::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
+    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
 {
     fn new(size: usize) -> Self {
         use num_traits::identities::Zero;
         Dense {
-            x: M::Scalar::zero(),
+            x: Scalar::zero(),
 
             pivots: Vec::new(),
             last_flag: 0,
@@ -41,7 +24,7 @@ where
 
     fn setup<S1>(&mut self, matA: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
     where
-        S1: ndarray::DataMut<Elem = M::Scalar>,
+        S1: ndarray::DataMut<Elem = Scalar>,
     {
         use failure::format_err;
         // perform LU factorization of input matrix
@@ -55,16 +38,16 @@ where
     }
 
     fn solve<S1, S2, S3>(
-        &mut self,
-        matA: &mut ArrayBase<S1, Ix2>,
+        &self,
+        matA: &ArrayBase<S1, Ix2>,
         x: &mut ArrayBase<S2, Ix1>,
         b: &ArrayBase<S3, Ix1>,
-        _tol: M::Scalar,
+        _tol: Scalar,
     ) -> Result<(), failure::Error>
     where
-        S1: ndarray::Data<Elem = M::Scalar>,
-        S2: ndarray::DataMut<Elem = M::Scalar>,
-        S3: ndarray::Data<Elem = M::Scalar>,
+        S1: ndarray::Data<Elem = Scalar>,
+        S2: ndarray::DataMut<Elem = Scalar>,
+        S3: ndarray::Data<Elem = Scalar>,
     {
         // copy b into x
         x.assign(&b);
@@ -84,7 +67,7 @@ where
 ///
 /// 1. p[k] contains the row number of the pivot element chosen at the beginning of elimination
 ///     step k, k=0, 1, ..., N-1.
-/// 
+///
 /// 2. If the unique LU factorization of A is given by PA = LU, where P is a permutation matrix,
 ///     L is a lower trapezoidal matrix with all 1's on the diagonal, and U is an upper triangular
 ///     matrix, then the upper triangular part of A (including its diagonal) contains U and the
@@ -161,11 +144,10 @@ where
     return 0;
 }
 
-
 /// `dense_get_rs` solves the N-dimensional system A x = b using the LU factorization in A and the
 /// pivot information in p computed in `dense_get_rf`. The solution x is returned in b. This routine
 /// cannot fail if the corresponding call to `dense_get_rf` did not fail.
-/// 
+///
 /// Does NOT check for a square matrix!
 fn dense_get_rs<Scalar, S1, S2>(
     matA: &ArrayBase<S1, Ix2>,

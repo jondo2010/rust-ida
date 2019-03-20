@@ -100,7 +100,7 @@ where
             ida_nre: 0,
             ida_nsetups: 0,
 
-            ls: LS::new(),
+            ls: LS::new(problem.model_size()),
 
             a: Array::zeros((problem.model_size(),problem.model_size())),
 
@@ -160,8 +160,7 @@ where
         use num_traits::identities::One;
 
         self.ida_nsetups += 1;
-        self.ls.ls_setup(&self.ida_yy, &self.ida_yp, res);
-
+        //self.ls.setup(&self.ida_yy, &self.ida_yp, res);
 
         //Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a).map(|_| true)
         self.problem.jac(

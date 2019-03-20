@@ -67,7 +67,7 @@ where
                     // if indicated, setup the linear system
                     if call_lsetup {
                         problem
-                            .lsetup(y0, &self.delta.view(), jbad)
+                            .setup(y0, &self.delta.view(), jbad)
                             .map(|jcur| self.jcur = jcur)
                     } else {
                         Ok(())
@@ -85,7 +85,7 @@ where
                         // compute the negative of the residual for the linear system rhs
                         self.delta.mapv_inplace(M::Scalar::neg);
                         // solve the linear system to get Newton update delta
-                        let retval = problem.lsolve(y, &mut self.delta).and_then(|_| {
+                        let retval = problem.solve(y, &mut self.delta).and_then(|_| {
                             // update the Newton iterate
                             *y += &self.delta;
                             // test for convergence
@@ -166,6 +166,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::linear::*;
     use crate::traits::ModelSpec;
     use ndarray::array;
     use nearly_eq::assert_nearly_eq;
@@ -174,6 +175,8 @@ mod tests {
     struct TestProblem {
         a: Array<f64, Ix2>,
         x: Array<f64, Ix1>,
+
+        lsolver: Dense<f64>,
     }
 
     impl ModelSpec for TestProblem {
@@ -232,7 +235,7 @@ mod tests {
             Ok(())
         }
 
-        fn lsetup<S1>(
+        fn setup<S1>(
             &mut self,
             y: &ArrayBase<S1, Ix1>,
             _f: &ArrayView<<Self as ModelSpec>::Scalar, Ix1>,
@@ -242,13 +245,13 @@ mod tests {
             S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
         {
             // compute the Jacobian
-            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a).map(|_| true)
+            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a).map(|_| true);
 
             // setup the linear solver
-            //retval = SUNLinSolSetup(Imem->LS, Imem->A);
+            self.lsolver.setup(&mut self.a).map(|_| true)
         }
 
-        fn lsolve<S1, S2>(
+        fn solve<S1, S2>(
             &mut self,
             _y: &ArrayBase<S1, Ix1>,
             b: &mut ArrayBase<S2, Ix1>,
@@ -260,11 +263,7 @@ mod tests {
             // Solve self.A * b = b
             //retval = SUNLinSolSolve(Imem->LS, Imem->A, Imem->x, b, ZERO);
             //N_VScale(ONE, Imem->x, b);
-            use ndarray_linalg::*;
-            self.a
-                .solve_inplace(b)
-                .map(|_| ())
-                .map_err(failure::Error::from)
+            self.lsolver.solve(&self.a, &mut self.x, b, 0.0)
         }
 
         fn ctest<S1, S2, S3>(
@@ -301,6 +300,8 @@ mod tests {
         let mut p = TestProblem {
             a: Array::zeros((3, 3)),
             x: Array::zeros(3),
+
+            lsolver: Dense::new(3),
         };
 
         // set initial guess
