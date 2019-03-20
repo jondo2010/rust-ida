@@ -245,10 +245,12 @@ mod tests {
             S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
         {
             // compute the Jacobian
-            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a).map(|_| true);
-
-            // setup the linear solver
-            self.lsolver.setup(&mut self.a).map(|_| true)
+            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a)
+                .map(|_| true)
+                .and_then(|_| {
+                    // setup the linear solver
+                    self.lsolver.setup(&mut self.a).map(|_| true)
+                })
         }
 
         fn solve<S1, S2>(

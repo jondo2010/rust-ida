@@ -27,7 +27,7 @@ where
 pub struct IdaNLProblem<P, LS>
 where
     P: IdaProblem,
-    LS: LSolver<P>,
+    LS: LSolver<P::Scalar>,
 {
     // Vectors
     /// work space for y vector (= user's yret)
@@ -76,7 +76,7 @@ impl<P, LS> IdaNLProblem<P, LS>
 where
     P: IdaProblem,
     P::Scalar: IdaConst,
-    LS: LSolver<P>,
+    LS: LSolver<P::Scalar>,
 {
     /// * `size` - The problem size
     pub fn new(problem: P) -> Self {
@@ -113,7 +113,7 @@ impl<P, LS> NLProblem<P> for IdaNLProblem<P, LS>
 where
     P: IdaProblem,
     P::Scalar: IdaConst + ndarray::ScalarOperand,
-    LS: LSolver<P>,
+    LS: LSolver<P::Scalar>,
 {
     fn sys<S1, S2>(
         &mut self,

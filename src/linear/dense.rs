@@ -13,22 +13,21 @@ where
     Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
 {
     fn new(size: usize) -> Self {
-        use num_traits::identities::Zero;
         Dense {
             x: Scalar::zero(),
 
-            pivots: Vec::new(),
+            pivots: vec![0; size],
             last_flag: 0,
         }
     }
 
-    fn setup<S1>(&mut self, matA: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
+    fn setup<S1>(&mut self, mat_a: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
     where
         S1: ndarray::DataMut<Elem = Scalar>,
     {
         use failure::format_err;
         // perform LU factorization of input matrix
-        self.last_flag = dense_get_rf(matA, &mut self.pivots);
+        self.last_flag = dense_get_rf(mat_a, &mut self.pivots);
 
         if self.last_flag > 0 {
             Err(format_err!("LUFACT_FAIL"))
@@ -39,7 +38,7 @@ where
 
     fn solve<S1, S2, S3>(
         &self,
-        matA: &ArrayBase<S1, Ix2>,
+        mat_a: &ArrayBase<S1, Ix2>,
         x: &mut ArrayBase<S2, Ix1>,
         b: &ArrayBase<S3, Ix1>,
         _tol: Scalar,
@@ -52,7 +51,7 @@ where
         // copy b into x
         x.assign(&b);
 
-        dense_get_rs(matA, &self.pivots, x);
+        dense_get_rs(mat_a, &self.pivots, x);
         Ok(())
     }
 }
@@ -78,28 +77,30 @@ where
 /// returns 0 if successful. Otherwise it encountered a zero diagonal element during the
 /// factorization. In this case it returns the column index (numbered from one) at which it
 /// encountered the zero.
-fn dense_get_rf<Scalar, S1>(matA: &mut ArrayBase<S1, Ix2>, p: &mut Vec<usize>) -> usize
+fn dense_get_rf<Scalar, S1>(mat_a: &mut ArrayBase<S1, Ix2>, p: &mut [usize]) -> usize
 where
     Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
     S1: ndarray::DataMut<Elem = Scalar>,
 {
-    use num_traits::{Float, Zero};
-    let m = matA.rows();
-    let n = matA.cols();
+    let m = mat_a.rows();
+    let n = mat_a.cols();
+
+    assert!(m >= n, "Number of rows must be >= number of columns");
+    assert!(p.len() == n, "Partition slice length must be equal to the number of columns");
 
     // k-th elimination step number
     for col in 0..n {
         // find pivot = pivot row number
         let mut pivot = col;
         for row in (col + 1)..m {
-            if matA[[row, col]].abs() > matA[[row, pivot]].abs() {
+            if mat_a[[row, col]].abs() > mat_a[[row, pivot]].abs() {
                 pivot = row;
             }
         }
         p[col] = pivot;
 
         // check for zero pivot element
-        if matA[[pivot, col]] == Scalar::zero() {
+        if mat_a[[pivot, col]] == Scalar::zero() {
             return col + 1;
         }
 
@@ -107,7 +108,7 @@ where
 
         if pivot != col {
             for row in 0..m {
-                matA.swap([row, col], [row, pivot]);
+                mat_a.swap([row, col], [row, pivot]);
             }
         }
 
@@ -117,23 +118,23 @@ where
         // stores the pivot row multipliers a(i,k)/a(k,k)
         // in a(i,k), i=k+1, ..., m-1.
 
-        let mult = matA[[col, col]].recip();
+        let mult = mat_a[[col, col]].recip();
         for row in (col + 1)..m {
-            matA[[row, col]] *= mult;
+            mat_a[[row, col]] *= mult;
         }
 
         // row_i = row_i - [a(i,k)/a(k,k)] row_k, i=k+1, ..., m-1
         // row k is the pivot row after swapping with row l.
         // The computation is done one column at a time, column j=k+1, ..., n-1.
         for j in (col + 1)..n {
-            let a_kj = matA[[col, j]];
+            let a_kj = mat_a[[col, j]];
 
             // a(i,j) = a(i,j) - [a(i,k)/a(k,k)]*a(k,j)
             // a_kj = a(k,j), col_k[i] = - a(i,k)/a(k,k)
 
             if a_kj != Scalar::zero() {
                 for i in (col + 1)..m {
-                    matA[[i, j]] -= a_kj * matA[[i, col]];
+                    mat_a[[i, j]] -= a_kj * (mat_a[[i, col]]);
                 }
             }
         }
@@ -149,16 +150,13 @@ where
 /// cannot fail if the corresponding call to `dense_get_rf` did not fail.
 ///
 /// Does NOT check for a square matrix!
-fn dense_get_rs<Scalar, S1, S2>(
-    matA: &ArrayBase<S1, Ix2>,
-    p: &Vec<usize>,
-    b: &mut ArrayBase<S2, Ix1>,
-) where
+fn dense_get_rs<Scalar, S1, S2>(mat_a: &ArrayBase<S1, Ix2>, p: &[usize], b: &mut ArrayBase<S2, Ix1>)
+where
     Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef,
     S1: ndarray::Data<Elem = Scalar>,
     S2: ndarray::DataMut<Elem = Scalar>,
 {
-    let n = matA.cols();
+    let n = mat_a.cols();
 
     // Permute b, based on pivot information in p
     for k in 0..n {
@@ -173,18 +171,18 @@ fn dense_get_rs<Scalar, S1, S2>(
     // Solve Ly = b, store solution y in b
     for k in 0..(n - 1) {
         for i in (k + 1)..n {
-            b[i] -= matA[[i, k]] * b[k];
+            b[i] -= mat_a[[i, k]] * b[k];
         }
     }
 
     // Solve Ux = y, store solution x in b
-    for k in (0..(n - 1)).rev() {
-        b[k] /= matA[[k, k]];
+    for k in (0..(n)).rev() {
+        b[k] /= mat_a[[k, k]];
         for i in 0..k {
-            b[i] -= matA[[i, k]] * b[k];
+            b[i] -= mat_a[[i, k]] * b[k];
         }
     }
-    b[0] /= matA[[0, 0]];
+    b[0] /= mat_a[[0, 0]];
 }
 
 #[test]
@@ -192,31 +190,23 @@ fn test_dense() {
     use ndarray::array;
     use nearly_eq::assert_nearly_eq;
 
-    let mut a1 = array![
+    let mut mat_a = array![
         [-46190.370416726822, 0.0, 0.0086598211441923072,],
         [0.04, -46242.289343591976, -0.0086598211441923072],
         [1.0, 1.0, 1.0]
     ];
 
-    let mut a1_f = array![
+    let mat_a_decomp = array![
         [-46190.370416726822, 0.0, 0.0086598211441923072],
-        [
-            -8.6598136449485772e-7,
-            -46242.289343591976,
-            -0.008659813644948576
-        ],
-        [
-            -0.000021649534112371443,
-            -0.000021625226912312786,
-            1.00000000e+00
-        ]
+        [ -8.6598136449485772e-7, -46242.289343591976, -0.008659813644948576 ],
+        [ -0.000021649534112371443, -0.000021625226912312786, 1.00000000e+00 ]
     ];
 
-    let mut p = vec![0, 0, 0];
-    let ret = dense_get_rf(&mut a1, &mut p);
+    let mut pivot = vec![0, 0, 0];
+    let ret = dense_get_rf(&mut mat_a, &mut pivot);
 
-    assert_nearly_eq!(a1, a1_f, 1e-6);
-    assert_eq!(p, vec![0, 1, 2]);
+    assert_nearly_eq!(mat_a, mat_a_decomp, 1e-6);
+    assert_eq!(pivot, vec![0, 1, 2]);
     assert_eq!(ret, 0);
 
     let mut b = array![-0.000000034639284579585095, 0.000022532389959396826, -0.0];
@@ -225,7 +215,16 @@ fn test_dense() {
         -4.8726813621044346e-10,
         4.8651812062436036e-10,
     ];
-    dense_get_rs(&a1, &p, &mut b);
-
+    dense_get_rs(&mat_a, &pivot, &mut b);
     assert_nearly_eq!(b, b_exp, 1e-9);
+
+    // Now test using the LSolver interface
+    let mut mat_a = array![[1., 1., 1.], [2., 1., -4.], [3., -4., 1.]];
+    let mut dense = Dense::new(3);
+    dense.setup(&mut mat_a).unwrap();
+    let mut x = Array::zeros(3);
+    dense
+        .solve(&mat_a, &mut x, &array![0.25, 1.25, 1.0], 0.0)
+        .unwrap();
+    assert_eq!(x, array![0.375, 0., -0.125]);
 }

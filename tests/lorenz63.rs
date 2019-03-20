@@ -2,10 +2,10 @@
 //! https://en.wikipedia.org/wiki/Lorenz_system
 //!
 
-#[feature(test)]
-use ndarray::prelude::*;
+//#[feature(test)]
+use ida::{linear::*, nonlinear::*, traits::*, *};
 
-use ida::*;
+use ndarray::prelude::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Lorenz63 {

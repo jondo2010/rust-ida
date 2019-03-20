@@ -30,6 +30,7 @@
                     "--lib",
                     "--package=ida",
                     "--",
+                    "--test-threads=1",
                     "--exact",
                     "test_newton",
                 ],

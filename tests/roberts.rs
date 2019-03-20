@@ -13,8 +13,8 @@
 //! The problem is solved with IDA using the DENSE linear solver, with a user-supplied Jacobian.
 //! Output is printed at t = .4, 4, 40, ..., 4e10.
 
-#[feature(test)]
-use ida::*;
+//#[feature(test)]
+use ida::{linear::*, nonlinear::*, traits::*, *};
 
 use ndarray::{array, prelude::*};
 

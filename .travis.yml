@@ -15,9 +15,6 @@ env:
     - CARGO_MAKE_CI="true"
     - CARGO_MAKE_RUN_CODECOV="true"
 
-#before_install:
-#  - sudo apt-get install -y gfortran
-
 before_script:
   - export PATH=$HOME/.cargo/bin:$PATH
   - cargo install cargo-make || echo "cargo-make already installed"
@@ -29,7 +26,5 @@ script:
 
 addons:
   apt:
-    update: true
+    update: false
     packages:
-      - gfortran
-      - cmake

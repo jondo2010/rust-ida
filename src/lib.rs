@@ -44,7 +44,7 @@ pub enum IdaSolveStatus {
 pub struct Ida<P, LS, NLS>
 where
     P: IdaProblem,
-    LS: linear::LSolver<P>,
+    LS: linear::LSolver<P::Scalar>,
     NLS: nonlinear::NLSolver<P>,
 {
     ida_itol: ToleranceType,
@@ -219,7 +219,7 @@ where
 impl<P, LS, NLS> Ida<P, LS, NLS>
 where
     P: IdaProblem,
-    LS: linear::LSolver<P>,
+    LS: linear::LSolver<P::Scalar>,
     NLS: nonlinear::NLSolver<P>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
