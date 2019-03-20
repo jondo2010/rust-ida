@@ -25,6 +25,40 @@ pub enum Error {
     //SUN_NLS_VECTOROP_ERR
 }
 
+pub trait LProblem<M>
+where
+    M: ModelSpec,
+{
+    /// idaLsSetup
+    /// This calls the Jacobian evaluation routine, updates counters, and calls the LS `setup`
+    /// routine to prepare for subsequent calls to the LS `solve` routine.
+    fn setup<S1, S2, S3>(
+        &mut self,
+        y: &ArrayBase<S1, Ix1>,
+        yp: &ArrayBase<S2, Ix1>,
+        r: &ArrayBase<S3, Ix1>,
+    ) where
+        S1: Data<Elem = M::Scalar>,
+        S2: Data<Elem = M::Scalar>,
+        S3: Data<Elem = M::Scalar>;
+
+    /// idaLsSolve
+    /// This routine interfaces between IDA and the generic LSovler object LS, by setting the
+    /// appropriate tolerance and scaling vectors, calling the solver, accumulating statistics
+    /// from the solve for use/reporting by IDA, and scaling the result if using a non-NULL Matrix
+    /// and cjratio does not equal one.
+    fn solve<S1, S2>(
+        &mut self,
+        b: &ArrayBase<S1, Ix1>,
+        weight: &ArrayBase<S2, Ix1>,
+        ycur: &ArrayBase<S1, Ix1>,
+        ypcur: &ArrayBase<S1, Ix1>,
+        rescur: &ArrayBase<S1, Ix1>,
+    ) where
+        S1: Data<Elem = M::Scalar>,
+        S2: Data<Elem = M::Scalar>;
+}
+
 pub trait NLProblem<M>
 where
     M: ModelSpec,
@@ -74,7 +108,7 @@ where
     /// linear solvers). `lsetup` implementations that do not require solving this system, do not
     /// utilize linear solvers, or use linear solvers that do not require setup may ignore these
     /// functions.
-    fn lsetup<S1>(
+    fn setup<S1>(
         &mut self,
         _y: &ArrayBase<S1, Ix1>,
         _f: &ArrayView<M::Scalar, Ix1>,
@@ -103,7 +137,7 @@ where
     /// The `lsove` function solves the linear system `Ax = b` where `A = ∂F/∂y` is the linearization
     /// of the nonlinear residual function F(y) = 0. Implementations that do not require solving
     /// this system or do not use sunlinsol linear solvers may ignore these functions.
-    fn lsolve<S1, S2>(
+    fn solve<S1, S2>(
         &mut self,
         y: &ArrayBase<S1, Ix1>,
         b: &mut ArrayBase<S2, Ix1>,
