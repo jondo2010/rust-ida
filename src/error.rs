@@ -2,9 +2,8 @@ use failure::Fail;
 
 #[derive(Debug, Fail)]
 pub enum IdaError {
-
     // ERROR_TEST_FAIL
-    #[fail(display="Error Test Failed")]
+    #[fail(display = "Error Test Failed")]
     TestFail,
 
     // LSETUP_ERROR_NONRECVR

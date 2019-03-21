@@ -265,7 +265,9 @@ mod tests {
             // Solve self.A * b = b
             //retval = SUNLinSolSolve(Imem->LS, Imem->A, Imem->x, b, ZERO);
             //N_VScale(ONE, Imem->x, b);
-            self.lsolver.solve(&self.a, &mut self.x, b, 0.0)
+            self.lsolver.solve(&self.a, &mut self.x, b, 0.0).map(|_| {
+                b.assign(&self.x);
+            })
         }
 
         fn ctest<S1, S2, S3>(

@@ -25,40 +25,6 @@ pub enum Error {
     //SUN_NLS_VECTOROP_ERR
 }
 
-pub trait LProblem<M>
-where
-    M: ModelSpec,
-{
-    /// idaLsSetup
-    /// This calls the Jacobian evaluation routine, updates counters, and calls the LS `setup`
-    /// routine to prepare for subsequent calls to the LS `solve` routine.
-    fn setup<S1, S2, S3>(
-        &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        yp: &ArrayBase<S2, Ix1>,
-        r: &ArrayBase<S3, Ix1>,
-    ) where
-        S1: Data<Elem = M::Scalar>,
-        S2: Data<Elem = M::Scalar>,
-        S3: Data<Elem = M::Scalar>;
-
-    /// idaLsSolve
-    /// This routine interfaces between IDA and the generic LSovler object LS, by setting the
-    /// appropriate tolerance and scaling vectors, calling the solver, accumulating statistics
-    /// from the solve for use/reporting by IDA, and scaling the result if using a non-NULL Matrix
-    /// and cjratio does not equal one.
-    fn solve<S1, S2>(
-        &mut self,
-        b: &ArrayBase<S1, Ix1>,
-        weight: &ArrayBase<S2, Ix1>,
-        ycur: &ArrayBase<S1, Ix1>,
-        ypcur: &ArrayBase<S1, Ix1>,
-        rescur: &ArrayBase<S1, Ix1>,
-    ) where
-        S1: Data<Elem = M::Scalar>,
-        S2: Data<Elem = M::Scalar>;
-}
-
 pub trait NLProblem<M>
 where
     M: ModelSpec,

@@ -97,6 +97,7 @@ where
     P::Scalar: IdaConst + ndarray::ScalarOperand,
     LS: LSolver<P::Scalar>,
 {
+    /// idaNlsResidual
     fn sys<S1, S2>(
         &mut self,
         ycor: &ArrayBase<S1, Ix1>,
@@ -130,6 +131,7 @@ where
         Ok(())
     }
 
+    /// idaNlsLSetup
     fn setup<S1>(
         &mut self,
         ycor: &ArrayBase<S1, Ix1>,
@@ -143,6 +145,8 @@ where
 
         self.ida_nsetups += 1;
         //self.ls.setup(&self.ida_yy, &self.ida_yp, res);
+
+        // TODO call idaLsSetup()
 
         //Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a).map(|_| true)
         self.problem.jac(

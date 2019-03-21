@@ -21,6 +21,10 @@ where
         }
     }
 
+    fn get_type(&self) -> LSolverType {
+        LSolverType::Direct
+    }
+
     fn setup<S1>(&mut self, mat_a: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
     where
         S1: ndarray::DataMut<Elem = Scalar>,
@@ -86,7 +90,10 @@ where
     let n = mat_a.cols();
 
     assert!(m >= n, "Number of rows must be >= number of columns");
-    assert!(p.len() == n, "Partition slice length must be equal to the number of columns");
+    assert!(
+        p.len() == n,
+        "Partition slice length must be equal to the number of columns"
+    );
 
     // k-th elimination step number
     for col in 0..n {
@@ -198,8 +205,16 @@ fn test_dense() {
 
     let mat_a_decomp = array![
         [-46190.370416726822, 0.0, 0.0086598211441923072],
-        [ -8.6598136449485772e-7, -46242.289343591976, -0.008659813644948576 ],
-        [ -0.000021649534112371443, -0.000021625226912312786, 1.00000000e+00 ]
+        [
+            -8.6598136449485772e-7,
+            -46242.289343591976,
+            -0.008659813644948576
+        ],
+        [
+            -0.000021649534112371443,
+            -0.000021625226912312786,
+            1.00000000e+00
+        ]
     ];
 
     let mut pivot = vec![0, 0, 0];
@@ -223,6 +238,8 @@ fn test_dense() {
     let mut dense = Dense::new(3);
     dense.setup(&mut mat_a).unwrap();
     let mut x = Array::zeros(3);
+    dbg!(&mat_a);
+    dbg!(&dense);
     dense
         .solve(&mat_a, &mut x, &array![0.25, 1.25, 1.0], 0.0)
         .unwrap();
