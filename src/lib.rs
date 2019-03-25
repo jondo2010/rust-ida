@@ -76,7 +76,7 @@ where
 
     // Vectors
     /// error weight vector
-    ida_ewt: Array<P::Scalar, Ix1>,
+    //ida_ewt: Array<P::Scalar, Ix1>,
     /// residual vector
     ida_delta: Array<P::Scalar, Ix1>,
     /// bit vector for diff./algebraic components
@@ -328,7 +328,6 @@ where
             //ida_mxgnull  = 1;
 
             // Not from ida.c...
-            ida_ewt: Array::zeros(problem.model_size()),
             ida_ee: Array::zeros(problem.model_size()),
 
             ida_tstop: P::Scalar::zero(),
@@ -466,7 +465,7 @@ where
                 self.ida_hh = P::Scalar::pt001() * tdist;
                 let ypnorm = self.wrms_norm(
                     &self.ida_phi.index_axis(Axis(0), 1),
-                    &self.ida_ewt,
+                    &self.nlp.ida_ewt,
                     self.ida_suppressalg,
                 );
                 if ypnorm > P::Scalar::two() / self.ida_hh {
@@ -648,7 +647,7 @@ where
 
             let nrm = self.wrms_norm(
                 &self.ida_phi.index_axis(Axis(0), 0),
-                &self.ida_ewt,
+                &self.nlp.ida_ewt,
                 self.ida_suppressalg,
             );
 
@@ -1212,7 +1211,7 @@ where
             self.ida_kused = 0;
             self.ida_hused = P::Scalar::one();
             self.ida_psi[0] = self.ida_hh;
-            self.nlp.ida_cj = self.ida_hh.recip();
+            self.nlp.lp.ida_cj = self.ida_hh.recip();
             self.ida_phase = 0;
             self.ida_ns = 0;
         }
@@ -1344,8 +1343,8 @@ where
         }
 
         // compute leading coefficient cj
-        self.ida_cjlast = self.nlp.ida_cj;
-        self.nlp.ida_cj = -alphas / self.ida_hh;
+        self.ida_cjlast = self.nlp.lp.ida_cj;
+        self.nlp.lp.ida_cj = -alphas / self.ida_hh;
 
         // compute variable stepsize error coefficient ck
         let mut ck = (self.ida_alpha[self.ida_kk] + alphas - alpha0).abs();
@@ -1377,7 +1376,7 @@ where
         let mut callLSetup = false;
 
         if self.ida_nst == 0 {
-            self.nlp.ida_cjold = self.nlp.ida_cj;
+            self.nlp.lp.ida_cjold = self.nlp.lp.ida_cj;
             self.nlp.ida_ss = P::Scalar::twenty();
             //if (self.ida_lsetup) { callLSetup = true; }
             callLSetup = true;
@@ -1386,13 +1385,13 @@ where
         // Decide if lsetup is to be called
 
         //if self.ida_lsetup {
-        self.nlp.ida_cjratio = self.nlp.ida_cj / self.nlp.ida_cjold;
+        self.nlp.lp.ida_cjratio = self.nlp.lp.ida_cj / self.nlp.lp.ida_cjold;
         let temp1: P::Scalar = NumCast::from((1.0 - XRATE) / (1.0 + XRATE)).unwrap();
         let temp2 = temp1.recip();
-        if self.nlp.ida_cjratio < temp1 || self.nlp.ida_cjratio > temp2 {
+        if self.nlp.lp.ida_cjratio < temp1 || self.nlp.lp.ida_cjratio > temp2 {
             callLSetup = true;
         }
-        if self.nlp.ida_cj != self.ida_cjlast {
+        if self.nlp.lp.ida_cj != self.ida_cjlast {
             self.nlp.ida_ss = P::Scalar::hundred();
         }
         //}
@@ -1400,7 +1399,7 @@ where
         // initial guess for the correction to the predictor
         //N_VConst(ZERO, self.ida_delta);
         //TODO Fix this
-        self.ida_delta = Array::zeros(self.nlp.problem.model_size());
+        self.ida_delta = Array::zeros(self.nlp.lp.problem.model_size());
 
         // call nonlinear solver setup if it exists
         self.nls.setup(&mut self.ida_delta)?;
@@ -1417,7 +1416,7 @@ where
             &mut self.nlp,
             &self.ida_delta,
             &mut self.ida_ee,
-            &self.ida_ewt,
+            &self.nlp.ida_ewt,
             self.ida_epsNewt,
             callLSetup,
         );
@@ -1428,7 +1427,7 @@ where
         //N_VLinearSum( ONE, self.ida_yppredict, self.ida_cj, self.ida_ee, self.ida_yp,);
         //self.ida_yp = &self.ida_yppredict + (&self.ida_ee * self.ida_cj);
         self.nlp.ida_yp.assign(&self.nlp.ida_yppredict);
-        self.nlp.ida_yp.scaled_add(self.nlp.ida_cj, &self.ida_ee);
+        self.nlp.ida_yp.scaled_add(self.nlp.lp.ida_cj, &self.ida_ee);
 
         // return if nonlinear solver failed */
         retval?;
@@ -1538,7 +1537,7 @@ where
         //realtype enorm_k, enorm_km1, enorm_km2;   /* error norms */
         //realtype terr_k, terr_km1, terr_km2;      /* local truncation error norms */
         // Compute error for order k.
-        let enorm_k = self.wrms_norm(&self.ida_ee, &self.ida_ewt, self.ida_suppressalg);
+        let enorm_k = self.wrms_norm(&self.ida_ee, &self.nlp.ida_ewt, self.ida_suppressalg);
         let err_k = self.ida_sigma[self.ida_kk] * enorm_k;
         let terr_k = err_k * <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap();
 
@@ -1550,7 +1549,7 @@ where
         if self.ida_kk > 1 {
             // Compute error at order k-1
             self.ida_delta = &self.ida_phi.index_axis(Axis(0), self.ida_kk) + &self.ida_ee;
-            let enorm_km1 = self.wrms_norm(&self.ida_delta, &self.ida_ewt, self.ida_suppressalg);
+            let enorm_km1 = self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
             err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
             let terr_km1: P::Scalar = err_km1 * <P::Scalar as NumCast>::from(self.ida_kk).unwrap();
 
@@ -1562,7 +1561,7 @@ where
                 self.ida_delta.scaled_add(P::Scalar::one(), &self.ida_ee);
 
                 let enorm_km2 =
-                    self.wrms_norm(&self.ida_delta, &self.ida_ewt, self.ida_suppressalg);
+                    self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
                 err_km2 = self.ida_sigma[self.ida_kk - 2] * enorm_km2;
                 let terr_km2 = err_km2 * <P::Scalar as NumCast>::from(self.ida_kk - 1).unwrap();
 
@@ -1840,7 +1839,7 @@ where
             if let Action::None = action {
                 //N_VLinearSum(ONE, self.ida_ee, -ONE, self.ida_phi[self.ida_kk + 1], self.ida_tempv1);
                 let ida_tempv1 = &self.ida_ee - &self.ida_phi.index_axis(Axis(0), self.ida_kk + 1);
-                let enorm = self.wrms_norm(&ida_tempv1, &self.ida_ewt, self.ida_suppressalg);
+                let enorm = self.wrms_norm(&ida_tempv1, &self.nlp.ida_ewt, self.ida_suppressalg);
                 err_kp1 = enorm / <P::Scalar as NumCast>::from(self.ida_kk + 2).unwrap();
 
                 // Choose among orders k-1, k, k+1 using local truncation error norms.
@@ -2283,7 +2282,7 @@ mod tests {
         ida.ida_phi.assign(&ida_phi);
         ida.ida_psi.assign(&ida_psi);
         ida.ida_cjlast = cjlast;
-        ida.nlp.ida_cj = cj;
+        ida.nlp.lp.ida_cj = cj;
 
         // Call the function under test
         let ck = ida.set_coeffs();
@@ -2382,7 +2381,7 @@ mod tests {
         assert_nearly_eq!(ida.ida_phi, ida_phi);
         assert_nearly_eq!(ida.ida_psi, ida_psi);
         assert_nearly_eq!(ida.ida_cjlast, cjlast);
-        assert_nearly_eq!(ida.nlp.ida_cj, cj);
+        assert_nearly_eq!(ida.nlp.lp.ida_cj, cj);
         assert_nearly_eq!(ck, ck_expect);
     }
 
@@ -2454,7 +2453,7 @@ mod tests {
         ida.ida_suppressalg = suppressalg > 0;
         ida.ida_phi.assign(&ida_phi);
         ida.ida_ee.assign(&ida_ee);
-        ida.ida_ewt.assign(&ida_ewt);
+        ida.nlp.ida_ewt.assign(&ida_ewt);
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
@@ -2534,7 +2533,7 @@ mod tests {
         ida.ida_suppressalg = suppressalg > 0;
         ida.ida_phi.assign(&ida_phi);
         ida.ida_ee.assign(&ida_ee);
-        ida.ida_ewt.assign(&ida_ewt);
+        ida.nlp.ida_ewt.assign(&ida_ewt);
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
@@ -2922,7 +2921,7 @@ mod tests {
         ida.ida_hmax_inv = hmax_inv;
         ida.ida_ee.assign(&ida_ee);
         ida.ida_phi.assign(&ida_phi);
-        ida.ida_ewt.assign(&ida_ewt);
+        ida.nlp.ida_ewt.assign(&ida_ewt);
         //ida.ida_Xvecs.assign(&ida_Xvecs);
         //ida.ida_Zvecs.assign(&ida_Zvecs);
 
@@ -2965,7 +2964,7 @@ mod tests {
         assert_eq!(ida.ida_hmax_inv, hmax_inv);
         assert_nearly_eq!(ida.ida_ee, ida_ee, 1e-6);
         assert_nearly_eq!(ida.ida_phi, ida_phi, 1e-6);
-        assert_nearly_eq!(ida.ida_ewt, ida_ewt, 1e-6);
+        assert_nearly_eq!(ida.nlp.ida_ewt, ida_ewt, 1e-6);
     }
 
     #[test]

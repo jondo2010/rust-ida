@@ -15,6 +15,7 @@ where
     // Linear solver, matrix and vector objects/pointers
     /// generic linear solver object
     ls: LS,
+
     /// J = dF/dy + cj*dF/dy'
     J: Array<P::Scalar, Ix2>,
 
@@ -51,15 +52,15 @@ where
     /// njtimes = total number of calls to jtimes
     njtimes: usize,
     /// nst0 = saved nst (for performance monitor)
-    nst0: usize,
+    //nst0: usize,
     /// nni0 = saved nni (for performance monitor)
-    nni0: usize,
+    //nni0: usize,
     /// ncfn0 = saved ncfn (for performance monitor)
-    ncfn0: usize,
+    //ncfn0: usize,
     /// ncfl0 = saved ncfl (for performance monitor)
-    ncfl0: usize,
+    //ncfl0: usize,
     /// nwarn = no. of warnings (for perf. monitor)
-    nwarn: usize,
+    //nwarn: usize,
     /*
         long int last_flag; // last error return flag
 
@@ -87,104 +88,129 @@ where
         IDALsJacTimesVecFn jtimes;
         void *jt_data;
     */
+
+    /// current value of scalar (-alphas/hh) in Jacobian
+    pub(super) ida_cj: P::Scalar,
+    /// cj value saved from last call to lsetup
+    pub(super) ida_cjold: P::Scalar,
+    /// ratio of cj values: cj/cjold
+    pub(super) ida_cjratio: P::Scalar,
+
+    /// IDA problem
+    pub(super) problem: P,
 }
 
 impl<P, LS> IdaLProblem<P, LS>
 where
     P: IdaProblem,
-    P::Scalar: num_traits::Float + num_traits::Zero + num_traits::NumOps,
+    P::Scalar: num_traits::Float
+        + num_traits::float::FloatConst
+        + num_traits::NumRef
+        + num_traits::NumAssignRef
+        + ndarray::ScalarOperand
+        + std::fmt::Debug
+        + IdaConst,
     LS: LSolver<P::Scalar>,
 {
+    pub fn new(problem: P) -> Self {
+        use num_traits::identities::{One, Zero};
+        use num_traits::Float;
+        use num_traits::NumCast;
+        // Retrieve the LS type */
+        //LSType = SUNLinSolGetType(LS);
 
-    pub fn new() -> Self
-{
-  // Retrieve the LS type */
-  //LSType = SUNLinSolGetType(LS);
+        /* Set four main system linear solver function fields in IDA_mem */
+        //IDA_mem->ida_linit  = idaLsInitialize;
+        //IDA_mem->ida_lsetup = idaLsSetup;
+        //IDA_mem->ida_lsolve = idaLsSolve;
+        //IDA_mem->ida_lfree  = idaLsFree;
 
-  /* Set four main system linear solver function fields in IDA_mem */
-  //IDA_mem->ida_linit  = idaLsInitialize;
-  //IDA_mem->ida_lsetup = idaLsSetup;
-  //IDA_mem->ida_lsolve = idaLsSolve;
-  //IDA_mem->ida_lfree  = idaLsFree;
+        /* Set ida_lperf if using an iterative SUNLinearSolver object */
+        //IDA_mem->ida_lperf = ( (LSType == SUNLINEARSOLVER_ITERATIVE) || (LSType == SUNLINEARSOLVER_MATRIX_ITERATIVE) ) ? idaLsPerf : NULL;
 
-  /* Set ida_lperf if using an iterative SUNLinearSolver object */
-  //IDA_mem->ida_lperf = ( (LSType == SUNLINEARSOLVER_ITERATIVE) || (LSType == SUNLINEARSOLVER_MATRIX_ITERATIVE) ) ? idaLsPerf : NULL;
+        /* Set defaults for Jacobian-related fields */
+        /*
+                idals_mem->J = A;
+                if (A != NULL) {
+                    idals_mem->jacDQ     = SUNTRUE;
+                    idals_mem->jac       = idaLsDQJac;
+                    idals_mem->J_data    = IDA_mem;
+                } else {
+                    idals_mem->jacDQ     = SUNFALSE;
+                    idals_mem->jac       = NULL;
+                    idals_mem->J_data    = NULL;
+                }
+        */
+        //self.jtimesDQ = true;
+        //self.jtsetup  = NULL;
+        //self.jtimes   = idaLsDQJtimes;
+        //self.jt_data  = IDA_mem;
 
-  /* Set defaults for Jacobian-related fields */
-  /*
-  idals_mem->J = A;
-  if (A != NULL) {
-    idals_mem->jacDQ     = SUNTRUE;
-    idals_mem->jac       = idaLsDQJac;
-    idals_mem->J_data    = IDA_mem;
-  } else {
-    idals_mem->jacDQ     = SUNFALSE;
-    idals_mem->jac       = NULL;
-    idals_mem->J_data    = NULL;
-  }
-  */
-  //self.jtimesDQ = true;
-  //self.jtsetup  = NULL;
-  //self.jtimes   = idaLsDQJtimes;
-  //self.jt_data  = IDA_mem;
+        /* If LS supports ATimes, attach IDALs routine */
+        /*
+                if (LS->ops->setatimes) {
+                    retval = SUNLinSolSetATimes(LS, IDA_mem, idaLsATimes);
+                    if (retval != SUNLS_SUCCESS) {
+                    IDAProcessError(IDA_mem, IDALS_SUNLS_FAIL, "IDALS",
+                                    "IDASetLinearSolver",
+                                    "Error in calling SUNLinSolSetATimes");
+                    free(idals_mem); idals_mem = NULL;
+                    return(IDALS_SUNLS_FAIL);
+                    }
+                }
+        */
 
-  /* Set defaults for preconditioner-related fields */
-  //idals_mem->pset   = NULL;
-  //idals_mem->psolve = NULL;
-  //idals_mem->pfree  = NULL;
-  //idals_mem->pdata  = IDA_mem->ida_user_data;
+        /* If LS supports preconditioning, initialize pset/psol to NULL */
+        /*
+                if (LS->ops->setpreconditioner) {
+                    retval = SUNLinSolSetPreconditioner(LS, IDA_mem, NULL, NULL);
+                    if (retval != SUNLS_SUCCESS) {
+                    IDAProcessError(IDA_mem, IDALS_SUNLS_FAIL, "IDALS",
+                                    "IDASetLinearSolver",
+                                    "Error in calling SUNLinSolSetPreconditioner");
+                    free(idals_mem); idals_mem = NULL;
+                    return(IDALS_SUNLS_FAIL);
+                    }
+                }
+        */
 
-  /* Initialize counters */
-  //idaLsInitializeCounters(idals_mem);
+        /* Allocate memory for ytemp, yptemp and x */
+        //idals_mem->ytemp = N_VClone(IDA_mem->ida_tempv1);
+        //idals_mem->yptemp = N_VClone(IDA_mem->ida_tempv1);
+        //idals_mem->x = N_VClone(IDA_mem->ida_tempv1);
 
-  /* Set default values for the rest of the Ls parameters */
-  //idals_mem->eplifac   = PT05;
-  //idals_mem->dqincfac  = ONE;
-  //idals_mem->last_flag = IDALS_SUCCESS;
+        /* Compute sqrtN from a dot product */
+        //N_VConst(ONE, idals_mem->ytemp);
+        //idals_mem->sqrtN = SUNRsqrt( N_VDotProd(idals_mem->ytemp, idals_mem->ytemp) );
 
-  /* If LS supports ATimes, attach IDALs routine */
-  /*
-  if (LS->ops->setatimes) {
-    retval = SUNLinSolSetATimes(LS, IDA_mem, idaLsATimes);
-    if (retval != SUNLS_SUCCESS) {
-      IDAProcessError(IDA_mem, IDALS_SUNLS_FAIL, "IDALS",
-                      "IDASetLinearSolver",
-                      "Error in calling SUNLinSolSetATimes");
-      free(idals_mem); idals_mem = NULL;
-      return(IDALS_SUNLS_FAIL);
+        Self {
+            ls: LS::new(problem.model_size()),
+
+            // Initialize counters
+            nje: 0,
+            nreDQ: 0,
+            npe: 0,
+            nli: 0,
+            nps: 0,
+            ncfl: 0,
+            njtsetup: 0,
+            njtimes: 0,
+
+            // Set default values for the rest of the Ls parameters
+            eplifac: P::Scalar::pt05(),
+            dqincfac: P::Scalar::one(),
+            //last_flag : IDALS_SUCCESS
+            sqrtN: <P::Scalar as NumCast>::from(problem.model_size())
+                .unwrap()
+                .sqrt(),
+
+            ida_cj: P::Scalar::zero(),
+            ida_cjold: P::Scalar::zero(),
+            ida_cjratio: P::Scalar::zero(),
+
+            problem,
+        }
     }
-  }
-  */
-
-  /* If LS supports preconditioning, initialize pset/psol to NULL */
-  /*
-  if (LS->ops->setpreconditioner) {
-    retval = SUNLinSolSetPreconditioner(LS, IDA_mem, NULL, NULL);
-    if (retval != SUNLS_SUCCESS) {
-      IDAProcessError(IDA_mem, IDALS_SUNLS_FAIL, "IDALS",
-                      "IDASetLinearSolver",
-                      "Error in calling SUNLinSolSetPreconditioner");
-      free(idals_mem); idals_mem = NULL;
-      return(IDALS_SUNLS_FAIL);
-    }
-  }
-  */
-
-  /* Allocate memory for ytemp, yptemp and x */
-  //idals_mem->ytemp = N_VClone(IDA_mem->ida_tempv1);
-  //idals_mem->yptemp = N_VClone(IDA_mem->ida_tempv1);
-  //idals_mem->x = N_VClone(IDA_mem->ida_tempv1);
-
-  /* Compute sqrtN from a dot product */
-  N_VConst(ONE, idals_mem->ytemp);
-  idals_mem->sqrtN = SUNRsqrt( N_VDotProd(idals_mem->ytemp, idals_mem->ytemp) );
-
-  /* Attach linear solver memory to integrator memory */
-  IDA_mem->ida_lmem = idals_mem;
-
-
-
-}
 
     /// idaLsSetup
     ///
@@ -208,7 +234,6 @@ where
 
         // recompute if J if it is non-NULL
         if !self.J.is_empty() {
-
             // Increment nje counter.
             self.nje += 1;
 
@@ -217,14 +242,8 @@ where
 
             // Call Jacobian routine
             //retval = self.jac(IDA_mem->ida_tn, IDA_mem->ida_cj, y, yp, r, idals_mem->J, idals_mem->J_data, vt1, vt2, vt3);
-            self.problem.jac(
-                self.ida_tn,
-                self.ida_cj,
-                &self.ida_yy,
-                &self.ida_yp,
-                res,
-                &mut self.a.view_mut(),
-            );
+            self.problem
+                .jac(self.ida_tn, self.ida_cj, y, yp, r, &mut self.J);
 
             /*
             if (retval < 0) {
@@ -257,21 +276,20 @@ where
     /// cjratio does not equal one.
     pub fn solve<S1, S2, S3, S4, S5>(
         &mut self,
-        b: &ArrayBase<S1, Ix1>,
+        b: &mut ArrayBase<S1, Ix1>,
         weight: &ArrayBase<S2, Ix1>,
         ycur: &ArrayBase<S3, Ix1>,
         ypcur: &ArrayBase<S4, Ix1>,
         rescur: &ArrayBase<S5, Ix1>,
     ) where
-        S1: ndarray::Data<Elem = P::Scalar>,
+        S1: ndarray::DataMut<Elem = P::Scalar>,
         S2: ndarray::Data<Elem = P::Scalar>,
         S3: ndarray::Data<Elem = P::Scalar>,
         S4: ndarray::Data<Elem = P::Scalar>,
         S5: ndarray::Data<Elem = P::Scalar>,
+        ArrayBase<S2, Ix1>: ndarray::linalg::Dot<ArrayBase<S2, Ix1>>,
     {
-        use num_traits::identities::Zero;
-        //int      nli_inc, retval;
-        //realtype tol, w_mean, LSType;
+        use num_traits::identities::{One, Zero};
 
         // Retrieve the LS type
         let LSType = self.ls.get_type();
@@ -283,19 +301,19 @@ where
 
         let tol = match LSType {
             LSolverType::Iterative | LSolverType::MatrixIterative => {
-                self.sqrtN * self.eplifac 
+                self.sqrtN * self.eplifac
                 //self.sqrtN * idals_mem->eplifac * IDA_mem->ida_epsNewt
             }
             _ => P::Scalar::zero(),
         };
 
         /* Set vectors ycur, ypcur and rcur for use by the Atimes and Psolve interface routines */
-        //self.gycur  = ycur;
-        //self.gypcur = ypcur;
-        //self.grcur  = rescur;
+        //self.ycur  = ycur;
+        //self.ypcur = ypcur;
+        //self.rcur  = rescur;
 
         // Set initial guess x = 0 to LS
-        x.fill(P::Scalar::zero());
+        self.x.fill(P::Scalar::zero());
 
         // Set scaling vectors for LS to use (if applicable)
         self.ls.set_scaling_vectors(&weight, &weight);
@@ -320,13 +338,9 @@ where
         //   <=> \sum_{i=0}^{n-1} (b - A x_i)^2 < tol^2 / w_mean^2
         //   <=> || b - A x ||_2 < tol / w_mean
         // So we compute w_mean = ||w||_RMS = ||w||_2 / sqrt(n), and scale the desired tolerance accordingly.
-        if let LSolverType::Iterative | LSolverType::MatrixIterative = LSType {}
-
-        match LSType {
-            LSolverType::Iterative | LSolverType::MatrixIterative => {
-                //let w_mean = SUNRsqrt( N_VDotProd(weight, weight) ) / self.gsqrtN;
-                //tol /= w_mean;
-            }
+        if let LSolverType::Iterative | LSolverType::MatrixIterative = LSType {
+            //let w_mean = weight.dot(&weight).sqrt() / self.sqrtN;
+            //tol /= w_mean;
         }
 
         // If a user-provided jtsetup routine is supplied, call that here
@@ -344,37 +358,41 @@ where
         */
 
         // Call solver
-        //retval = SUNLinSolSolve(self.gLS, self.J, self.gx, b, tol);
+        let retval = self.ls.solve(&self.J, &mut self.x, b, tol);
 
-        /*
         // Copy appropriate result to b (depending on solver type)
-        if ( (LSType == SUNLINEARSOLVER_ITERATIVE) || (LSType == SUNLINEARSOLVER_MATRIX_ITERATIVE) ) {
-
+        if let LSolverType::Iterative | LSolverType::MatrixIterative = LSType {
             // Retrieve solver statistics
-            nli_inc = SUNLinSolNumIters(self.gLS);
+            let nli_inc = self.ls.num_iters();
 
             // Copy x (or preconditioned residual vector if no iterations required) to b
-            if (nli_inc == 0) {N_VScale(ONE, SUNLinSolResid(self.gLS), b);}
-            else N_VScale(ONE, self.gx, b);
+            if nli_inc == 0 {
+                //N_VScale(ONE, SUNLinSolResid(self.gLS), b);
+            } else {
+                b.assign(&self.x);
+            }
 
             // Increment nli counter
-            self.gnli += nli_inc;
-
+            self.nli += nli_inc;
         } else {
-
             // Copy x to b
-            N_VScale(ONE, self.gx, b);
-
+            b.assign(&self.x);
         }
 
         // If using a direct or matrix-iterative solver, scale the correction to account for change in cj
-        if ( ((LSType == SUNLINEARSOLVER_DIRECT) || (LSType == SUNLINEARSOLVER_MATRIX_ITERATIVE)) && (IDA_mem->ida_cjratio != ONE) ) {
-            N_VScale(TWO/(ONE + IDA_mem->ida_cjratio), b, b);
+        if let LSolverType::Direct | LSolverType::MatrixIterative = LSType {
+            if self.ida_cjratio != P::Scalar::one() {
+                //N_VScale(TWO/(ONE + IDA_mem->ida_cjratio), b, b);
+                *b *= P::Scalar::two() / (P::Scalar::one() + self.ida_cjratio);
+            }
         }
 
         // Increment ncfl counter
-        if (retval != SUNLS_SUCCESS) {self.gncfl++;}
+        if retval.is_err() {
+            self.ncfl += 1;
+        }
 
+        /*
         // Interpret solver return value
         self.glast_flag = retval;
         */
@@ -401,14 +419,11 @@ where
             return(-1);
             break;
         case SUNLS_PACKAGE_FAIL_UNREC:
-            IDAProcessError(IDA_mem, SUNLS_PACKAGE_FAIL_UNREC, "IDALS",
-                            "idaLsSolve",
-                            "Failure in SUNLinSol external package");
+            IDAProcessError(IDA_mem, SUNLS_PACKAGE_FAIL_UNREC, "IDALS", "idaLsSolve", "Failure in SUNLinSol external package");
             return(-1);
             break;
         case SUNLS_PSOLVE_FAIL_UNREC:
-            IDAProcessError(IDA_mem, SUNLS_PSOLVE_FAIL_UNREC, "IDALS",
-                            "idaLsSolve", MSG_LS_PSOLVE_FAILED);
+            IDAProcessError(IDA_mem, SUNLS_PSOLVE_FAIL_UNREC, "IDALS", "idaLsSolve", MSG_LS_PSOLVE_FAILED);
             return(-1);
             break;
         }

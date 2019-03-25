@@ -58,6 +58,7 @@ pub trait IdaConst {
     fn pt9() -> Self;
     fn pt99() -> Self;
     fn pt1() -> Self;
+    fn pt05() -> Self;
     fn pt01() -> Self;
     fn pt001() -> Self;
     fn pt0001() -> Self;
@@ -106,6 +107,9 @@ impl IdaConst for f64 {
     }
     fn pt1() -> Self {
         0.1
+    }
+    fn pt05() -> Self {
+        0.05
     }
     fn pt01() -> Self {
         0.01

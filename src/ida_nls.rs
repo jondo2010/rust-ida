@@ -1,10 +1,10 @@
 use ndarray::prelude::*;
 
 use super::constants::IdaConst;
+use super::ida_ls::IdaLProblem;
 use super::linear::LSolver;
 use super::nonlinear::NLProblem;
 use super::traits::IdaProblem;
-use super::ida_ls::IdaLProblem;
 
 /// State variables involved in the Non-linear problem
 #[derive(Debug, Clone)]
@@ -23,17 +23,14 @@ where
     /// predicted y' vector
     pub(super) ida_yppredict: Array<P::Scalar, Ix1>,
 
+    /// error weight vector
+    pub(super) ida_ewt: Array<P::Scalar, Ix1>,
+
     /// saved residual vector
     pub(super) ida_savres: Array<P::Scalar, Ix1>,
     /// current internal value of t
     pub(super) ida_tn: P::Scalar,
 
-    /// current value of scalar (-alphas/hh) in Jacobian
-    pub(super) ida_cj: P::Scalar,
-    /// cj value saved from last call to lsetup
-    pub(super) ida_cjold: P::Scalar,
-    /// ratio of cj values: cj/cjold
-    pub(super) ida_cjratio: P::Scalar,
     /// scalar used in Newton iteration convergence test
     pub(super) ida_ss: P::Scalar,
     /// norm of previous nonlinear solver update
@@ -48,10 +45,7 @@ where
     pub(super) ida_nsetups: u64,
 
     /// Linear Problem
-    lp: IdaLProblem<P, LS>,
-
-    /// Top-level problem
-    pub(super) problem: P,
+    pub(super) lp: IdaLProblem<P, LS>,
 
     a: Array<P::Scalar, Ix2>,
 }
@@ -59,7 +53,13 @@ where
 impl<P, LS> IdaNLProblem<P, LS>
 where
     P: IdaProblem,
-    P::Scalar: IdaConst + num_traits::Float + num_traits::Zero + num_traits::NumOps,
+    P::Scalar: num_traits::Float
+        + num_traits::float::FloatConst
+        + num_traits::NumRef
+        + num_traits::NumAssignRef
+        + ndarray::ScalarOperand
+        + std::fmt::Debug
+        + IdaConst,
     LS: LSolver<P::Scalar>,
 {
     /// * `size` - The problem size
@@ -71,13 +71,11 @@ where
             ida_yypredict: Array::zeros(problem.model_size()),
             ida_yppredict: Array::zeros(problem.model_size()),
 
+            ida_ewt: Array::zeros(problem.model_size()),
+
             ida_savres: Array::zeros(problem.model_size()),
             ida_tn: P::Scalar::zero(),
 
-            ida_cj: P::Scalar::zero(),
-
-            ida_cjold: P::Scalar::zero(),
-            ida_cjratio: P::Scalar::zero(),
             ida_ss: P::Scalar::zero(),
             ida_oldnrm: P::Scalar::zero(),
             ida_toldel: P::Scalar::zero(),
@@ -86,7 +84,7 @@ where
 
             a: Array::zeros((problem.model_size(), problem.model_size())),
 
-            problem,
+            lp: IdaLProblem::new(problem),
         }
     }
 }
@@ -94,7 +92,6 @@ where
 impl<P, LS> NLProblem<P> for IdaNLProblem<P, LS>
 where
     P: IdaProblem,
-    //P::Scalar: IdaConst + ndarray::ScalarOperand,
     P::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
@@ -120,10 +117,11 @@ where
         //N_VLinearSum(ONE, self.ida_yppredict, self.ida_cj, ycor, self.ida_yp);
         //self.ida_yp = &self.ida_yppredict + ycor * self.ida_cj;
         self.ida_yp.assign(&self.ida_yppredict);
-        self.ida_yp.scaled_add(self.ida_cj, ycor);
+        self.ida_yp.scaled_add(self.lp.ida_cj, ycor);
 
         // evaluate residual
-        self.problem
+        self.lp
+            .problem
             .res(self.ida_tn, &self.ida_yy, &self.ida_yp, res);
 
         // increment the number of residual evaluations
@@ -157,8 +155,8 @@ where
         //*jcur = SUNTRUE;
 
         // update convergence test constants
-        self.ida_cjold = self.ida_cj;
-        self.ida_cjratio = P::Scalar::one();
+        self.lp.ida_cjold = self.lp.ida_cj;
+        self.lp.ida_cjratio = P::Scalar::one();
         self.ida_ss = P::Scalar::twenty();
 
         //if (retval < 0) return(IDA_LSETUP_FAIL);
@@ -169,6 +167,7 @@ where
         Ok(true)
     }
 
+    /// idaNlsLSolve
     fn solve<S1, S2>(
         &mut self,
         ycor: &ArrayBase<S1, Ix1>,
@@ -178,15 +177,13 @@ where
         S1: ndarray::Data<Elem = P::Scalar>,
         S2: ndarray::DataMut<Elem = P::Scalar>,
     {
-        /*
-        self.ls.ls_solve(
+        self.lp.solve(
             delta,
             &self.ida_ewt,
             &self.ida_yy,
             &self.ida_yp,
             &self.ida_savres,
         );
-        */
         //retval = IDA_mem->ida_lsolve(IDA_mem, delta, IDA_mem->ida_ewt, IDA_mem->ida_yy, IDA_mem->ida_yp, IDA_mem->ida_savres);
 
         //if (retval < 0) return(IDA_LSOLVE_FAIL);
@@ -195,6 +192,7 @@ where
         Ok(())
     }
 
+    /// idaNlsConvTest
     fn ctest<S1, S2, S3>(
         &mut self,
         y: &ArrayBase<S1, Ix1>,
