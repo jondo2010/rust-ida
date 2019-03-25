@@ -49,7 +49,7 @@ pub enum LSolverType {
 
 pub trait LSolver<Scalar>
 where
-    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef,
+    Scalar: num_traits::Zero
 {
     fn new(size: usize) -> Self;
 

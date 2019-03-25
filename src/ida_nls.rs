@@ -4,6 +4,7 @@ use super::constants::IdaConst;
 use super::linear::LSolver;
 use super::nonlinear::NLProblem;
 use super::traits::IdaProblem;
+use super::ida_ls::IdaLProblem;
 
 /// State variables involved in the Non-linear problem
 #[derive(Debug, Clone)]
@@ -46,9 +47,10 @@ where
     /// number of lsetup calls
     pub(super) ida_nsetups: u64,
 
-    /// Linear Solver
-    pub(super) ls: LS,
+    /// Linear Problem
+    lp: IdaLProblem<P, LS>,
 
+    /// Top-level problem
     pub(super) problem: P,
 
     a: Array<P::Scalar, Ix2>,
@@ -57,7 +59,7 @@ where
 impl<P, LS> IdaNLProblem<P, LS>
 where
     P: IdaProblem,
-    P::Scalar: IdaConst,
+    P::Scalar: IdaConst + num_traits::Float + num_traits::Zero + num_traits::NumOps,
     LS: LSolver<P::Scalar>,
 {
     /// * `size` - The problem size
@@ -82,8 +84,6 @@ where
             ida_nre: 0,
             ida_nsetups: 0,
 
-            ls: LS::new(problem.model_size()),
-
             a: Array::zeros((problem.model_size(), problem.model_size())),
 
             problem,
@@ -94,7 +94,14 @@ where
 impl<P, LS> NLProblem<P> for IdaNLProblem<P, LS>
 where
     P: IdaProblem,
-    P::Scalar: IdaConst + ndarray::ScalarOperand,
+    //P::Scalar: IdaConst + ndarray::ScalarOperand,
+    P::Scalar: num_traits::Float
+        + num_traits::float::FloatConst
+        + num_traits::NumRef
+        + num_traits::NumAssignRef
+        + ndarray::ScalarOperand
+        + std::fmt::Debug
+        + IdaConst,
     LS: LSolver<P::Scalar>,
 {
     /// idaNlsResidual
@@ -144,19 +151,7 @@ where
         use num_traits::identities::One;
 
         self.ida_nsetups += 1;
-        //self.ls.setup(&self.ida_yy, &self.ida_yp, res);
-
-        // TODO call idaLsSetup()
-
-        //Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a).map(|_| true)
-        self.problem.jac(
-            self.ida_tn,
-            self.ida_cj,
-            &self.ida_yy,
-            &self.ida_yp,
-            res,
-            &mut self.a.view_mut(),
-        );
+        self.lp.setup(&self.ida_yy, &self.ida_yp, res);
 
         // update Jacobian status
         //*jcur = SUNTRUE;
