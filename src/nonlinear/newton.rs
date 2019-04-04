@@ -38,9 +38,9 @@ where
     fn solve<NLP, S1, S2>(
         &mut self,
         problem: &mut NLP,
-        y0: &ArrayBase<S1, Ix1>,
-        y: &mut ArrayBase<S2, Ix1>,
-        w: &ArrayBase<S1, Ix1>,
+        y0: ArrayBase<S1, Ix1>,
+        mut y: ArrayBase<S2, Ix1>,
+        w: ArrayBase<S1, Ix1>,
         tol: M::Scalar,
         call_lsetup: bool,
     ) -> Result<(), failure::Error>
@@ -62,12 +62,12 @@ where
         let retval: Result<(), failure::Error> = 'outer: loop {
             // compute the nonlinear residual, store in delta
             let retval = problem
-                .sys(y0, &mut self.delta)
+                .sys(y0.view(), self.delta.view_mut())
                 .and_then(|_| {
                     // if indicated, setup the linear system
                     if call_lsetup {
                         problem
-                            .setup(y0, &self.delta.view(), jbad)
+                            .setup(y0.view(), self.delta.view(), jbad)
                             .map(|jcur| self.jcur = jcur)
                     } else {
                         Ok(())
@@ -85,12 +85,12 @@ where
                         // compute the negative of the residual for the linear system rhs
                         self.delta.mapv_inplace(M::Scalar::neg);
                         // solve the linear system to get Newton update delta
-                        let retval = problem.solve(y, &mut self.delta).and_then(|_| {
+                        let retval = problem.solve(y.view(), self.delta.view_mut()).and_then(|_| {
                             // update the Newton iterate
-                            *y += &self.delta;
+                            y += &self.delta;
                             // test for convergence
                             problem
-                                .ctest(y, &self.delta.view(), tol, w)
+                                .ctest(y.view(), self.delta.view(), tol, w.view())
                                 .and_then(|converged| {
                                     if converged {
                                         // if successful update Jacobian status and return
@@ -103,7 +103,7 @@ where
                                         } else {
                                             // compute the nonlinear residual, store in delta
                                             // Ok(false) will continue to iterate 'inner
-                                            problem.sys(y, &mut self.delta).and(Ok(false))
+                                            problem.sys(y.view(), self.delta.view_mut()).and(Ok(false))
                                         }
                                     }
                                 })
@@ -196,9 +196,9 @@ mod tests {
         ///            ( 6x  -4  2z )  
         fn jac<S1, S2, S3>(
             _t: f64,
-            y: &ArrayBase<S1, Ix1>,
-            _fy: &ArrayBase<S2, Ix1>,
-            j: &mut ArrayBase<S3, Ix2>,
+            y: ArrayBase<S1, Ix1>,
+            _fy: ArrayBase<S2, Ix1>,
+            mut j: ArrayBase<S3, Ix2>,
         ) -> Result<(), failure::Error>
         where
             S1: ndarray::Data<Elem = f64>,
@@ -222,8 +222,8 @@ mod tests {
         /// f3(x,y,z) = 3x^2 - 4y + z^2     = 0
         fn sys<S1, S2>(
             &mut self,
-            ycor: &ArrayBase<S1, Ix1>,
-            res: &mut ArrayBase<S2, Ix1>,
+            ycor: ArrayBase<S1, Ix1>,
+            mut res: ArrayBase<S2, Ix1>,
         ) -> Result<(), failure::Error>
         where
             S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
@@ -235,28 +235,29 @@ mod tests {
             Ok(())
         }
 
-        fn setup<S1>(
+        fn setup<S1, S2>(
             &mut self,
-            y: &ArrayBase<S1, Ix1>,
-            _f: &ArrayView<<Self as ModelSpec>::Scalar, Ix1>,
+            y: ArrayBase<S1, Ix1>,
+            _f: ArrayBase<S2, Ix1>,
             _jbad: bool,
         ) -> Result<bool, failure::Error>
         where
             S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
+            S2: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
         {
             // compute the Jacobian
-            Self::jac(0.0, y, &Array::zeros(self.model_size()), &mut self.a)
+            Self::jac(0.0, y.view(), Array::zeros(self.model_size()), self.a.view_mut())
                 .map(|_| true)
                 .and_then(|_| {
                     // setup the linear solver
-                    self.lsolver.setup(&mut self.a).map(|_| true)
+                    self.lsolver.setup(self.a.view_mut()).map(|_| true)
                 })
         }
 
         fn solve<S1, S2>(
             &mut self,
-            _y: &ArrayBase<S1, Ix1>,
-            b: &mut ArrayBase<S2, Ix1>,
+            _y: ArrayBase<S1, Ix1>,
+            mut b: ArrayBase<S2, Ix1>,
         ) -> Result<(), failure::Error>
         where
             S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
@@ -265,17 +266,17 @@ mod tests {
             // Solve self.A * b = b
             //retval = SUNLinSolSolve(Imem->LS, Imem->A, Imem->x, b, ZERO);
             //N_VScale(ONE, Imem->x, b);
-            self.lsolver.solve(&self.a, &mut self.x, b, 0.0).map(|_| {
+            self.lsolver.solve(self.a.view(), self.x.view_mut(), b.view(), 0.0).map(|_| {
                 b.assign(&self.x);
             })
         }
 
         fn ctest<S1, S2, S3>(
             &mut self,
-            _y: &ArrayBase<S1, Ix1>,
-            del: &ArrayBase<S2, Ix1>,
+            _y: ArrayBase<S1, Ix1>,
+            del: ArrayBase<S2, Ix1>,
             tol: <Self as ModelSpec>::Scalar,
-            ewt: &ArrayBase<S3, Ix1>,
+            ewt: ArrayBase<S3, Ix1>,
         ) -> Result<bool, failure::Error>
         where
             S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
@@ -284,7 +285,7 @@ mod tests {
         {
             use crate::norm_rms::NormRms;
             // compute the norm of the correction
-            let delnrm = del.norm_wrms(ewt);
+            let delnrm = del.norm_wrms(&ewt.view());
 
             //if (delnrm <= tol) return(SUN_NLS_SUCCESS);  /* success       */
             //else               return(SUN_NLS_CONTINUE); /* not converged */
@@ -317,7 +318,7 @@ mod tests {
 
         let mut newton = Newton::new(p.model_size(), 10);
         newton
-            .solve(&mut p, &y0, &mut y, &w, 1e-2, true)
+            .solve(&mut p, y0, y.view_mut(), w, 1e-2, true)
             .expect("Should have converged.");
 
         let expected_err = array![-0.00578453, 1.0143e-08, 1.47767e-08];

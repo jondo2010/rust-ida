@@ -25,7 +25,7 @@ where
         LSolverType::Direct
     }
 
-    fn setup<S1>(&mut self, mat_a: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
+    fn setup<S1>(&mut self, mat_a: ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
     where
         S1: ndarray::DataMut<Elem = Scalar>,
     {
@@ -42,9 +42,9 @@ where
 
     fn solve<S1, S2, S3>(
         &self,
-        mat_a: &ArrayBase<S1, Ix2>,
-        x: &mut ArrayBase<S2, Ix1>,
-        b: &ArrayBase<S3, Ix1>,
+        mat_a: ArrayBase<S1, Ix2>,
+        mut x: ArrayBase<S2, Ix1>,
+        b: ArrayBase<S3, Ix1>,
         _tol: Scalar,
     ) -> Result<(), failure::Error>
     where
@@ -81,7 +81,7 @@ where
 /// returns 0 if successful. Otherwise it encountered a zero diagonal element during the
 /// factorization. In this case it returns the column index (numbered from one) at which it
 /// encountered the zero.
-fn dense_get_rf<Scalar, S1>(mat_a: &mut ArrayBase<S1, Ix2>, p: &mut [usize]) -> usize
+fn dense_get_rf<Scalar, S1>(mut mat_a: ArrayBase<S1, Ix2>, p: &mut [usize]) -> usize
 where
     Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
     S1: ndarray::DataMut<Elem = Scalar>,
@@ -157,7 +157,7 @@ where
 /// cannot fail if the corresponding call to `dense_get_rf` did not fail.
 ///
 /// Does NOT check for a square matrix!
-fn dense_get_rs<Scalar, S1, S2>(mat_a: &ArrayBase<S1, Ix2>, p: &[usize], b: &mut ArrayBase<S2, Ix1>)
+fn dense_get_rs<Scalar, S1, S2>(mat_a: ArrayBase<S1, Ix2>, p: &[usize], mut b: ArrayBase<S2, Ix1>)
 where
     Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef,
     S1: ndarray::Data<Elem = Scalar>,
@@ -218,7 +218,7 @@ fn test_dense() {
     ];
 
     let mut pivot = vec![0, 0, 0];
-    let ret = dense_get_rf(&mut mat_a, &mut pivot);
+    let ret = dense_get_rf(mat_a.view_mut(), &mut pivot);
 
     assert_nearly_eq!(mat_a, mat_a_decomp, 1e-6);
     assert_eq!(pivot, vec![0, 1, 2]);
@@ -230,18 +230,16 @@ fn test_dense() {
         -4.8726813621044346e-10,
         4.8651812062436036e-10,
     ];
-    dense_get_rs(&mat_a, &pivot, &mut b);
+    dense_get_rs(mat_a, &pivot, b.view_mut());
     assert_nearly_eq!(b, b_exp, 1e-9);
 
     // Now test using the LSolver interface
     let mut mat_a = array![[1., 1., 1.], [2., 1., -4.], [3., -4., 1.]];
     let mut dense = Dense::new(3);
-    dense.setup(&mut mat_a).unwrap();
+    dense.setup(mat_a.view_mut()).unwrap();
     let mut x = Array::zeros(3);
     dbg!(&mat_a);
     dbg!(&dense);
-    dense
-        .solve(&mat_a, &mut x, &array![0.25, 1.25, 1.0], 0.0)
-        .unwrap();
+    dense.solve(mat_a, x.view_mut(), array![0.25, 1.25, 1.0], 0.0).unwrap();
     assert_eq!(x, array![0.375, 0., -0.125]);
 }

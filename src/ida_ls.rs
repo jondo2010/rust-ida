@@ -109,13 +109,14 @@ where
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
-        + IdaConst,
+        + IdaConst<Scalar=P::Scalar>,
     LS: LSolver<P::Scalar>,
 {
     pub fn new(problem: P) -> Self {
         use num_traits::identities::{One, Zero};
         use num_traits::Float;
         use num_traits::NumCast;
+        use IdaConst;
         // Retrieve the LS type */
         //LSType = SUNLinSolGetType(LS);
 
@@ -208,6 +209,9 @@ where
             ida_cjold: P::Scalar::zero(),
             ida_cjratio: P::Scalar::zero(),
 
+            J: Array::zeros((problem.model_size(), problem.model_size())),
+            x: Array::zeros(problem.model_size()),
+
             problem,
         }
     }
@@ -217,9 +221,9 @@ where
     /// This calls the Jacobian evaluation routine, updates counters, and calls the LS `setup` routine to prepare for subsequent calls to the LS 'solve' routine.
     pub fn setup<S1, S2, S3>(
         &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        yp: &ArrayBase<S2, Ix1>,
-        r: &ArrayBase<S3, Ix1>,
+        y: ArrayBase<S1, Ix1>,
+        yp: ArrayBase<S2, Ix1>,
+        r: ArrayBase<S3, Ix1>,
     ) where
         S1: ndarray::Data<Elem = P::Scalar>,
         S2: ndarray::Data<Elem = P::Scalar>,
@@ -242,8 +246,9 @@ where
 
             // Call Jacobian routine
             //retval = self.jac(IDA_mem->ida_tn, IDA_mem->ida_cj, y, yp, r, idals_mem->J, idals_mem->J_data, vt1, vt2, vt3);
+            //TODO fix
             self.problem
-                .jac(self.ida_tn, self.ida_cj, y, yp, r, &mut self.J);
+                .jac(P::Scalar::zero(), self.ida_cj, y.view(), yp.view(), r.view(), self.J.view_mut());
 
             /*
             if (retval < 0) {
@@ -263,7 +268,7 @@ where
         }
 
         // Call LS setup routine -- the LS will call idaLsPSetup if applicable
-        self.ls.setup(&mut self.J);
+        self.ls.setup(self.J.view_mut());
         //self.last_flag = SUNLinSolSetup(idals_mem->LS, idals_mem->J);
         //return(self.last_flag);
     }
@@ -276,11 +281,11 @@ where
     /// cjratio does not equal one.
     pub fn solve<S1, S2, S3, S4, S5>(
         &mut self,
-        b: &mut ArrayBase<S1, Ix1>,
-        weight: &ArrayBase<S2, Ix1>,
-        ycur: &ArrayBase<S3, Ix1>,
-        ypcur: &ArrayBase<S4, Ix1>,
-        rescur: &ArrayBase<S5, Ix1>,
+        mut b: ArrayBase<S1, Ix1>,
+        weight: ArrayBase<S2, Ix1>,
+        ycur: ArrayBase<S3, Ix1>,
+        ypcur: ArrayBase<S4, Ix1>,
+        rescur: ArrayBase<S5, Ix1>,
     ) where
         S1: ndarray::DataMut<Elem = P::Scalar>,
         S2: ndarray::Data<Elem = P::Scalar>,
@@ -316,7 +321,7 @@ where
         self.x.fill(P::Scalar::zero());
 
         // Set scaling vectors for LS to use (if applicable)
-        self.ls.set_scaling_vectors(&weight, &weight);
+        self.ls.set_scaling_vectors(weight.view(), weight.view());
         /*
         retval = SUNLinSolSetScalingVectors(self.gLS, weight, weight);
         if (retval != SUNLS_SUCCESS) {
@@ -358,7 +363,7 @@ where
         */
 
         // Call solver
-        let retval = self.ls.solve(&self.J, &mut self.x, b, tol);
+        let retval = self.ls.solve(self.J.view(), self.x.view_mut(), b.view(), tol);
 
         // Copy appropriate result to b (depending on solver type)
         if let LSolverType::Iterative | LSolverType::MatrixIterative = LSType {
@@ -383,7 +388,7 @@ where
         if let LSolverType::Direct | LSolverType::MatrixIterative = LSType {
             if self.ida_cjratio != P::Scalar::one() {
                 //N_VScale(TWO/(ONE + IDA_mem->ida_cjratio), b, b);
-                *b *= P::Scalar::two() / (P::Scalar::one() + self.ida_cjratio);
+                b *= P::Scalar::two() / (P::Scalar::one() + self.ida_cjratio);
             }
         }
 

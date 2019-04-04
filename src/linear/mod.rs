@@ -15,9 +15,9 @@ where
     /// routine to prepare for subsequent calls to the LS `solve` routine.
     fn setup<S1, S2, S3>(
         &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        yp: &ArrayBase<S2, Ix1>,
-        r: &ArrayBase<S3, Ix1>,
+        y: ArrayBase<S1, Ix1>,
+        yp: ArrayBase<S2, Ix1>,
+        r: ArrayBase<S3, Ix1>,
     ) where
         S1: ndarray::Data<Elem = M::Scalar>,
         S2: ndarray::Data<Elem = M::Scalar>,
@@ -30,11 +30,11 @@ where
     /// and cjratio does not equal one.
     fn solve<S1, S2>(
         &mut self,
-        b: &ArrayBase<S1, Ix1>,
-        weight: &ArrayBase<S2, Ix1>,
-        ycur: &ArrayBase<S1, Ix1>,
-        ypcur: &ArrayBase<S1, Ix1>,
-        rescur: &ArrayBase<S1, Ix1>,
+        b: ArrayBase<S1, Ix1>,
+        weight: ArrayBase<S2, Ix1>,
+        ycur: ArrayBase<S1, Ix1>,
+        ypcur: ArrayBase<S1, Ix1>,
+        rescur: ArrayBase<S1, Ix1>,
     ) where
         S1: ndarray::Data<Elem = M::Scalar>,
         S2: ndarray::Data<Elem = M::Scalar>;
@@ -65,7 +65,7 @@ where
     /// ## Arguments
     /// * `s1` diagonal of the matrix S1
     /// * `s2` diagonal of the matrix S2
-    fn set_scaling_vectors<S1, S2>(&mut self, _s1: &ArrayBase<S1, Ix1>, _s2: &ArrayBase<S2, Ix1>)
+    fn set_scaling_vectors<S1, S2>(&mut self, _s1: ArrayBase<S1, Ix1>, _s2: ArrayBase<S2, Ix1>)
     where
         S1: ndarray::Data<Elem = Scalar>,
         S2: ndarray::Data<Elem = Scalar>,
@@ -76,7 +76,7 @@ where
     /// be called frequently (e.g., with a full Newton method) or infrequently (for a modified
     /// Newton method), based on the type of integrator and/or nonlinear solver requesting the
     /// solves.
-    fn setup<S1>(&mut self, mat_a: &mut ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
+    fn setup<S1>(&mut self, mat_a: ArrayBase<S1, Ix2>) -> Result<(), failure::Error>
     where
         S1: ndarray::DataMut<Elem = Scalar>;
 
@@ -96,9 +96,9 @@ where
     ///     2-norm. If the solver does not support scaling then it should just use a 2-norm.
     fn solve<S1, S2, S3>(
         &self,
-        mat_a: &ArrayBase<S1, Ix2>,
-        x: &mut ArrayBase<S2, Ix1>,
-        b: &ArrayBase<S3, Ix1>,
+        mat_a: ArrayBase<S1, Ix2>,
+        mut x: ArrayBase<S2, Ix1>,
+        b: ArrayBase<S3, Ix1>,
         tol: Scalar,
     ) -> Result<(), failure::Error>
     where

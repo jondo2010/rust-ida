@@ -44,8 +44,8 @@ where
     /// * `Err(_) for an unrecoverable error
     fn sys<S1, S2>(
         &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        f: &mut ArrayBase<S2, Ix1>,
+        y: ArrayBase<S1, Ix1>,
+        mut f: ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
@@ -74,14 +74,15 @@ where
     /// linear solvers). `lsetup` implementations that do not require solving this system, do not
     /// utilize linear solvers, or use linear solvers that do not require setup may ignore these
     /// functions.
-    fn setup<S1>(
+    fn setup<S1, S2>(
         &mut self,
-        _y: &ArrayBase<S1, Ix1>,
-        _f: &ArrayView<M::Scalar, Ix1>,
+        _y: ArrayBase<S1, Ix1>,
+        _f: ArrayBase<S2, Ix1>,
         _jbad: bool,
     ) -> Result<bool, failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
+        S2: Data<Elem = M::Scalar>,
     {
         Ok(false)
     }
@@ -105,8 +106,8 @@ where
     /// this system or do not use sunlinsol linear solvers may ignore these functions.
     fn solve<S1, S2>(
         &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        b: &mut ArrayBase<S2, Ix1>,
+        y: ArrayBase<S1, Ix1>,
+        mut b: ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
@@ -137,10 +138,10 @@ where
     /// convergence criteria may ignore these functions.
     fn ctest<S1, S2, S3>(
         &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        del: &ArrayBase<S2, Ix1>,
+        y: ArrayBase<S1, Ix1>,
+        del: ArrayBase<S2, Ix1>,
         tol: M::Scalar,
-        ewt: &ArrayBase<S3, Ix1>,
+        ewt: ArrayBase<S3, Ix1>,
     ) -> Result<bool, failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
@@ -204,9 +205,9 @@ pub trait NLSolver<M: ModelSpec> {
     fn solve<NLP, S1, S2>(
         &mut self,
         problem: &mut NLP,
-        y0: &ArrayBase<S1, Ix1>,
-        y: &mut ArrayBase<S2, Ix1>,
-        w: &ArrayBase<S1, Ix1>,
+        y0: ArrayBase<S1, Ix1>,
+        mut y: ArrayBase<S2, Ix1>,
+        w: ArrayBase<S1, Ix1>,
         tol: M::Scalar,
         call_lsetup: bool,
     ) -> Result<(), failure::Error>

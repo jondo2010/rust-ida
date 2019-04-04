@@ -227,7 +227,7 @@ where
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
-        + IdaConst,
+        + IdaConst<Scalar=P::Scalar>,
 {
     /// Creates a new IdaProblem given a ModelSpec, initial Arrays of yy0 and yyp
     ///
@@ -1412,6 +1412,7 @@ where
         */
 
         // solve the nonlinear system
+        /*
         let retval = self.nls.solve(
             &mut self.nlp,
             &self.ida_delta,
@@ -1420,6 +1421,7 @@ where
             self.ida_epsNewt,
             callLSetup,
         );
+        */
 
         // update yy and yp based on the final correction from the nonlinear solve
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, self.ida_ee, self.ida_yy);
@@ -1430,7 +1432,7 @@ where
         self.nlp.ida_yp.scaled_add(self.nlp.lp.ida_cj, &self.ida_ee);
 
         // return if nonlinear solver failed */
-        retval?;
+        //retval?;
 
         // If otherwise successful, check and enforce inequality constraints.
 
@@ -2169,10 +2171,10 @@ mod tests {
             &self,
             tt: Self::Scalar,
             cj: Self::Scalar,
-            yy: &ArrayBase<S1, Ix1>,
-            yp: &ArrayBase<S2, Ix1>,
-            rr: &ArrayBase<S3, Ix1>,
-            j: &mut ArrayBase<S4, Ix2>,
+            yy: ArrayBase<S1, Ix1>,
+            yp: ArrayBase<S2, Ix1>,
+            rr: ArrayBase<S3, Ix1>,
+            mut j: ArrayBase<S4, Ix2>,
         ) where
             S1: ndarray::Data<Elem = Self::Scalar>,
             S2: ndarray::Data<Elem = Self::Scalar>,

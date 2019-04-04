@@ -59,7 +59,7 @@ where
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
-        + IdaConst,
+        + IdaConst<Scalar=P::Scalar>,
     LS: LSolver<P::Scalar>,
 {
     /// * `size` - The problem size
@@ -98,14 +98,14 @@ where
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
-        + IdaConst,
+        + IdaConst<Scalar=P::Scalar>,
     LS: LSolver<P::Scalar>,
 {
     /// idaNlsResidual
     fn sys<S1, S2>(
         &mut self,
-        ycor: &ArrayBase<S1, Ix1>,
-        res: &mut ArrayBase<S2, Ix1>,
+        ycor: ArrayBase<S1, Ix1>,
+        mut res: ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: ndarray::Data<Elem = P::Scalar>,
@@ -113,22 +113,22 @@ where
     {
         // update yy and yp based on the current correction
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, ycor, self.ida_yy);
-        self.ida_yy = &self.ida_yypredict + ycor;
+        self.ida_yy = &self.ida_yypredict + &ycor;
         //N_VLinearSum(ONE, self.ida_yppredict, self.ida_cj, ycor, self.ida_yp);
         //self.ida_yp = &self.ida_yppredict + ycor * self.ida_cj;
         self.ida_yp.assign(&self.ida_yppredict);
-        self.ida_yp.scaled_add(self.lp.ida_cj, ycor);
+        self.ida_yp.scaled_add(self.lp.ida_cj, &ycor);
 
         // evaluate residual
         self.lp
             .problem
-            .res(self.ida_tn, &self.ida_yy, &self.ida_yp, res);
+            .res(self.ida_tn, &self.ida_yy, &self.ida_yp, &mut res);
 
         // increment the number of residual evaluations
         self.ida_nre += 1;
 
         // save a copy of the residual vector in savres
-        self.ida_savres.assign(res);
+        self.ida_savres.assign(&mut res);
 
         //if (retval < 0) return(IDA_RES_FAIL);
         //if (retval > 0) return(IDA_RES_RECVR);
@@ -137,19 +137,20 @@ where
     }
 
     /// idaNlsLSetup
-    fn setup<S1>(
+    fn setup<S1, S2>(
         &mut self,
-        ycor: &ArrayBase<S1, Ix1>,
-        res: &ArrayView<P::Scalar, Ix1>,
+        ycor: ArrayBase<S1, Ix1>,
+        res: ArrayBase<S2, Ix1>,
         jbad: bool,
     ) -> Result<bool, failure::Error>
     where
         S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::Data<Elem = P::Scalar>,
     {
         use num_traits::identities::One;
 
         self.ida_nsetups += 1;
-        self.lp.setup(&self.ida_yy, &self.ida_yp, res);
+        self.lp.setup(self.ida_yy.view(), self.ida_yp.view(), res.view());
 
         // update Jacobian status
         //*jcur = SUNTRUE;
@@ -170,8 +171,8 @@ where
     /// idaNlsLSolve
     fn solve<S1, S2>(
         &mut self,
-        ycor: &ArrayBase<S1, Ix1>,
-        delta: &mut ArrayBase<S2, Ix1>,
+        ycor: ArrayBase<S1, Ix1>,
+        mut delta: ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: ndarray::Data<Elem = P::Scalar>,
@@ -179,10 +180,10 @@ where
     {
         self.lp.solve(
             delta,
-            &self.ida_ewt,
-            &self.ida_yy,
-            &self.ida_yp,
-            &self.ida_savres,
+            self.ida_ewt.view(),
+            self.ida_yy.view(),
+            self.ida_yp.view(),
+            self.ida_savres.view(),
         );
         //retval = IDA_mem->ida_lsolve(IDA_mem, delta, IDA_mem->ida_ewt, IDA_mem->ida_yy, IDA_mem->ida_yp, IDA_mem->ida_savres);
 
@@ -195,10 +196,10 @@ where
     /// idaNlsConvTest
     fn ctest<S1, S2, S3>(
         &mut self,
-        y: &ArrayBase<S1, Ix1>,
-        del: &ArrayBase<S2, Ix1>,
+        y: ArrayBase<S1, Ix1>,
+        del: ArrayBase<S2, Ix1>,
         tol: P::Scalar,
-        ewt: &ArrayBase<S3, Ix1>,
+        ewt: ArrayBase<S3, Ix1>,
     ) -> Result<bool, failure::Error>
     where
         S1: ndarray::Data<Elem = P::Scalar>,
@@ -212,7 +213,7 @@ where
         use num_traits::identities::One;
         use num_traits::{Float, NumCast};
         // compute the norm of the correction
-        let delnrm = del.norm_wrms(ewt);
+        let delnrm = del.norm_wrms(&ewt);
 
         // get the current nonlinear solver iteration count
         //let m = self.nls.get_cur_iter();
