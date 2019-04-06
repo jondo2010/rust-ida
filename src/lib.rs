@@ -27,6 +27,76 @@ use num_traits::{
     Float,
 };
 
+/// specifies scalar relative and absolute tolerances.
+#[derive(Clone, Debug)]
+pub struct TolControlSS<Scalar> {
+    /// relative tolerance
+    ida_rtol: Scalar,
+    /// scalar absolute tolerance
+    ida_atol: Scalar,
+}
+
+impl<Scalar> TolControlSS<Scalar> {
+    pub fn new(rtol: Scalar, atol: Scalar) -> Self {
+        Self {
+            ida_rtol: rtol,
+            ida_atol: atol,
+        }
+    }
+}
+
+impl<Scalar> TolControl<Scalar> for TolControlSS<Scalar>
+where
+    Scalar: num_traits::Float,
+{
+    fn ewt_set<S1, S2>(&self, ycur: ArrayBase<S1, Ix1>, mut ewt: ArrayBase<S2, Ix1>)
+    where
+        S1: ndarray::Data<Elem = Scalar>,
+        S2: ndarray::DataMut<Elem = Scalar>,
+    {
+        ndarray::Zip::from(&mut ewt).and(&ycur).apply(|ewt, ycur| {
+            *ewt = (self.ida_rtol * ycur.abs() + self.ida_atol).recip();
+        });
+    }
+}
+
+/// specifies scalar relative tolerance and a vector absolute tolerance (a potentially different
+/// absolute tolerance for each vector component).
+#[derive(Clone, Debug)]
+pub struct TolControlSV<Scalar> {
+    /// relative tolerance
+    ida_rtol: Scalar,
+    /// vector absolute tolerance
+    ida_atol: Array1<Scalar>,
+}
+
+impl<Scalar> TolControlSV<Scalar> {
+    pub fn new(rtol: Scalar, atol: Array1<Scalar>) -> Self {
+        Self {
+            ida_rtol: rtol,
+            ida_atol: atol,
+        }
+    }
+}
+
+impl<Scalar> TolControl<Scalar> for TolControlSV<Scalar>
+where
+    Scalar: num_traits::Float,
+{
+    fn ewt_set<S1, S2>(&self, ycur: ArrayBase<S1, Ix1>, mut ewt: ArrayBase<S2, Ix1>)
+    where
+        S1: ndarray::Data<Elem = Scalar>,
+        S2: ndarray::DataMut<Elem = Scalar>,
+    {
+        ndarray::Zip::from(&mut ewt)
+            .and(&ycur)
+            .and(&self.ida_atol)
+            .apply(|ewt, ycur, atol| {
+                *ewt = (self.ida_rtol * ycur.abs() + *atol).recip();
+            });
+    }
+}
+
 pub enum IdaTask {
     Normal,
     OneStep,
@@ -41,22 +111,25 @@ pub enum IdaSolveStatus {
 
 /// This structure contains fields to keep track of problem state.
 #[derive(Debug, Clone)]
-pub struct Ida<P, LS, NLS>
+pub struct Ida<P, LS, NLS, TolC>
 where
     P: IdaProblem,
     LS: linear::LSolver<P::Scalar>,
     NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
 {
-    ida_itol: ToleranceType,
+    //ida_itol: ToleranceType,
     /// relative tolerance
-    ida_rtol: P::Scalar,
+    //ida_rtol: P::Scalar,
     /// scalar absolute tolerance
-    ida_Satol: P::Scalar,
+    //ida_Satol: P::Scalar,
     /// vector absolute tolerance
-    ida_Vatol: Array1<P::Scalar>,
+    //ida_Vatol: Array1<P::Scalar>,
+    ida_setup_done: bool,
+    tol_control: TolC,
 
     /// constraints vector present: do constraints calc
-    ida_constraintsSet: bool,
+    ida_constraints_set: bool,
     /// SUNTRUE means suppress algebraic vars in local error tests
     ida_suppressalg: bool,
 
@@ -216,23 +289,29 @@ where
     nlp: IdaNLProblem<P, LS>,
 }
 
-impl<P, LS, NLS> Ida<P, LS, NLS>
+impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
     P: IdaProblem,
     LS: linear::LSolver<P::Scalar>,
     NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
-        + IdaConst<Scalar=P::Scalar>,
+        + IdaConst<Scalar = P::Scalar>,
 {
     /// Creates a new IdaProblem given a ModelSpec, initial Arrays of yy0 and yyp
     ///
     /// *Panics" if ModelSpec::Scalar is unable to convert any constant initialization value.
-    pub fn new(problem: P, yy0: Array<P::Scalar, Ix1>, yp0: Array<P::Scalar, Ix1>) -> Self {
+    pub fn new(
+        problem: P,
+        yy0: Array<P::Scalar, Ix1>,
+        yp0: Array<P::Scalar, Ix1>,
+        tol_control: TolC,
+    ) -> Self {
         assert_eq!(problem.model_size(), yy0.len());
 
         // Initialize the phi array
@@ -248,12 +327,15 @@ where
 
         //IDAResFn res, realtype t0, N_Vector yy0, N_Vector yp0
         Self {
+            ida_setup_done: false,
+
             // Set unit roundoff in IDA_mem
             // NOTE: Use P::Scalar::epsilon() instead!
             //ida_uround: UNIT_ROUNDOFF,
+            tol_control: tol_control,
 
             // Set default values for integrator optional inputs
-            ida_itol: ToleranceType::TolNN,
+            //ida_itol: ToleranceType::TolNN,
             //ida_user_efun   = SUNFALSE;
             //ida_efun        = NULL;
             //ida_edata       = NULL;
@@ -271,7 +353,7 @@ where
             ida_suppressalg: false,
             //ida_id          = NULL;
             ida_constraints: Array::zeros(problem.model_size()),
-            ida_constraintsSet: false,
+            ida_constraints_set: false,
             ida_tstopset: false,
 
             ida_cjlast: P::Scalar::zero(),
@@ -348,9 +430,9 @@ where
             ida_Xvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
             ida_Zvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
 
-            ida_rtol: P::Scalar::zero(),
-            ida_Satol: P::Scalar::zero(),
-            ida_Vatol: Array::zeros(MXORDP1),
+            //ida_rtol: P::Scalar::zero(),
+            //ida_Satol: P::Scalar::zero(),
+            //ida_Vatol: Array::zeros(MXORDP1),
 
             // Initialize nonlinear solver
             nls: NLS::new(yy0.len(), MAXNLSIT),
@@ -428,6 +510,10 @@ where
             // This is the first call
 
             // Check inputs to IDA for correctness and consistency */
+            if !self.ida_setup_done {
+                self.initial_setup();
+                self.ida_setup_done = true;
+            }
             /*
             if (self.ida_SetupDone == SUNFALSE) {
               ier = IDAInitialSetup(IDA_mem);
@@ -608,16 +694,19 @@ where
             //  self.ida_lperf(IDA_mem, 1);
 
             // Reset and check ewt (if not first call).
-
             if self.ida_nst > 0 {
-                //ier = self.ida_efun(self.ida_phi[0], self.nlp.ida_ewt, self.ida_edata);
-                let ier = 0;
+                self.tol_control.ewt_set(
+                    self.ida_phi.index_axis(Axis(0), 0),
+                    self.nlp.ida_ewt.view_mut(),
+                );
 
+                let ier = 0;
                 if ier != 0 {
                     self.get_solution(self.nlp.ida_tn, yret, ypret);
                     *tret = self.nlp.ida_tn;
                     self.ida_tretlast = self.nlp.ida_tn;
 
+                    /*
                     match self.ida_itol {
                         ToleranceType::TolWF => {
                             //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_FAIL, self.nlp.ida_tn);
@@ -638,6 +727,7 @@ where
                             })?
                         }
                     }
+                    */
                     //istate = IDA_ILL_INPUT;
                     //break;
                 }
@@ -754,7 +844,7 @@ where
     ///   IDA_BAD_T         if t is not within the interval of the last step taken
     ///   IDA_BAD_DKY       if the dky vector is NULL
     ///   IDA_BAD_K         if the requested k is not in the range [0,order used]
-    ///   IDA_VECTOROP_ERR  if the fused vector operation fails
+    ///   IDA_VTolCTOROP_ERR  if the fused vector operation fails
     pub fn get_dky<S>(
         &mut self,
         t: P::Scalar,
@@ -862,6 +952,60 @@ where
         Ok(())
     }
 
+    /// IDAInitialSetup
+    ///
+    /// This routine is called by `solve` once at the first step. It performs all checks on optional
+    /// inputs and inputs to `init`/`reinit` that could not be done before.
+    ///
+    /// If no error is encountered, IDAInitialSetup returns IDA_SUCCESS. Otherwise, it returns an error flag and reported to the error handler function.
+    fn initial_setup(&mut self) {
+        //booleantype conOK;
+        //int ier;
+
+        // Initial error weight vector
+        self.tol_control.ewt_set(
+            self.ida_phi.index_axis(Axis(0), 0),
+            self.nlp.ida_ewt.view_mut(),
+        );
+
+        /*
+        if (ier != 0) {
+          if (IDA_mem->ida_itol == IDA_WF)
+            IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_FAIL_EWT);
+          else
+            IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_BAD_EWT);
+          return(IDA_ILL_INPUT);
+        }
+
+        // Check to see if y0 satisfies constraints.
+        if (IDA_mem->ida_constraintsSet) {
+          conOK = N_VConstrMask(IDA_mem->ida_constraints, IDA_mem->ida_phi[0], IDA_mem->ida_tempv2);
+          if (!conOK) {
+            IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_Y0_FAIL_CONSTR);
+            return(IDA_ILL_INPUT);
+          }
+        }
+
+        // Call linit function if it exists.
+        if (IDA_mem->ida_linit != NULL) {
+          ier = IDA_mem->ida_linit(IDA_mem);
+          if (ier != 0) {
+            IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_LINIT_FAIL);
+            return(IDA_LINIT_FAIL);
+          }
+        }
+
+        // Initialize the nonlinear solver (must occur after linear solver is initialize) so that lsetup and lsolve pointer have been set
+        ier = idaNlsInit(IDA_mem);
+        if (ier != IDA_SUCCESS) {
+          IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_NLS_INIT_FAIL);
+          return(IDA_NLS_INIT_FAIL);
+        }
+        */
+
+        //return(IDA_SUCCESS);
+    }
+
     /// IDAEwtSet
     ///
     /// This routine is responsible for loading the error weight vector ewt, according to itol, as
@@ -886,11 +1030,14 @@ where
         S1: ndarray::Data<Elem = P::Scalar>,
         S2: ndarray::DataMut<Elem = P::Scalar>,
     {
+        /*
         match self.ida_itol {
             ToleranceType::TolSS => self.ewt_set_ss(ycur, weight),
             ToleranceType::TolSV => self.ewt_set_sv(ycur, weight),
             _ => false,
         }
+        */
+        false
     }
 
     /// IDAEwtSetSS
@@ -909,13 +1056,14 @@ where
         S1: ndarray::Data<Elem = P::Scalar>,
         S2: ndarray::DataMut<Elem = P::Scalar>,
     {
-        let tempv1 = ycur.mapv(|x| (self.ida_rtol * x.abs()) + self.ida_Satol);
+        //let tempv1 = ycur.mapv(|x| (self.ida_rtol * x.abs()) + self.ida_Satol);
         //self.ida_tempv1.zip_mut_with(ycur, |z, &a| { *z = });
         /*
         N_VAbs(ycur, self.ida_tempv1);
         N_VScale(self.ida_rtol, self.ida_tempv1, self.ida_tempv1);
         N_VAddConst(self.ida_tempv1, self.ida_Satol, self.ida_tempv1);
         */
+        /*
         if tempv1.fold(P::Scalar::max_value(), |acc, &x| acc.min(x)) <= P::Scalar::zero() {
             //if tempv1.iter().min().unwrap() <= &P::Scalar::zero() {
             false
@@ -923,10 +1071,11 @@ where
             weight.zip_mut_with(&tempv1, |w, &t| *w = t.recip());
             true
         }
+        */
 
         //if (N_VMin(self.ida_tempv1) <= ZERO) {return false}
         //N_VInv(self.ida_tempv1, weight);
-        //return true;
+        return true;
     }
 
     /// IDAEwtSetSV
@@ -1194,7 +1343,7 @@ where
     ///   nvectors (each of size Neq). (maxord+1) is the maximum order for the problem, maxord, plus 1.
     ///
     /// Return values are:
-    ///       IDA_SUCCESS   IDA_RES_FAIL      LSETUP_ERROR_NONRECVR
+    ///       IDA_SUCCESS   IDA_RES_FAIL      LSETUP_ERROR_NONRTolCVR
     ///                     IDA_LSOLVE_FAIL   IDA_ERR_FAIL
     ///                     IDA_CONSTR_FAIL   IDA_CONV_FAIL
     ///                     IDA_REP_RES_ERR
@@ -1373,13 +1522,13 @@ where
     /// NOTE: this routine uses N_Vector ee as the scratch vector tempv3 passed to lsetup.
     fn nonlinear_solve(&mut self) -> Result<(), failure::Error> {
         // Initialize if the first time called
-        let mut callLSetup = false;
+        let mut call_lsetup = false;
 
         if self.ida_nst == 0 {
             self.nlp.lp.ida_cjold = self.nlp.lp.ida_cj;
             self.nlp.ida_ss = P::Scalar::twenty();
             //if (self.ida_lsetup) { callLSetup = true; }
-            callLSetup = true;
+            call_lsetup = true;
         }
 
         // Decide if lsetup is to be called
@@ -1389,7 +1538,7 @@ where
         let temp1: P::Scalar = NumCast::from((1.0 - XRATE) / (1.0 + XRATE)).unwrap();
         let temp2 = temp1.recip();
         if self.nlp.lp.ida_cjratio < temp1 || self.nlp.lp.ida_cjratio > temp2 {
-            callLSetup = true;
+            call_lsetup = true;
         }
         if self.nlp.lp.ida_cj != self.ida_cjlast {
             self.nlp.ida_ss = P::Scalar::hundred();
@@ -1407,21 +1556,21 @@ where
         if ((self.NLS)->ops->setup) {
           retval = SUNNonlinSolSetup(self.NLS, self.ida_delta, IDA_mem);
           if (retval < 0) return(IDA_NLS_SETUP_FAIL);
-          if (retval > 0) return(IDA_NLS_SETUP_RECVR);
+          if (retval > 0) return(IDA_NLS_SETUP_RTolCVR);
         }
         */
 
+        let w = self.nlp.ida_ewt.clone();
+
         // solve the nonlinear system
-        /*
         let retval = self.nls.solve(
             &mut self.nlp,
-            &self.ida_delta,
-            &mut self.ida_ee,
-            &self.nlp.ida_ewt,
+            self.ida_delta.view(),
+            self.ida_ee.view_mut(),
+            w,
             self.ida_epsNewt,
-            callLSetup,
+            call_lsetup,
         );
-        */
 
         // update yy and yp based on the final correction from the nonlinear solve
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, self.ida_ee, self.ida_yy);
@@ -1432,12 +1581,12 @@ where
         self.nlp.ida_yp.scaled_add(self.nlp.lp.ida_cj, &self.ida_ee);
 
         // return if nonlinear solver failed */
-        //retval?;
+        retval?;
 
         // If otherwise successful, check and enforce inequality constraints.
 
         // Check constraints and get mask vector mm, set where constraints failed
-        if self.ida_constraintsSet {
+        if self.ida_constraints_set {
             unimplemented!();
             /*
             self.ida_mm = self.ida_tempv2;
@@ -1463,7 +1612,7 @@ where
             N_VProd(self.ida_mm, self.ida_tempv1, self.ida_tempv1);
             self.ida_rr = PT9 * N_VMinQuotient(self.ida_phi[0], self.ida_tempv1);
             self.ida_rr = SUNMAX(self.ida_rr, PT1);
-            return (IDA_CONSTR_RECVR);
+            return (IDA_CONSTR_RTolCVR);
             }
             }
              */
@@ -1551,7 +1700,8 @@ where
         if self.ida_kk > 1 {
             // Compute error at order k-1
             self.ida_delta = &self.ida_phi.index_axis(Axis(0), self.ida_kk) + &self.ida_ee;
-            let enorm_km1 = self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
+            let enorm_km1 =
+                self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
             err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
             let terr_km1: P::Scalar = err_km1 * <P::Scalar as NumCast>::from(self.ida_kk).unwrap();
 
@@ -1637,10 +1787,10 @@ where
     ///  Possible nflag values (input):
     ///
     ///   --convergence failures--
-    ///   IDA_RES_RECVR              > 0
-    ///   IDA_LSOLVE_RECVR           > 0
-    ///   IDA_CONSTR_RECVR           > 0
-    ///   SUN_NLS_CONV_RECV          > 0
+    ///   IDA_RES_RTolCVR              > 0
+    ///   IDA_LSOLVE_RTolCVR           > 0
+    ///   IDA_CONSTR_RTolCVR           > 0
+    ///   SUN_NLS_CONV_RTolCV          > 0
     ///   IDA_RES_FAIL               < 0
     ///   IDA_LSOLVE_FAIL            < 0
     ///   IDA_LSETUP_FAIL            < 0
@@ -1751,17 +1901,17 @@ where
                         self.ida_ncfn += 1; // global counter for convergence failures
 
                         // Reduce step size for a new prediction
-                        // Note that if nflag=IDA_CONSTR_RECVR then rr was already set in IDANls
-                        //if (nflag != IDA_CONSTR_RECVR) { self.ida_rr = P::Scalar::quarter() };
+                        // Note that if nflag=IDA_CONSTR_RTolCVR then rr was already set in IDANls
+                        //if (nflag != IDA_CONSTR_RTolCVR) { self.ida_rr = P::Scalar::quarter() };
                         self.ida_hh *= self.ida_rr;
 
                         // Test if there were too many convergence failures
                         if *ncfPtr < self.ida_maxncf {
                             //return(PREDICT_AGAIN);
                             Ok(())
-                        //} else if nflag == IDA_RES_RECVR {
+                        //} else if nflag == IDA_RES_RTolCVR {
                         //    return (IDA_REP_RES_ERR);
-                        //} else if nflag == IDA_CONSTR_RECVR {
+                        //} else if nflag == IDA_CONSTR_RTolCVR {
                         //    return (IDA_CONSTR_FAIL);
                         } else {
                             //return (IDA_CONV_FAIL);
@@ -2154,10 +2304,10 @@ mod tests {
     impl Residual for Dummy {
         fn res<S1, S2, S3>(
             &self,
-            tres: Self::Scalar,
-            yy: &ArrayBase<S1, Ix1>,
-            yp: &ArrayBase<S2, Ix1>,
-            resval: &mut ArrayBase<S3, Ix1>,
+            _tres: Self::Scalar,
+            _yy: ArrayBase<S1, Ix1>,
+            _yp: ArrayBase<S2, Ix1>,
+            mut resval: ArrayBase<S3, Ix1>,
         ) where
             S1: ndarray::Data<Elem = Self::Scalar>,
             S2: ndarray::Data<Elem = Self::Scalar>,
@@ -2268,8 +2418,12 @@ mod tests {
         let cjlast = 2.4672954597032423e-09;
 
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         // Set preconditions:
         ida.ida_hh = hh;
@@ -2447,8 +2601,12 @@ mod tests {
         let nflag = true;
 
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         // Set preconditions:
         ida.ida_kk = kk;
@@ -2527,8 +2685,12 @@ mod tests {
         let nflag = false;
 
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         // Set preconditions:
         ida.ida_kk = kk;
@@ -2602,8 +2764,12 @@ mod tests {
         let kk = 2;
 
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         // Set preconditions:
         ida.ida_kk = kk;
@@ -2683,8 +2849,12 @@ mod tests {
         let beta_after = array![1., 1., 1., 1.2, 1.4, 1.];
 
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         // Set preconditions:
         ida.nlp.ida_tn = 765020.5513257229;
@@ -2730,8 +2900,12 @@ mod tests {
         let beta_after = array![1., 2., 3., 4.8, 7.199999999999999, 10.28571428571428];
 
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         // Set preconditions:
         ida.nlp.ida_tn = 4480988928.431009;
@@ -2852,8 +3026,12 @@ mod tests {
         let beta_after = array![1., 2., 3., 4., 4.864864864864866, 6.370656370656372];
 
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         // Set preconditions:
         ida.nlp.ida_tn = 15295021.33422961;
@@ -2908,8 +3086,12 @@ mod tests {
 
         // Set preconditions:
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         ida.ida_nst = nst;
         ida.ida_kk = kk;
@@ -3031,8 +3213,12 @@ mod tests {
         ];
 
         let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>> =
-            Ida::new(problem, array![0., 0., 0.], array![0., 0., 0.]);
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
 
         ida.ida_hh = hh;
         ida.nlp.ida_tn = tn;

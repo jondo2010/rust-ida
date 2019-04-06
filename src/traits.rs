@@ -28,9 +28,9 @@ pub trait Residual: ModelSpec {
     fn res<S1, S2, S3>(
         &self,
         tt: Self::Scalar,
-        yy: &ArrayBase<S1, Ix1>,
-        yp: &ArrayBase<S2, Ix1>,
-        rr: &mut ArrayBase<S3, Ix1>,
+        yy: ArrayBase<S1, Ix1>,
+        yp: ArrayBase<S2, Ix1>,
+        mut rr: ArrayBase<S3, Ix1>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
         S2: ndarray::Data<Elem = Self::Scalar>,
@@ -67,6 +67,13 @@ pub trait Jacobian: ModelSpec {
         S2: ndarray::Data<Elem = Self::Scalar>,
         S3: ndarray::Data<Elem = Self::Scalar>,
         S4: ndarray::DataMut<Elem = Self::Scalar>;
+}
+
+pub trait TolControl<Scalar> {
+    fn ewt_set<S1, S2>(&self, ycur: ArrayBase<S1, Ix1>, mut ewt: ArrayBase<S2, Ix1>)
+    where
+        S1: ndarray::Data<Elem = Scalar>,
+        S2: ndarray::DataMut<Elem = Scalar>;
 }
 
 /// Core implementation for explicit schemes

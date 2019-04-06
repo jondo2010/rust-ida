@@ -202,12 +202,12 @@ pub trait NLSolver<M: ModelSpec> {
     ///
     /// * `Err(Error::ConvergenceRecover)` - the iteration appears to be diverging, try to recover.
     /// * `Err(_)` - an unrecoverable error occurred.
-    fn solve<NLP, S1, S2>(
+    fn solve<NLP, S1, S2, S3>(
         &mut self,
         problem: &mut NLP,
         y0: ArrayBase<S1, Ix1>,
         mut y: ArrayBase<S2, Ix1>,
-        w: ArrayBase<S1, Ix1>,
+        w: ArrayBase<S3, Ix1>,
         tol: M::Scalar,
         call_lsetup: bool,
     ) -> Result<(), failure::Error>
@@ -215,7 +215,8 @@ pub trait NLSolver<M: ModelSpec> {
         Self: std::marker::Sized,
         NLP: NLProblem<M>,
         S1: Data<Elem = M::Scalar>,
-        S2: DataMut<Elem = M::Scalar>;
+        S2: DataMut<Elem = M::Scalar>,
+        S3: Data<Elem = M::Scalar>;
 
     /// get the total number on nonlinear iterations (optional)
     fn get_num_iters(&self) -> usize {

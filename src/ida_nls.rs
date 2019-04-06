@@ -122,13 +122,13 @@ where
         // evaluate residual
         self.lp
             .problem
-            .res(self.ida_tn, &self.ida_yy, &self.ida_yp, &mut res);
+            .res(self.ida_tn, self.ida_yy.view(), self.ida_yp.view(), res.view_mut());
 
         // increment the number of residual evaluations
         self.ida_nre += 1;
 
         // save a copy of the residual vector in savres
-        self.ida_savres.assign(&mut res);
+        self.ida_savres.assign(&res);
 
         //if (retval < 0) return(IDA_RES_FAIL);
         //if (retval > 0) return(IDA_RES_RECVR);

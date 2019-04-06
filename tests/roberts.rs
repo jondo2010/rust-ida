@@ -33,9 +33,9 @@ impl Residual for Roberts {
     fn res<S1, S2, S3>(
         &self,
         _tres: Self::Scalar,
-        yy: &ArrayBase<S1, Ix1>,
-        yp: &ArrayBase<S2, Ix1>,
-        resval: &mut ArrayBase<S3, Ix1>,
+        yy: ArrayBase<S1, Ix1>,
+        yp: ArrayBase<S2, Ix1>,
+        mut resval: ArrayBase<S3, Ix1>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
         S2: ndarray::Data<Elem = Self::Scalar>,
@@ -85,13 +85,14 @@ fn test_dense() {
 
     let yy0 = array![1.0, 0.0, 0.0];
     let yp0 = array![-0.04, 0.04, 0.0];
+    let ec = TolControlSV::new(1.0e-4, array![1.0e-8, 1.0e-6, 1.0e-6]);
     let t0 = 0.0;
     let mut tout = 0.4;
     let mut tret = 0.0;
     let mut yy = ndarray::Array::zeros(problem.model_size());
     let mut yp = ndarray::Array::zeros(problem.model_size());
 
-    let mut ida: Ida<_, Dense<_>, Newton<_>> = Ida::new(problem, yy0, yp0);
+    let mut ida: Ida<_, Dense<_>, Newton<_>, _> = Ida::new(problem, yy0, yp0, ec);
 
     let res = ida.solve(
         tout,

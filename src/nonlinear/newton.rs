@@ -35,12 +35,12 @@ where
         }
     }
 
-    fn solve<NLP, S1, S2>(
+    fn solve<NLP, S1, S2, S3>(
         &mut self,
         problem: &mut NLP,
         y0: ArrayBase<S1, Ix1>,
         mut y: ArrayBase<S2, Ix1>,
-        w: ArrayBase<S1, Ix1>,
+        w: ArrayBase<S3, Ix1>,
         tol: M::Scalar,
         call_lsetup: bool,
     ) -> Result<(), failure::Error>
@@ -48,6 +48,7 @@ where
         NLP: NLProblem<M>,
         S1: ndarray::Data<Elem = M::Scalar>,
         S2: ndarray::DataMut<Elem = M::Scalar>,
+        S3: ndarray::Data<Elem = M::Scalar>,
     {
         use std::ops::Neg;
 
@@ -85,29 +86,36 @@ where
                         // compute the negative of the residual for the linear system rhs
                         self.delta.mapv_inplace(M::Scalar::neg);
                         // solve the linear system to get Newton update delta
-                        let retval = problem.solve(y.view(), self.delta.view_mut()).and_then(|_| {
-                            // update the Newton iterate
-                            y += &self.delta;
-                            // test for convergence
+                        let retval =
                             problem
-                                .ctest(y.view(), self.delta.view(), tol, w.view())
-                                .and_then(|converged| {
-                                    if converged {
-                                        // if successful update Jacobian status and return
-                                        self.jcur = false;
-                                        Ok(true)
-                                    } else {
-                                        self.curiter += 1;
-                                        if self.curiter >= self.maxiters {
-                                            Err(failure::Error::from(Error::ConvergenceRecover {}))
-                                        } else {
-                                            // compute the nonlinear residual, store in delta
-                                            // Ok(false) will continue to iterate 'inner
-                                            problem.sys(y.view(), self.delta.view_mut()).and(Ok(false))
-                                        }
-                                    }
-                                })
-                        });
+                                .solve(y.view(), self.delta.view_mut())
+                                .and_then(|_| {
+                                    // update the Newton iterate
+                                    y += &self.delta;
+                                    // test for convergence
+                                    problem
+                                        .ctest(y.view(), self.delta.view(), tol, w.view())
+                                        .and_then(|converged| {
+                                            if converged {
+                                                // if successful update Jacobian status and return
+                                                self.jcur = false;
+                                                Ok(true)
+                                            } else {
+                                                self.curiter += 1;
+                                                if self.curiter >= self.maxiters {
+                                                    Err(failure::Error::from(
+                                                        Error::ConvergenceRecover {},
+                                                    ))
+                                                } else {
+                                                    // compute the nonlinear residual, store in delta
+                                                    // Ok(false) will continue to iterate 'inner
+                                                    problem
+                                                        .sys(y.view(), self.delta.view_mut())
+                                                        .and(Ok(false))
+                                                }
+                                            }
+                                        })
+                                });
 
                         // check if the iteration should continue; otherwise exit Newton loop
                         if let Ok(false) = retval {
@@ -246,12 +254,17 @@ mod tests {
             S2: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
         {
             // compute the Jacobian
-            Self::jac(0.0, y.view(), Array::zeros(self.model_size()), self.a.view_mut())
-                .map(|_| true)
-                .and_then(|_| {
-                    // setup the linear solver
-                    self.lsolver.setup(self.a.view_mut()).map(|_| true)
-                })
+            Self::jac(
+                0.0,
+                y.view(),
+                Array::zeros(self.model_size()),
+                self.a.view_mut(),
+            )
+            .map(|_| true)
+            .and_then(|_| {
+                // setup the linear solver
+                self.lsolver.setup(self.a.view_mut()).map(|_| true)
+            })
         }
 
         fn solve<S1, S2>(
@@ -266,9 +279,11 @@ mod tests {
             // Solve self.A * b = b
             //retval = SUNLinSolSolve(Imem->LS, Imem->A, Imem->x, b, ZERO);
             //N_VScale(ONE, Imem->x, b);
-            self.lsolver.solve(self.a.view(), self.x.view_mut(), b.view(), 0.0).map(|_| {
-                b.assign(&self.x);
-            })
+            self.lsolver
+                .solve(self.a.view(), self.x.view_mut(), b.view(), 0.0)
+                .map(|_| {
+                    b.assign(&self.x);
+                })
         }
 
         fn ctest<S1, S2, S3>(

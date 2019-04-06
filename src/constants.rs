@@ -7,17 +7,6 @@ pub const MXORDP1: usize = 6;
 /// mxstep default value
 pub const MXSTEP_DEFAULT: usize = 500;
 
-//Control constants for tolerances
-//--------------------------------
-
-#[derive(Debug, Clone)]
-pub enum ToleranceType {
-    TolNN,
-    TolSS,
-    TolSV,
-    TolWF,
-}
-
 //Algorithmic constants
 //---------------------
 

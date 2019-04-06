@@ -56,9 +56,9 @@ impl Residual for Lorenz63 {
     fn res<S1, S2, S3>(
         &self,
         tres: Self::Scalar,
-        yy: &ArrayBase<S1, Ix1>,
-        yp: &ArrayBase<S2, Ix1>,
-        resval: &mut ArrayBase<S3, Ix1>,
+        yy: ArrayBase<S1, Ix1>,
+        yp: ArrayBase<S2, Ix1>,
+        mut resval: ArrayBase<S3, Ix1>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
         S2: ndarray::Data<Elem = Self::Scalar>,
