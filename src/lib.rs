@@ -19,7 +19,9 @@ use ida_nls::IdaNLProblem;
 use norm_rms::{NormRms, NormRmsMasked};
 use traits::*;
 
-use log::error;
+use profiler::profile_scope;
+
+use log::{error, trace};
 use ndarray::{prelude::*, s, Slice};
 use num_traits::{
     cast::{NumCast, ToPrimitive},
@@ -335,10 +337,6 @@ where
             tol_control: tol_control,
 
             // Set default values for integrator optional inputs
-            //ida_itol: ToleranceType::TolNN,
-            //ida_user_efun   = SUNFALSE;
-            //ida_efun        = NULL;
-            //ida_edata       = NULL;
             //ida_ehfun       = IDAErrHandler;
             //ida_eh_data     = IDA_mem;
             //ida_errfp       = stderr;
@@ -671,7 +669,7 @@ where
         }
 
         // Looping point for internal steps.
-
+        profile_scope!(format!("solve loop"));
         loop {
             // Check for too many steps taken.
 
@@ -702,6 +700,7 @@ where
 
                 let ier = 0;
                 if ier != 0 {
+                    profiler::ProfileScope::new(format!("get_solution"));
                     self.get_solution(self.nlp.ida_tn, yret, ypret);
                     *tret = self.nlp.ida_tn;
                     self.ida_tretlast = self.nlp.ida_tn;
@@ -1367,6 +1366,8 @@ where
 
         let mut ncf = 0; // local counter for convergence failures
         let mut nef = 0; // local counter for error test failures
+
+        trace!("step() tn={:?}", self.nlp.ida_tn);
 
         // Looping point for attempts to take a step
 
@@ -3149,6 +3150,192 @@ mod tests {
         assert_nearly_eq!(ida.ida_ee, ida_ee, 1e-6);
         assert_nearly_eq!(ida.ida_phi, ida_phi, 1e-6);
         assert_nearly_eq!(ida.nlp.ida_ewt, ida_ewt, 1e-6);
+    }
+
+    #[test]
+    fn test_nonlinear_solve() {
+        let problem = Dummy {};
+        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+            problem,
+            array![0., 0., 0.],
+            array![0., 0., 0.],
+            TolControlSS::new(1e-4, 1e-4),
+        );
+
+        ida.ida_phi = array![
+            [0.999993, 0.000007, 0.000000,],
+            [-0.000007, 0.000007, 0.000000,],
+            [0.000000, -0.000000, 0.000000,],
+            [0.000000, -0.000000, 0.000000,],
+            [0.000000, -0.000000, 0.000000,],
+            [0.000000, 0.000000, 0.000000,],
+        ];
+        ida.ida_psi = array![
+            1.7319642288384616e-04,
+            2.5979463432576925e-04,
+            3.0309374004673076e-04,
+            3.2474329290721156e-04,
+            3.4639284576769232e-04,
+            0.0000000000000000e+00,
+        ];
+        ida.ida_alpha = array![
+            1.0000000000000000e+00,
+            6.6666666666666663e-01,
+            5.7142857142857151e-01,
+            5.3333333333333333e-01,
+            5.0000000000000000e-01,
+            0.0000000000000000e+00,
+        ];
+        ida.ida_beta = array![
+            1.0000000000000000e+00,
+            2.0000000000000000e+00,
+            4.0000000000000000e+00,
+            8.0000000000000000e+00,
+            1.5000000000000000e+01,
+            0.0000000000000000e+00,
+        ];
+        ida.ida_sigma = array![
+            1.0000000000000000e+00,
+            6.6666666666666663e-01,
+            7.6190476190476197e-01,
+            1.2190476190476192e+00,
+            2.4380952380952383e+00,
+            0.0000000000000000e+00,
+        ];
+        ida.ida_gamma = array![
+            0.0000000000000000e+00,
+            5.7737913020908527e+03,
+            9.6229855034847533e+03,
+            1.2922294818965242e+04,
+            1.6001650180080363e+04,
+            0.0000000000000000e+00,
+        ];
+        ida.nlp.ida_yy = array![0.999993, 0.000007, 0.000000];
+        ida.nlp.ida_yp = array![-0.040000, 0.038555, 0.001444];
+        ida.nlp.ida_yypredict = array![0.999986, 0.000013, 0.000001];
+        ida.nlp.ida_yppredict = array![-0.039998, 0.032311, 0.007687];
+        let ida_delta = [0.000000, -0.000000, 0.000000];
+        let ida_saves = [0.000000, -0.000188, 0.000000];
+        let ida_ee = [0.000000, -0.000000, 0.000000];
+        let ida_ewt = [9999.069365, 999316.472678, 999991.211854];
+        let hh = 0.0001731964228838;
+        let kk = 4;
+        let kused = 3;
+        let knew = 3;
+        let phase = 0;
+        let ns = 1;
+        let hin = 0.0000000000000000e+00;
+        let h0u = 2.1649552860480770e-05;
+        let hh = 1.7319642288384616e-04;
+        let hused = 8.6598211441923079e-05;
+        let rr = 0.0000000000000000e+00;
+        let tn = 3.4639284576769232e-04;
+        let tretlast = 0.0000000000000000e+00;
+        let cj = 1.2028731879355941e+04;
+        let cjlast = 2.1170568107666459e+04;
+        let cjold = 2.1170568107666459e+04;
+        let cjratio = 1.0000000000000000e+00;
+        let ss = 2.0000000000000000e+01;
+        let oldnrm = 7.1165780617896508e-03;
+        let epsNewt = 3.3000000000000002e-01;
+        let epcon = 3.3000000000000002e-01;
+        let toldel = 3.3000000000000003e-05;
+        let hmax_inv = 0.0000000000000000e+00;
+        let nst = 4;
+        let nre = 4;
+        let ncfn = 0;
+        let netf = 0;
+        let nni = 0;
+        let nsetups = 2;
+        let maxord = 5;
+
+        //---
+        let ida_phi = array![
+            [0.999993, 0.000007, 0.000000,],
+            [-0.000007, 0.000007, 0.000000,],
+            [0.000000, -0.000000, 0.000000,],
+            [0.000000, -0.000000, 0.000000,],
+            [0.000000, -0.000000, 0.000000,],
+            [0.000000, 0.000000, 0.000000,],
+        ];
+        let ida_psi = array![
+            1.7319642288384616e-04,
+            2.5979463432576925e-04,
+            3.0309374004673076e-04,
+            3.2474329290721156e-04,
+            3.4639284576769232e-04,
+            0.0000000000000000e+00,
+        ];
+        let ida_alpha = array![
+            1.0000000000000000e+00,
+            6.6666666666666663e-01,
+            5.7142857142857151e-01,
+            5.3333333333333333e-01,
+            5.0000000000000000e-01,
+            0.0000000000000000e+00,
+        ];
+        let ida_beta = array![
+            1.0000000000000000e+00,
+            2.0000000000000000e+00,
+            4.0000000000000000e+00,
+            8.0000000000000000e+00,
+            1.5000000000000000e+01,
+            0.0000000000000000e+00,
+        ];
+        let ida_sigma = array![
+            1.0000000000000000e+00,
+            6.6666666666666663e-01,
+            7.6190476190476197e-01,
+            1.2190476190476192e+00,
+            2.4380952380952383e+00,
+            0.0000000000000000e+00,
+        ];
+        let ida_gamma = array![
+            0.0000000000000000e+00,
+            5.7737913020908527e+03,
+            9.6229855034847533e+03,
+            1.2922294818965242e+04,
+            1.6001650180080363e+04,
+            0.0000000000000000e+00,
+        ];
+        let ida_yy = [0.999986, 0.000013, 0.000001];
+        let ida_yp = [-0.039999, 0.034719, 0.005280];
+        let ida_yypredict = [0.999986, 0.000013, 0.000001];
+        let ida_yppredict = [-0.039998, 0.032311, 0.007687];
+        let ida_delta = [0.000000, 0.000000, 0.000000];
+        let ida_saves = [-0.000000, -0.000001, 0.000000];
+        let ida_ee = [-0.000000, 0.000000, -0.000000];
+        let ida_ewt = [9999.069365, 999316.472678, 999991.211854];
+        let hh = 0.0001731964228838;
+        let kk = 4;
+        let kused = 3;
+        let knew = 3;
+        let phase = 0;
+        let ns = 1;
+        let hin = 0.0000000000000000e+00;
+        let h0u = 2.1649552860480770e-05;
+        let hh = 1.7319642288384616e-04;
+        let hused = 8.6598211441923079e-05;
+        let rr = 0.0000000000000000e+00;
+        let tn = 3.4639284576769232e-04;
+        let tretlast = 0.0000000000000000e+00;
+        let cj = 1.2028731879355941e+04;
+        let cjlast = 2.1170568107666459e+04;
+        let cjold = 1.2028731879355941e+04;
+        let cjratio = 1.0000000000000000e+00;
+        let ss = 4.6930097883603612e-04;
+        let oldnrm = 1.6345169955559977e-01;
+        let epsNewt = 3.3000000000000002e-01;
+        let epcon = 3.3000000000000002e-01;
+        let toldel = 3.3000000000000003e-05;
+        let hmax_inv = 0.0000000000000000e+00;
+        let nst = 4;
+        let nre = 6;
+        let ncfn = 0;
+        let netf = 0;
+        let nni = 0;
+        let nsetups = 3;
+        let maxord = 5;
     }
 
     #[test]

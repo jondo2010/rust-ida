@@ -17,10 +17,15 @@ keywords = ["math", "differential"]
 [badges]
 travis-ci = { repository = "jondo2010/ida-rs", branch = "master" }
 
+[features]
+# Required for testing using the profile_scope!() macro
+thread_profiler = []
+
 [dependencies]
-log = { version = "0.4.6", features = ["std"] }
-failure        = { version = "0.1.5" }
-ndarray        = { version = "0.12.1", default-features = true }
-num-traits = "0.2.6"
-nearly_eq = { version = "0.2.4", features = ["ndarray"] }
-pretty_env_logger = "0.3"
+log                 = { version = "0.4.6", features = ["std"] }
+failure             = { version = "0.1.5" }
+ndarray             = { version = "0.12.1", default-features = true }
+nearly_eq           = { version = "0.2.4", features = ["ndarray"] }
+num-traits          = "0.2.6"
+pretty_env_logger   = "0.3"
+profiler            = { package = "thread_profiler", version = "0.3.0", optional = false }

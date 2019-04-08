@@ -249,6 +249,8 @@ where
             //TODO fix
             self.problem
                 .jac(P::Scalar::zero(), self.ida_cj, y.view(), yp.view(), r.view(), self.J.view_mut());
+            
+            dbg!(&self.J);
 
             /*
             if (retval < 0) {

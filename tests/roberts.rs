@@ -80,6 +80,7 @@ impl Jacobian for Roberts {
 #[test]
 fn test_dense() {
     pretty_env_logger::init();
+    profiler::register_thread_with_profiler();
 
     let problem = Roberts {};
 
@@ -101,6 +102,7 @@ fn test_dense() {
         &mut yp.view_mut(),
         IdaTask::Normal,
     );
-    dbg!(&ida);
+    //dbg!(&ida);
+    profiler::write_profile("profile.json");
     res.unwrap();
 }

@@ -3,6 +3,8 @@ use ndarray::prelude::*;
 use crate::nonlinear::traits::*;
 use crate::traits::ModelSpec;
 
+use log::trace;
+
 #[derive(Debug)]
 pub struct Newton<M: ModelSpec> {
     /// Newton update vector
@@ -91,6 +93,7 @@ where
                                 .solve(y.view(), self.delta.view_mut())
                                 .and_then(|_| {
                                     // update the Newton iterate
+                                    trace!("Updating newton iterate with delta={:?}", &self.delta);
                                     y += &self.delta;
                                     // test for convergence
                                     problem
