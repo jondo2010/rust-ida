@@ -5,24 +5,32 @@
             "type": "lldb",
             "request": "launch",
             "name": "Debug test 'Roberts'",
-            "sourceLanguages": ["rust"],
+            "sourceLanguages": [
+                "rust"
+            ],
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--test",
                     "roberts",
+                    "--",
+                    "--nocapture",
                 ],
+            },
+            "env": {
+                "RUST_LOG": "ida=trace"
             },
             "args": [],
             "cwd": "${workspaceFolder}",
-            
         },
         {
             "type": "lldb",
             "request": "launch",
             "name": "Debug unit tests in library 'ida'",
-            "sourceLanguages": ["rust"],
+            "sourceLanguages": [
+                "rust"
+            ],
             "cargo": {
                 "args": [
                     "test",

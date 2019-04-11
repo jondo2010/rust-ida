@@ -739,6 +739,7 @@ where
                 &self.nlp.ida_ewt,
                 self.ida_suppressalg,
             );
+            trace!("nrm = {:?}", nrm);
 
             self.ida_tolsf = P::Scalar::epsilon() * nrm;
             if self.ida_tolsf > P::Scalar::one() {
@@ -758,11 +759,9 @@ where
             }
 
             // Call IDAStep to take a step.
-
             let sflag = self.step();
 
             // Process all failed-step cases, and exit loop.
-
             sflag.map_err(|err| {
                 let ier = self.get_solution(self.nlp.ida_tn, yret, ypret);
                 match ier {

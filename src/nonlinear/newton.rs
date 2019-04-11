@@ -59,6 +59,8 @@ where
 
         let mut call_lsetup = call_lsetup;
 
+        // delta first c = [3.4639284579585095e-08,-2.2532389959396826e-05,0.0000000000000000e+00,]
+
         // looping point for attempts at solution of the nonlinear system: Evaluate the nonlinear
         // residual function (store in delta) Setup the linear solver if necessary Preform Newton
         // iteraion
@@ -67,6 +69,7 @@ where
             let retval = problem
                 .sys(y0.view(), self.delta.view_mut())
                 .and_then(|_| {
+                    trace!("delta first {:?}", &self.delta);
                     // if indicated, setup the linear system
                     if call_lsetup {
                         problem
@@ -88,12 +91,14 @@ where
                         // compute the negative of the residual for the linear system rhs
                         self.delta.mapv_inplace(M::Scalar::neg);
                         // solve the linear system to get Newton update delta
+                        trace!("delta before {:?}", &self.delta);
+                        trace!("y before {:?}", &y);
                         let retval =
                             problem
                                 .solve(y.view(), self.delta.view_mut())
                                 .and_then(|_| {
                                     // update the Newton iterate
-                                    trace!("Updating newton iterate with delta={:?}", &self.delta);
+                                    trace!("delta after {:?}", &self.delta);
                                     y += &self.delta;
                                     // test for convergence
                                     problem

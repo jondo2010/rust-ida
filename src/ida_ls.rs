@@ -1,4 +1,5 @@
 use ndarray::prelude::*;
+use log::trace;
 
 use super::constants::IdaConst;
 use super::linear::{LSolver, LSolverType};
@@ -250,8 +251,6 @@ where
             self.problem
                 .jac(P::Scalar::zero(), self.ida_cj, y.view(), yp.view(), r.view(), self.J.view_mut());
             
-            dbg!(&self.J);
-
             /*
             if (retval < 0) {
                 IDAProcessError(
@@ -273,6 +272,8 @@ where
         self.ls.setup(self.J.view_mut());
         //self.last_flag = SUNLinSolSetup(idals_mem->LS, idals_mem->J);
         //return(self.last_flag);
+
+        trace!("J after setup: {:?}", &self.J);
     }
 
     /// idaLsSolve
@@ -299,14 +300,14 @@ where
         use num_traits::identities::{One, Zero};
 
         // Retrieve the LS type
-        let LSType = self.ls.get_type();
+        let ls_type = self.ls.get_type();
 
         // If the linear solver is iterative: set convergence test constant tol, in terms of the
         // Newton convergence test constant epsNewt and safety factors. The factor sqrt(Neq)
         // assures that the convergence test is applied to the WRMS norm of the residual vector,
         // rather than the weighted L2 norm.
 
-        let tol = match LSType {
+        let tol = match ls_type {
             LSolverType::Iterative | LSolverType::MatrixIterative => {
                 self.sqrtN * self.eplifac
                 //self.sqrtN * idals_mem->eplifac * IDA_mem->ida_epsNewt
@@ -345,7 +346,7 @@ where
         //   <=> \sum_{i=0}^{n-1} (b - A x_i)^2 < tol^2 / w_mean^2
         //   <=> || b - A x ||_2 < tol / w_mean
         // So we compute w_mean = ||w||_RMS = ||w||_2 / sqrt(n), and scale the desired tolerance accordingly.
-        if let LSolverType::Iterative | LSolverType::MatrixIterative = LSType {
+        if let LSolverType::Iterative | LSolverType::MatrixIterative = ls_type {
             //let w_mean = weight.dot(&weight).sqrt() / self.sqrtN;
             //tol /= w_mean;
         }
@@ -367,8 +368,10 @@ where
         // Call solver
         let retval = self.ls.solve(self.J.view(), self.x.view_mut(), b.view(), tol);
 
+        trace!("solved for b={:?}, x={:?}", &b, &self.x);
+
         // Copy appropriate result to b (depending on solver type)
-        if let LSolverType::Iterative | LSolverType::MatrixIterative = LSType {
+        if let LSolverType::Iterative | LSolverType::MatrixIterative = ls_type {
             // Retrieve solver statistics
             let nli_inc = self.ls.num_iters();
 
@@ -387,9 +390,8 @@ where
         }
 
         // If using a direct or matrix-iterative solver, scale the correction to account for change in cj
-        if let LSolverType::Direct | LSolverType::MatrixIterative = LSType {
+        if let LSolverType::Direct | LSolverType::MatrixIterative = ls_type {
             if self.ida_cjratio != P::Scalar::one() {
-                //N_VScale(TWO/(ONE + IDA_mem->ida_cjratio), b, b);
                 b *= P::Scalar::two() / (P::Scalar::one() + self.ida_cjratio);
             }
         }

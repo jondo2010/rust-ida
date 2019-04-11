@@ -1,3 +1,4 @@
+use log::trace;
 use ndarray::prelude::*;
 
 use super::constants::IdaConst;
@@ -59,7 +60,7 @@ where
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
-        + IdaConst<Scalar=P::Scalar>,
+        + IdaConst<Scalar = P::Scalar>,
     LS: LSolver<P::Scalar>,
 {
     /// * `size` - The problem size
@@ -98,7 +99,7 @@ where
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
-        + IdaConst<Scalar=P::Scalar>,
+        + IdaConst<Scalar = P::Scalar>,
     LS: LSolver<P::Scalar>,
 {
     /// idaNlsResidual
@@ -120,9 +121,12 @@ where
         self.ida_yp.scaled_add(self.lp.ida_cj, &ycor);
 
         // evaluate residual
-        self.lp
-            .problem
-            .res(self.ida_tn, self.ida_yy.view(), self.ida_yp.view(), res.view_mut());
+        self.lp.problem.res(
+            self.ida_tn,
+            self.ida_yy.view(),
+            self.ida_yp.view(),
+            res.view_mut(),
+        );
 
         // increment the number of residual evaluations
         self.ida_nre += 1;
@@ -150,7 +154,8 @@ where
         use num_traits::identities::One;
 
         self.ida_nsetups += 1;
-        self.lp.setup(self.ida_yy.view(), self.ida_yp.view(), res.view());
+        self.lp
+            .setup(self.ida_yy.view(), self.ida_yp.view(), res.view());
 
         // update Jacobian status
         //*jcur = SUNTRUE;
@@ -179,12 +184,15 @@ where
         S2: ndarray::DataMut<Elem = P::Scalar>,
     {
         self.lp.solve(
-            delta,
+            delta.view_mut(),
             self.ida_ewt.view(),
             self.ida_yy.view(),
             self.ida_yp.view(),
             self.ida_savres.view(),
         );
+
+        // lp solved, delta = [-0.00000000000000001623748801571458, -0.0000000004872681362104435, 0.0000000004865181206243604]
+        //[7.5001558608301906e-13,-4.8726813621044346e-10,4.8651812062436036e-10,]
         //retval = IDA_mem->ida_lsolve(IDA_mem, delta, IDA_mem->ida_ewt, IDA_mem->ida_yy, IDA_mem->ida_yp, IDA_mem->ida_savres);
 
         //if (retval < 0) return(IDA_LSOLVE_FAIL);

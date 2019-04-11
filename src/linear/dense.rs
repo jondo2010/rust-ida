@@ -1,5 +1,7 @@
 use super::*;
 
+use log::trace;
+
 #[derive(Clone, Debug)]
 pub struct Dense<Scalar> {
     x: Scalar,
@@ -10,7 +12,11 @@ pub struct Dense<Scalar> {
 
 impl<Scalar> LSolver<Scalar> for Dense<Scalar>
 where
-    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + num_traits::Zero,
+    Scalar: num_traits::Float
+        + num_traits::NumRef
+        + num_traits::NumAssignRef
+        + num_traits::Zero
+        + std::fmt::Debug,
 {
     fn new(size: usize) -> Self {
         Dense {
@@ -96,26 +102,26 @@ where
     );
 
     // k-th elimination step number
-    for col in 0..n {
-        // find pivot = pivot row number
-        let mut pivot = col;
-        for row in (col + 1)..m {
-            if mat_a[[row, col]].abs() > mat_a[[row, pivot]].abs() {
-                pivot = row;
+    for k in 0..n {
+        // find l = pivot row number
+        let mut l = k;
+        for i in (k + 1)..m {
+            if mat_a[[i, k]].abs() > mat_a[[i, l]].abs() {
+                l = i;
             }
         }
-        p[col] = pivot;
+        p[k] = l;
 
         // check for zero pivot element
-        if mat_a[[pivot, col]] == Scalar::zero() {
-            return col + 1;
+        if mat_a[[l, k]] == Scalar::zero() {
+            return k + 1;
         }
 
-        // swap a(k,1:n) and a(pivot,1:n) if necessary
+        // swap a(k,1:n) and a(l,1:n) if necessary
 
-        if pivot != col {
-            for row in 0..m {
-                mat_a.swap([row, col], [row, pivot]);
+        if l != k {
+            for i in 0..n {
+                mat_a.swap([k, i], [l, i]);
             }
         }
 
@@ -125,23 +131,24 @@ where
         // stores the pivot row multipliers a(i,k)/a(k,k)
         // in a(i,k), i=k+1, ..., m-1.
 
-        let mult = mat_a[[col, col]].recip();
-        for row in (col + 1)..m {
-            mat_a[[row, col]] *= mult;
+        let mult = mat_a[[k, k]].recip();
+        for i in (k + 1)..m {
+            mat_a[[i, k]] *= mult;
         }
 
         // row_i = row_i - [a(i,k)/a(k,k)] row_k, i=k+1, ..., m-1
         // row k is the pivot row after swapping with row l.
         // The computation is done one column at a time, column j=k+1, ..., n-1.
-        for j in (col + 1)..n {
-            let a_kj = mat_a[[col, j]];
+        for j in (k + 1)..n {
+            let a_kj = mat_a[[k, j]];
 
             // a(i,j) = a(i,j) - [a(i,k)/a(k,k)]*a(k,j)
             // a_kj = a(k,j), col_k[i] = - a(i,k)/a(k,k)
 
             if a_kj != Scalar::zero() {
-                for i in (col + 1)..m {
-                    mat_a[[i, j]] -= a_kj * (mat_a[[i, col]]);
+                for i in (k + 1)..m {
+                    let a_ik = mat_a[[i, k]];
+                    mat_a[[i, j]] -= a_kj * a_ik;
                 }
             }
         }
@@ -159,7 +166,7 @@ where
 /// Does NOT check for a square matrix!
 fn dense_get_rs<Scalar, S1, S2>(mat_a: ArrayBase<S1, Ix2>, p: &[usize], mut b: ArrayBase<S2, Ix1>)
 where
-    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef,
+    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + std::fmt::Debug,
     S1: ndarray::Data<Elem = Scalar>,
     S2: ndarray::DataMut<Elem = Scalar>,
 {
@@ -178,15 +185,18 @@ where
     // Solve Ly = b, store solution y in b
     for k in 0..(n - 1) {
         for i in (k + 1)..n {
-            b[i] -= mat_a[[i, k]] * b[k];
+            let bk = b[k];
+            b[i] -= mat_a[[i, k]] * bk;
         }
     }
 
     // Solve Ux = y, store solution x in b
-    for k in (0..(n)).rev() {
+    for k in (0..n).rev() {
         b[k] /= mat_a[[k, k]];
         for i in 0..k {
-            b[i] -= mat_a[[i, k]] * b[k];
+            println!("i={},k={}", i, k);
+            let bk = b[k];
+            b[i] -= mat_a[[i, k]] * bk;
         }
     }
     b[0] /= mat_a[[0, 0]];
@@ -242,12 +252,28 @@ mod tests {
         let mut dense = Dense::new(3);
         dense.setup(mat_a.view_mut()).unwrap();
         let mut x = Array::zeros(3);
-        dbg!(&mat_a);
-        dbg!(&dense);
+        //dbg!(&mat_a);
+        //dbg!(&dense);
         dense
             .solve(mat_a, x.view_mut(), array![0.25, 1.25, 1.0], 0.0)
             .unwrap();
         assert_eq!(x, array![0.375, 0., -0.125]);
+
+        // 2nd test
+        let mat_a_decomp = array![
+            [-46190.4, 0.0, 0.00865982],
+            [-8.65981e-07, -46242.3, -0.00865981],
+            [-2.16495e-05, -2.16252e-05, 1.0]
+        ];
+        let mut b = array![-3.4639284579585095e-08, 2.2532389959396826e-05, -0.0];
+        dense_get_rs(mat_a_decomp, &vec![0, 1, 2], b.view_mut());
+        let x_expect = array![
+            7.5001558608301906e-13,
+            -4.8726813621044346e-10,
+            4.8651812062436036e-10
+        ];
+        dbg!(&b);
+        assert_nearly_eq!(b, x_expect, 1e-15);
     }
 
     #[test]
@@ -261,7 +287,7 @@ mod tests {
         // Fill A matrix with uniform random data in [0,1/cols]
         // Add anti-identity to ensure the solver needs to do row-swapping
         let mut mat_a = Array::random((COLS, COLS), Uniform::new(0., 1.0 / (COLS as f64)));
-            //+ Array::eye(COLS).slice_move(s![.., ..;-1]);
+        //+ Array::eye(COLS).slice_move(s![.., ..;-1]);
         let mat_a_original = mat_a.clone();
 
         // Fill x vector with uniform random data in [0,1]
