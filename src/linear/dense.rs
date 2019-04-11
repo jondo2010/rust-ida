@@ -192,54 +192,95 @@ where
     b[0] /= mat_a[[0, 0]];
 }
 
-#[test]
-fn test_dense() {
-    use ndarray::array;
-    use nearly_eq::assert_nearly_eq;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let mut mat_a = array![
-        [-46190.370416726822, 0.0, 0.0086598211441923072,],
-        [0.04, -46242.289343591976, -0.0086598211441923072],
-        [1.0, 1.0, 1.0]
-    ];
+    #[test]
+    fn test_dense1() {
+        use ndarray::array;
+        use nearly_eq::assert_nearly_eq;
 
-    let mat_a_decomp = array![
-        [-46190.370416726822, 0.0, 0.0086598211441923072],
-        [
-            -8.6598136449485772e-7,
-            -46242.289343591976,
-            -0.008659813644948576
-        ],
-        [
-            -0.000021649534112371443,
-            -0.000021625226912312786,
-            1.00000000e+00
-        ]
-    ];
+        let mut mat_a = array![
+            [-46190.370416726822, 0.0, 0.0086598211441923072,],
+            [0.04, -46242.289343591976, -0.0086598211441923072],
+            [1.0, 1.0, 1.0]
+        ];
 
-    let mut pivot = vec![0, 0, 0];
-    let ret = dense_get_rf(mat_a.view_mut(), &mut pivot);
+        let mat_a_decomp = array![
+            [-46190.370416726822, 0.0, 0.0086598211441923072],
+            [
+                -8.6598136449485772e-7,
+                -46242.289343591976,
+                -0.008659813644948576
+            ],
+            [
+                -0.000021649534112371443,
+                -0.000021625226912312786,
+                1.00000000e+00
+            ]
+        ];
 
-    assert_nearly_eq!(mat_a, mat_a_decomp, 1e-6);
-    assert_eq!(pivot, vec![0, 1, 2]);
-    assert_eq!(ret, 0);
+        let mut pivot = vec![0, 0, 0];
+        let ret = dense_get_rf(mat_a.view_mut(), &mut pivot);
 
-    let mut b = array![-0.000000034639284579585095, 0.000022532389959396826, -0.0];
-    let b_exp = array![
-        7.5001558608301906e-13,
-        -4.8726813621044346e-10,
-        4.8651812062436036e-10,
-    ];
-    dense_get_rs(mat_a, &pivot, b.view_mut());
-    assert_nearly_eq!(b, b_exp, 1e-9);
+        assert_nearly_eq!(mat_a, mat_a_decomp, 1e-6);
+        assert_eq!(pivot, vec![0, 1, 2]);
+        assert_eq!(ret, 0);
 
-    // Now test using the LSolver interface
-    let mut mat_a = array![[1., 1., 1.], [2., 1., -4.], [3., -4., 1.]];
-    let mut dense = Dense::new(3);
-    dense.setup(mat_a.view_mut()).unwrap();
-    let mut x = Array::zeros(3);
-    dbg!(&mat_a);
-    dbg!(&dense);
-    dense.solve(mat_a, x.view_mut(), array![0.25, 1.25, 1.0], 0.0).unwrap();
-    assert_eq!(x, array![0.375, 0., -0.125]);
+        let mut b = array![-0.000000034639284579585095, 0.000022532389959396826, -0.0];
+        let b_exp = array![
+            7.5001558608301906e-13,
+            -4.8726813621044346e-10,
+            4.8651812062436036e-10,
+        ];
+        dense_get_rs(mat_a, &pivot, b.view_mut());
+        assert_nearly_eq!(b, b_exp, 1e-9);
+
+        // Now test using the LSolver interface
+        let mut mat_a = array![[1., 1., 1.], [2., 1., -4.], [3., -4., 1.]];
+        let mut dense = Dense::new(3);
+        dense.setup(mat_a.view_mut()).unwrap();
+        let mut x = Array::zeros(3);
+        dbg!(&mat_a);
+        dbg!(&dense);
+        dense
+            .solve(mat_a, x.view_mut(), array![0.25, 1.25, 1.0], 0.0)
+            .unwrap();
+        assert_eq!(x, array![0.375, 0., -0.125]);
+    }
+
+    #[test]
+    fn test_dense2() {
+        use ndarray::s;
+        use ndarray_rand::RandomExt;
+        use rand::distributions::Uniform;
+
+        const COLS: usize = 5;
+
+        // Fill A matrix with uniform random data in [0,1/cols]
+        // Add anti-identity to ensure the solver needs to do row-swapping
+        let mut mat_a = Array::random((COLS, COLS), Uniform::new(0., 1.0 / (COLS as f64)));
+            //+ Array::eye(COLS).slice_move(s![.., ..;-1]);
+        let mat_a_original = mat_a.clone();
+
+        // Fill x vector with uniform random data in [0,1]
+        let mut x = Array::random(COLS, Uniform::new(0.0, 1.0));
+        let b = x.clone();
+
+        let mut dense = Dense::new(COLS);
+        println!("A (original) = {:#?}", &mat_a);
+        dense.setup(mat_a.view_mut()).unwrap();
+        println!("A (factored) = {:#?}", &mat_a);
+
+        println!("x (original) = {:#?}", &x);
+        dense.solve(mat_a, x.view_mut(), b.view(), 0.0).unwrap();
+        println!("x (computed) = {:#?}", &x);
+
+        dbg!(&dense);
+
+        let b_comp = mat_a_original.dot(&x);
+        println!("b (original) = {:#?}", &b);
+        println!("b (computed) = {:#?}", &b_comp);
+    }
 }

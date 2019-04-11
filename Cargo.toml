@@ -25,7 +25,9 @@ thread_profiler = []
 log                 = { version = "0.4.6", features = ["std"] }
 failure             = { version = "0.1.5" }
 ndarray             = { version = "0.12.1", default-features = true }
+ndarray-rand        = { version = "0.9.0" }
 nearly_eq           = { version = "0.2.4", features = ["ndarray"] }
+rand                = { version = "0.6.5" }
 num-traits          = "0.2.6"
 pretty_env_logger   = "0.3"
 profiler            = { package = "thread_profiler", version = "0.3.0", optional = false }
