@@ -166,7 +166,7 @@ where
 /// Does NOT check for a square matrix!
 fn dense_get_rs<Scalar, S1, S2>(mat_a: ArrayBase<S1, Ix2>, p: &[usize], mut b: ArrayBase<S2, Ix1>)
 where
-    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + std::fmt::Debug,
+    Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef,
     S1: ndarray::Data<Elem = Scalar>,
     S2: ndarray::DataMut<Elem = Scalar>,
 {
@@ -176,26 +176,23 @@ where
     for k in 0..n {
         let pk = p[k];
         if pk != k {
-            let tmp = b[k];
-            b[k] = b[pk];
-            b[pk] = tmp;
+            b.swap([k], [pk]);
         }
     }
 
     // Solve Ly = b, store solution y in b
     for k in 0..(n - 1) {
+        let bk = b[k];
         for i in (k + 1)..n {
-            let bk = b[k];
             b[i] -= mat_a[[i, k]] * bk;
         }
     }
 
     // Solve Ux = y, store solution x in b
-    for k in (0..n).rev() {
+    for k in (1..n).rev() {
         b[k] /= mat_a[[k, k]];
+        let bk = b[k];
         for i in 0..k {
-            println!("i={},k={}", i, k);
-            let bk = b[k];
             b[i] -= mat_a[[i, k]] * bk;
         }
     }
@@ -205,12 +202,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::array;
+    use nearly_eq::assert_nearly_eq;
+
+    #[test]
+    fn test_get_rs() {
+        // 2nd test
+        let mat_a_decomp = array![
+            [-46190.4,      0.0,          0.00865982],
+            [-8.65981e-07, -46242.3,     -0.00865981],
+            [-2.16495e-05, -2.16252e-05,  1.0]
+        ];
+        let mut b = array![-3.4639284579585095e-08, 2.2532389959396826e-05, -0.0];
+        dense_get_rs(mat_a_decomp, &vec![0, 1, 2], b.view_mut());
+        let x_expect = array![
+            7.5001558608301906e-13,
+            -4.8726813621044346e-10,
+            4.8651812062436036e-10
+        ];
+        dbg!(&b);
+        assert_nearly_eq!(b, x_expect, 1e-15);
+    }
 
     #[test]
     fn test_dense1() {
-        use ndarray::array;
-        use nearly_eq::assert_nearly_eq;
-
         let mut mat_a = array![
             [-46190.370416726822, 0.0, 0.0086598211441923072,],
             [0.04, -46242.289343591976, -0.0086598211441923072],
@@ -258,22 +273,6 @@ mod tests {
             .solve(mat_a, x.view_mut(), array![0.25, 1.25, 1.0], 0.0)
             .unwrap();
         assert_eq!(x, array![0.375, 0., -0.125]);
-
-        // 2nd test
-        let mat_a_decomp = array![
-            [-46190.4, 0.0, 0.00865982],
-            [-8.65981e-07, -46242.3, -0.00865981],
-            [-2.16495e-05, -2.16252e-05, 1.0]
-        ];
-        let mut b = array![-3.4639284579585095e-08, 2.2532389959396826e-05, -0.0];
-        dense_get_rs(mat_a_decomp, &vec![0, 1, 2], b.view_mut());
-        let x_expect = array![
-            7.5001558608301906e-13,
-            -4.8726813621044346e-10,
-            4.8651812062436036e-10
-        ];
-        dbg!(&b);
-        assert_nearly_eq!(b, x_expect, 1e-15);
     }
 
     #[test]
@@ -306,6 +305,7 @@ mod tests {
         dbg!(&dense);
 
         let b_comp = mat_a_original.dot(&x);
+        assert_nearly_eq!(&b_comp, &b, 1e-15);
         println!("b (original) = {:#?}", &b);
         println!("b (computed) = {:#?}", &b_comp);
     }
