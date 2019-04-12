@@ -31,3 +31,10 @@ rand                = { version = "0.6.5" }
 num-traits          = "0.2.6"
 pretty_env_logger   = "0.3"
 profiler            = { package = "thread_profiler", version = "0.3.0", optional = false }
+
+[dev-dependencies]
+criterion = "0.2.11"
+
+[[bench]]
+name = "dense"
+harness = false

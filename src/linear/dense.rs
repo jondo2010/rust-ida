@@ -275,38 +275,4 @@ mod tests {
         assert_eq!(x, array![0.375, 0., -0.125]);
     }
 
-    #[test]
-    fn test_dense2() {
-        use ndarray::s;
-        use ndarray_rand::RandomExt;
-        use rand::distributions::Uniform;
-
-        const COLS: usize = 5;
-
-        // Fill A matrix with uniform random data in [0,1/cols]
-        // Add anti-identity to ensure the solver needs to do row-swapping
-        let mut mat_a = Array::random((COLS, COLS), Uniform::new(0., 1.0 / (COLS as f64)));
-        //+ Array::eye(COLS).slice_move(s![.., ..;-1]);
-        let mat_a_original = mat_a.clone();
-
-        // Fill x vector with uniform random data in [0,1]
-        let mut x = Array::random(COLS, Uniform::new(0.0, 1.0));
-        let b = x.clone();
-
-        let mut dense = Dense::new(COLS);
-        println!("A (original) = {:#?}", &mat_a);
-        dense.setup(mat_a.view_mut()).unwrap();
-        println!("A (factored) = {:#?}", &mat_a);
-
-        println!("x (original) = {:#?}", &x);
-        dense.solve(mat_a, x.view_mut(), b.view(), 0.0).unwrap();
-        println!("x (computed) = {:#?}", &x);
-
-        dbg!(&dense);
-
-        let b_comp = mat_a_original.dot(&x);
-        assert_nearly_eq!(&b_comp, &b, 1e-15);
-        println!("b (original) = {:#?}", &b);
-        println!("b (computed) = {:#?}", &b_comp);
-    }
 }
