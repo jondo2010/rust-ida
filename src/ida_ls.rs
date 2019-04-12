@@ -368,8 +368,6 @@ where
         // Call solver
         let retval = self.ls.solve(self.J.view(), self.x.view_mut(), b.view(), tol);
 
-        trace!("solved for b={:?}, x={:?}", &b, &self.x);
-
         // Copy appropriate result to b (depending on solver type)
         if let LSolverType::Iterative | LSolverType::MatrixIterative = ls_type {
             // Retrieve solver statistics

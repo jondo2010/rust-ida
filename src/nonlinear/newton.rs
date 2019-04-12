@@ -3,8 +3,6 @@ use ndarray::prelude::*;
 use crate::nonlinear::traits::*;
 use crate::traits::ModelSpec;
 
-use log::trace;
-
 #[derive(Debug)]
 pub struct Newton<M: ModelSpec> {
     /// Newton update vector
@@ -69,7 +67,6 @@ where
             let retval = problem
                 .sys(y0.view(), self.delta.view_mut())
                 .and_then(|_| {
-                    trace!("delta first {:?}", &self.delta);
                     // if indicated, setup the linear system
                     if call_lsetup {
                         problem
@@ -91,14 +88,11 @@ where
                         // compute the negative of the residual for the linear system rhs
                         self.delta.mapv_inplace(M::Scalar::neg);
                         // solve the linear system to get Newton update delta
-                        trace!("delta before {:?}", &self.delta);
-                        trace!("y before {:?}", &y);
                         let retval =
                             problem
                                 .solve(y.view(), self.delta.view_mut())
                                 .and_then(|_| {
                                     // update the Newton iterate
-                                    trace!("delta after {:?}", &self.delta);
                                     y += &self.delta;
                                     // test for convergence
                                     problem

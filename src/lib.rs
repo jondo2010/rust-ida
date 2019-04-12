@@ -512,15 +512,10 @@ where
                 self.initial_setup();
                 self.ida_setup_done = true;
             }
-            /*
-            if (self.ida_SetupDone == SUNFALSE) {
-              ier = IDAInitialSetup(IDA_mem);
-              if (ier != IDA_SUCCESS) return(IDA_ILL_INPUT);
-              self.ida_SetupDone = SUNTRUE;
-            }
-            */
 
-            // On first call, check for tout - tn too small, set initial hh, check for approach to tstop, and scale phi[1] by hh. Also check for zeros of root function g at and near t0.
+            // On first call, check for tout - tn too small, set initial hh, check for approach to
+            // tstop, and scale phi[1] by hh.
+            // Also check for zeros of root function g at and near t0.
 
             let tdist = (tout - self.nlp.ida_tn).abs();
             if tdist == P::Scalar::zero() {
@@ -739,7 +734,6 @@ where
                 &self.nlp.ida_ewt,
                 self.ida_suppressalg,
             );
-            trace!("nrm = {:?}", nrm);
 
             self.ida_tolsf = P::Scalar::epsilon() * nrm;
             if self.ida_tolsf > P::Scalar::one() {
@@ -1167,6 +1161,7 @@ where
                         * P::Scalar::epsilon()
                         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
                     if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
+                        unimplemented!();
                         /*
                         self.get_solution(self.ida_tstop, yret, ypret)
                             .map_err(|e| IdaError::BadStopTime {
@@ -1730,7 +1725,7 @@ where
         };
 
         // Perform error test
-        (err_k, err_km1, (ck * enorm_k) > P::Scalar::one())
+        (err_k, err_km1, (ck * enorm_k) <= P::Scalar::one())
     }
 
     /// IDARestore
@@ -1937,7 +1932,7 @@ where
     /// array.
     fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
         self.ida_nst += 1;
-        let kdiff = self.ida_kk - self.ida_kused;
+        let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);
         self.ida_kused = self.ida_kk;
         self.ida_hused = self.ida_hh;
 
@@ -2127,15 +2122,13 @@ where
     {
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
-        //tfuzz = HUNDRED * self.ida_uround * (SUNRabs(self.nlp.ida_tn) + SUNRabs(self.ida_hh));
-
-        let mut tfuzz = P::Scalar::hundred()
+        let tfuzz = P::Scalar::hundred()
             * P::Scalar::epsilon()
             * (self.nlp.ida_tn.abs() + self.ida_hh.abs())
             * self.ida_hh.signum();
-        //if self.ida_hh < P::Scalar::zero() { tfuzz = -tfuzz; }
+
         let tp = self.nlp.ida_tn - self.ida_hused - tfuzz;
-        if (t - tp) * self.ida_hh < P::Scalar::zero() {
+        if ((t - tp) * self.ida_hh) < P::Scalar::zero() {
             Err(IdaError::BadTimeValue {
                 t: t.to_f64().unwrap(),
                 tdiff: (self.nlp.ida_tn - self.ida_hused).to_f64().unwrap(),
