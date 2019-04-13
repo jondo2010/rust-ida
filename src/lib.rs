@@ -6,6 +6,7 @@
 
 mod constants;
 mod error;
+mod ida_io;
 mod ida_ls;
 mod ida_nls;
 pub mod linear;
@@ -99,6 +100,7 @@ where
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum IdaTask {
     Normal,
     OneStep,
@@ -109,6 +111,21 @@ pub enum IdaSolveStatus {
     Success,
     TStop,
     Root,
+}
+
+/// Counters
+#[derive(Debug, Clone)]
+pub struct IdaCounters {
+    /// number of internal steps taken
+    ida_nst: usize,
+    /// number of function (res) calls
+    ida_nre: usize,
+    /// number of corrector convergence failures
+    ida_ncfn: usize,
+    /// number of error test failures
+    ida_netf: usize,
+    /// number of Newton iterations performed
+    ida_nni: usize,
 }
 
 /// This structure contains fields to keep track of problem state.
@@ -171,8 +188,7 @@ where
     //ida_dtemp;       /* work vector in IDACalcIC (= phi[3])            */
 
     // Tstop information
-    ida_tstopset: bool,
-    ida_tstop: P::Scalar,
+    ida_tstop: Option<P::Scalar>,
 
     // Step Data
     /// current BDF method order
@@ -196,8 +212,8 @@ where
     ida_hused: P::Scalar,
     /// rr = hnext / hused
     ida_rr: P::Scalar,
-    /// current internal value of t
-    //pub(super) ida_tn: P::Scalar,
+
+
     /// value of tret previously returned by IDASolve
     ida_tretlast: P::Scalar,
     /// current value of scalar (-alphas/hh) in Jacobian
@@ -233,19 +249,19 @@ where
     /// inverse of max. step size hmax (default = 0.0)
     ida_hmax_inv: P::Scalar,
 
-    // Counters
+    //// Counters
+    counters: IdaCounters,
+
     /// number of internal steps taken
-    ida_nst: u64,
+    //ida_nst: u64,
     /// number of function (res) calls
     //pub(super) ida_nre: u64,
     /// number of corrector convergence failures
-    ida_ncfn: u64,
+    //ida_ncfn: u64,
     /// number of error test failures
-    ida_netf: u64,
+    //ida_netf: u64,
     /// number of Newton iterations performed
-    ida_nni: u64,
-    /// number of lsetup calls
-    //pub(super) ida_nsetups: u64,
+    //ida_nni: u64,
     // Arrays for Fused Vector Operations
     ida_cvals: Array1<P::Scalar>,
     ida_dvals: Array1<P::Scalar>,
@@ -352,7 +368,6 @@ where
             //ida_id          = NULL;
             ida_constraints: Array::zeros(problem.model_size()),
             ida_constraints_set: false,
-            ida_tstopset: false,
 
             ida_cjlast: P::Scalar::zero(),
 
@@ -383,10 +398,15 @@ where
             ida_id: Array::from_elem(problem.model_size(), false),
 
             // Initialize all the counters and other optional output values
-            ida_nst: 0,
-            ida_ncfn: 0,
-            ida_netf: 0,
-            ida_nni: 0,
+            counters: IdaCounters {
+                ida_nst: 0,
+                ida_ncfn: 0,
+                ida_netf: 0,
+                ida_nni: 0,
+
+                ida_nre: 0,
+            },
+
             ida_kused: 0,
             ida_hused: P::Scalar::zero(),
             ida_tolsf: P::Scalar::one(),
@@ -410,7 +430,7 @@ where
             // Not from ida.c...
             ida_ee: Array::zeros(problem.model_size()),
 
-            ida_tstop: P::Scalar::zero(),
+            ida_tstop: None,
 
             ida_kk: 0,
             ida_knew: 0,
@@ -504,7 +524,7 @@ where
         ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
         ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
     {
-        if self.ida_nst == 0 {
+        if self.counters.ida_nst == 0 {
             // This is the first call
 
             // Check inputs to IDA for correctness and consistency */
@@ -560,21 +580,19 @@ where
                 self.ida_hh /= rh;
             }
 
-            if self.ida_tstopset {
-                if (self.ida_tstop - self.nlp.ida_tn) * self.ida_hh <= P::Scalar::zero() {
+            if let Some(tstop) = self.ida_tstop {
+                if (tstop - self.nlp.ida_tn) * self.ida_hh <= P::Scalar::zero() {
                     Err(IdaError::IllegalInput {
                         msg: format!(
                             "The value tstop = {:?} \
                              is behind current t = {:?} \
                              in the direction of integration.",
-                            self.ida_tstop, self.nlp.ida_tn
+                            tstop, self.nlp.ida_tn
                         ),
                     })?
                 }
-                if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-                    > P::Scalar::zero()
-                {
-                    self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
+                if (self.nlp.ida_tn + self.ida_hh - tstop) * self.ida_hh > P::Scalar::zero() {
+                    self.ida_hh = (tstop - self.nlp.ida_tn)
                         * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
                 }
             }
@@ -603,12 +621,12 @@ where
         } // end of first-call block.
 
         // Call lperf function and set nstloc for later performance testing.
-        //if self.ida_lperf != NULL {self.ida_lperf(IDA_mem, 0);}
+        self.nlp.lp.ls_perf(&self.counters, false);
         let mut nstloc = 0;
 
         // If not the first call, perform all stopping tests.
 
-        if self.ida_nst > 0 {
+        if self.counters.ida_nst > 0 {
             // First, check for a root in the last step taken, other than the last root found, if
             // any.  If itask = IDA_ONE_STEP and y(tn) was not returned because of an intervening
             // root, return y(tn) now.
@@ -658,9 +676,16 @@ where
 
             // Now test for all other stop conditions.
 
-            let istate = self.stop_test1(tout, tret, yret, ypret, &itask)?;
-            //let istate = IDAStopTest1(tout, tret, yret, ypret, itask);
-            //if istate != CONTINUE_STEPS { return (istate); }
+            let istate = self.stop_test1(tout, tret, yret, ypret, itask);
+            match istate {
+                Err(_)
+                | Ok(IdaSolveStatus::Root)
+                | Ok(IdaSolveStatus::Success)
+                | Ok(IdaSolveStatus::TStop) => {
+                    return istate;
+                }
+                _ => {}
+            }
         }
 
         // Looping point for internal steps.
@@ -683,11 +708,10 @@ where
 
             // Call lperf to generate warnings of poor performance.
 
-            //if (self.ida_lperf != NULL)
-            //  self.ida_lperf(IDA_mem, 1);
+            self.nlp.lp.ls_perf(&self.counters, true);
 
             // Reset and check ewt (if not first call).
-            if self.ida_nst > 0 {
+            if self.counters.ida_nst > 0 {
                 self.tol_control.ewt_set(
                     self.ida_phi.index_axis(Axis(0), 0),
                     self.nlp.ida_ewt.view_mut(),
@@ -741,7 +765,7 @@ where
 
                 *tret = self.nlp.ida_tn;
                 self.ida_tretlast = self.nlp.ida_tn;
-                if self.ida_nst > 0 {
+                if self.counters.ida_nst > 0 {
                     let ier = self.get_solution(self.nlp.ida_tn, yret, ypret);
                 }
                 //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_TOO_MUCH_ACC, self.nlp.ida_tn);
@@ -797,7 +821,7 @@ where
                  * some event functions that are inactive, issue a warning
                  * as this may indicate a user error in the implementation
                  * of the root function. */
-                if (self.ida_nst==1) {
+                if (self.counters.ida_nst==1) {
                 inactive_roots = SUNFALSE;
                 for (ir=0; ir<self.ida_nrtfn; ir++) {
                 if (!self.ida_gactive[ir]) {
@@ -814,7 +838,16 @@ where
 
             // Now check all other stop conditions.
 
-            self.stop_test2(tout, tret, yret, ypret, &itask)?;
+            let istate = self.stop_test2(tout, tret, yret, ypret, itask);
+            match istate {
+                Err(_)
+                | Ok(IdaSolveStatus::Root)
+                | Ok(IdaSolveStatus::Success)
+                | Ok(IdaSolveStatus::TStop) => {
+                    return istate;
+                }
+                _ => {}
+            }
         } // End of step loop
 
         //return(istate);
@@ -961,14 +994,6 @@ where
         );
 
         /*
-        if (ier != 0) {
-          if (IDA_mem->ida_itol == IDA_WF)
-            IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_FAIL_EWT);
-          else
-            IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_BAD_EWT);
-          return(IDA_ILL_INPUT);
-        }
-
         // Check to see if y0 satisfies constraints.
         if (IDA_mem->ida_constraintsSet) {
           conOK = N_VConstrMask(IDA_mem->ida_constraints, IDA_mem->ida_phi[0], IDA_mem->ida_tempv2);
@@ -1120,7 +1145,7 @@ where
         tret: &mut P::Scalar,
         yret: &mut ArrayBase<S1, Ix1>,
         ypret: &mut ArrayBase<S2, Ix1>,
-        itask: &IdaTask,
+        itask: IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error>
     where
         S1: ndarray::DataMut<Elem = P::Scalar>,
@@ -1130,13 +1155,13 @@ where
     {
         match itask {
             IdaTask::Normal => {
-                if self.ida_tstopset {
+                if let Some(tstop) = self.ida_tstop {
                     // Test for tn past tstop, tn = tretlast, tn past tout, tn near tstop.
-                    if (self.nlp.ida_tn - self.ida_tstop) * self.ida_hh > P::Scalar::zero() {
+                    if ((self.nlp.ida_tn - tstop) * self.ida_hh) > P::Scalar::zero() {
                         //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.nlp.ida_tn);
                         //return(IDA_ILL_INPUT);
                         Err(IdaError::BadStopTime {
-                            tstop: self.ida_tstop.to_f64().unwrap(),
+                            tstop: tstop.to_f64().unwrap(),
                             t: self.nlp.ida_tn.to_f64().unwrap(),
                         })?
                     }
@@ -1149,49 +1174,43 @@ where
                     return Ok(IdaSolveStatus::Success);
                 }
 
-                if (self.nlp.ida_tn - tout) * self.ida_hh >= P::Scalar::zero() {
+                if dbg!((self.nlp.ida_tn - tout) * self.ida_hh) >= P::Scalar::zero() {
+                    self.get_solution(tout, yret, ypret)?;
                     self.ida_tretlast = tout;
                     *tret = tout;
-                    self.get_solution(tout, yret, ypret)?;
                     return Ok(IdaSolveStatus::Success);
                 }
 
-                if self.ida_tstopset {
+                if let Some(tstop) = self.ida_tstop {
                     let troundoff = P::Scalar::hundred()
                         * P::Scalar::epsilon()
                         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
-                    if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
-                        unimplemented!();
-                        /*
-                        self.get_solution(self.ida_tstop, yret, ypret)
-                            .map_err(|e| IdaError::BadStopTime {
-                                tstop: self.ida_tstop.to_f64().unwrap(),
+
+                    if (self.nlp.ida_tn - tstop).abs() <= troundoff {
+                        self.get_solution(tstop, yret, ypret).map_err(|_| {
+                            IdaError::BadStopTime {
+                                tstop: tstop.to_f64().unwrap(),
                                 t: self.nlp.ida_tn.to_f64().unwrap(),
-                            })
-                            .and_then(|_| {
-                                self.ida_tretlast = self.ida_tstop;
-                                *tret = self.ida_tstop;
-                                self.ida_tstopset = false;
-                            })
-                        */
-                        //if (ier != IDA_SUCCESS) {
-                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.nlp.ida_tn);
-                        //return(IDA_ILL_INPUT);
-                        //}
-                        //return Ok(IdaSolveStatus::TStop);
+                            }
+                        })?;
+
+                        self.ida_tretlast = tstop;
+                        *tret = tstop;
+                        self.ida_tstop = None;
+                        return Ok(IdaSolveStatus::TStop);
                     }
 
-                    if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-                        > P::Scalar::zero()
-                    {
-                        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
+                    if (self.nlp.ida_tn + self.ida_hh - tstop) * self.ida_hh > P::Scalar::zero() {
+                        self.ida_hh = (tstop - self.nlp.ida_tn)
                             * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
                     }
                 }
 
                 Ok(IdaSolveStatus::ContinueSteps)
             }
-            IdaTask::OneStep => Ok(IdaSolveStatus::Success),
+            IdaTask::OneStep => {
+                unimplemented!();
+            }
         }
     }
 
@@ -1220,7 +1239,7 @@ where
         tret: &mut P::Scalar,
         yret: &mut ArrayBase<S1, Ix1>,
         ypret: &mut ArrayBase<S2, Ix1>,
-        itask: &IdaTask,
+        itask: IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error>
     where
         S1: ndarray::DataMut<Elem = P::Scalar>,
@@ -1235,28 +1254,26 @@ where
                     // /* ier = */ IDAGetSolution(IDA_mem, tout, yret, ypret);
                     *tret = tout;
                     self.ida_tretlast = tout;
-                    self.get_solution(tout, yret, ypret)?;
+                    let ier = self.get_solution(tout, yret, ypret);
                     return Ok(IdaSolveStatus::Success);
                 }
 
-                if self.ida_tstopset {
+                if let Some(tstop) = self.ida_tstop {
                     // Test for tn at tstop and for tn near tstop
                     let troundoff = P::Scalar::hundred()
                         * P::Scalar::epsilon()
                         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
 
-                    if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
-                        *tret = self.ida_tstop;
-                        self.ida_tretlast = self.ida_tstop;
-                        self.ida_tstopset = false;
-                        self.get_solution(self.ida_tstop, yret, ypret)?;
+                    if (self.nlp.ida_tn - tstop).abs() <= troundoff {
+                        let ier = self.get_solution(tstop, yret, ypret);
+                        *tret = tstop;
+                        self.ida_tretlast = tstop;
+                        self.ida_tstop = None;
                         return Ok(IdaSolveStatus::TStop);
                     }
 
-                    if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-                        > P::Scalar::zero()
-                    {
-                        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
+                    if (self.nlp.ida_tn + self.ida_hh - tstop) * self.ida_hh > P::Scalar::zero() {
+                        self.ida_hh = (tstop - self.nlp.ida_tn)
                             * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
                     }
                 }
@@ -1267,32 +1284,28 @@ where
                 //return(CONTINUE_STEPS);
             }
             IdaTask::OneStep => {
-                if self.ida_tstopset {
+                if let Some(tstop) = self.ida_tstop {
                     // Test for tn at tstop and for tn near tstop
                     let troundoff = P::Scalar::hundred()
                         * P::Scalar::epsilon()
                         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
-                    if (self.nlp.ida_tn - self.ida_tstop).abs() <= troundoff {
-                        /* ier = */
-                        //IDAGetSolution(IDA_mem, self.ida_tstop, yret, ypret);
-                        *tret = self.ida_tstop;
-                        self.ida_tretlast = self.ida_tstop;
-                        self.ida_tstopset = false;
-                        self.get_solution(self.ida_tstop, yret, ypret)?;
-                        //return(IDA_TSTOP_RETURN);
+
+                    if (self.nlp.ida_tn - tstop).abs() <= troundoff {
+                        let ier = self.get_solution(tstop, yret, ypret);
+                        *tret = tstop;
+                        self.ida_tretlast = tstop;
+                        self.ida_tstop = None;
+                        return Ok(IdaSolveStatus::TStop);
                     }
-                    if (self.nlp.ida_tn + self.ida_hh - self.ida_tstop) * self.ida_hh
-                        > P::Scalar::zero()
-                    {
-                        self.ida_hh = (self.ida_tstop - self.nlp.ida_tn)
+                    if (self.nlp.ida_tn + self.ida_hh - tstop) * self.ida_hh > P::Scalar::zero() {
+                        self.ida_hh = (tstop - self.nlp.ida_tn)
                             * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
                     }
                 }
 
                 *tret = self.nlp.ida_tn;
                 self.ida_tretlast = self.nlp.ida_tn;
-                //return (IDA_SUCCESS);
-                return Ok(IdaSolveStatus::ContinueSteps);
+                return Ok(IdaSolveStatus::Success);
             }
         }
 
@@ -1348,7 +1361,7 @@ where
 
         let saved_t = self.nlp.ida_tn;
 
-        if self.ida_nst == 0 {
+        if self.counters.ida_nst == 0 {
             self.ida_kk = 1;
             self.ida_kused = 0;
             self.ida_hused = P::Scalar::one();
@@ -1360,8 +1373,6 @@ where
 
         let mut ncf = 0; // local counter for convergence failures
         let mut nef = 0; // local counter for error test failures
-
-        trace!("step() tn={:?}", self.nlp.ida_tn);
 
         // Looping point for attempts to take a step
 
@@ -1379,11 +1390,11 @@ where
             //-----------------------------------------------------
 
             self.nlp.ida_tn += self.ida_hh;
-            if self.ida_tstopset
-                && ((self.nlp.ida_tn - self.ida_tstop) * self.ida_hh > P::Scalar::one())
-            {
-                self.nlp.ida_tn = self.ida_tstop;
-            }
+            self.ida_tstop.map(|tstop| {
+                if ((self.nlp.ida_tn - tstop) * self.ida_hh) > P::Scalar::one() {
+                    self.nlp.ida_tn = tstop;
+                }
+            });
 
             //-----------------------
             // Advance state variables
@@ -1414,7 +1425,7 @@ where
                     self.handle_n_flag(err, err_k, err_km1, &mut ncf, &mut nef)
                         .map(|_| {
                             // recoverable error; predict again
-                            if self.ida_nst == 0 {
+                            if self.counters.ida_nst == 0 {
                                 self.reset();
                             }
 
@@ -1519,7 +1530,7 @@ where
         // Initialize if the first time called
         let mut call_lsetup = false;
 
-        if self.ida_nst == 0 {
+        if self.counters.ida_nst == 0 {
             self.nlp.lp.ida_cjold = self.nlp.lp.ida_cj;
             self.nlp.ida_ss = P::Scalar::twenty();
             //if (self.ida_lsetup) { callLSetup = true; }
@@ -1541,9 +1552,7 @@ where
         //}
 
         // initial guess for the correction to the predictor
-        //N_VConst(ZERO, self.ida_delta);
-        //TODO Fix this
-        self.ida_delta = Array::zeros(self.nlp.lp.problem.model_size());
+        self.ida_delta.fill(P::Scalar::zero());
 
         // call nonlinear solver setup if it exists
         self.nls.setup(&mut self.ida_delta)?;
@@ -1568,7 +1577,6 @@ where
         );
 
         // update yy and yp based on the final correction from the nonlinear solve
-        //N_VLinearSum(ONE, self.ida_yypredict, ONE, self.ida_ee, self.ida_yy);
         self.nlp.ida_yy = &self.nlp.ida_yypredict + &self.ida_ee;
         //N_VLinearSum( ONE, self.ida_yppredict, self.ida_cj, self.ida_ee, self.ida_yp,);
         //self.ida_yp = &self.ida_yppredict + (&self.ida_ee * self.ida_cj);
@@ -1680,15 +1688,14 @@ where
         P::Scalar, // err_km1
         bool,      // nflag
     ) {
-        //realtype enorm_k, enorm_km1, enorm_km2;   /* error norms */
-        //realtype terr_k, terr_km1, terr_km2;      /* local truncation error norms */
         // Compute error for order k.
         let enorm_k = self.wrms_norm(&self.ida_ee, &self.nlp.ida_ewt, self.ida_suppressalg);
-        let err_k = self.ida_sigma[self.ida_kk] * enorm_k;
-        let terr_k = err_k * <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap();
-
+        let err_k = self.ida_sigma[self.ida_kk] * enorm_k; // error norms
         let mut err_km1 = P::Scalar::zero(); // estimated error at k-1
         let mut err_km2 = P::Scalar::zero(); // estimated error at k-2
+
+        // local truncation error norm
+        let terr_k = err_k * <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap();
 
         self.ida_knew = self.ida_kk;
 
@@ -1813,10 +1820,8 @@ where
         error: failure::Error,
         err_k: P::Scalar,
         err_km1: P::Scalar,
-        //long int *ncfnPtr,
-        ncfPtr: &mut u64,
-        //long int *netfPtr,
-        nefPtr: &mut u64,
+        ncf_ptr: &mut u64,
+        nef_ptr: &mut u64,
     ) -> Result<(), failure::Error> {
         use failure::format_err;
 
@@ -1827,8 +1832,8 @@ where
             .downcast::<IdaError>()
             .map_err(|e| {
                 // nonrecoverable failure
-                *ncfPtr += 1; // local counter for convergence failures
-                self.ida_ncfn += 1; // global counter for convergence failures
+                *ncf_ptr += 1; // local counter for convergence failures
+                self.counters.ida_ncfn += 1; // global counter for convergence failures
                 e
             })
             .and_then(|error: IdaError| {
@@ -1838,10 +1843,10 @@ where
                         // Error Test failed
                         //------------------
 
-                        *nefPtr += 1; // local counter for error test failures
-                        self.ida_netf += 1; // global counter for error test failures
+                        *nef_ptr += 1; // local counter for error test failures
+                        self.counters.ida_netf += 1; // global counter for error test failures
 
-                        if *nefPtr == 1 {
+                        if *nef_ptr == 1 {
                             // On first error test failure, keep current order or lower order by one.
                             // Compute new stepsize based on differences of the solution.
 
@@ -1864,7 +1869,7 @@ where
 
                             //return(PREDICT_AGAIN);
                             Ok(())
-                        } else if *nefPtr == 2 {
+                        } else if *nef_ptr == 2 {
                             // On second error test failure, use current order or decrease by one.
                             // Reduce stepsize by factor of 1/4.
 
@@ -1874,7 +1879,7 @@ where
 
                             //return(PREDICT_AGAIN);
                             Ok(())
-                        } else if *nefPtr < self.ida_maxnef {
+                        } else if *nef_ptr < self.ida_maxnef {
                             // On third and subsequent error test failures, set order to 1. Reduce
                             // stepsize by factor of 1/4.
                             self.ida_kk = 1;
@@ -1892,8 +1897,8 @@ where
                     _ => {
                         // recoverable failure
 
-                        *ncfPtr += 1; // local counter for convergence failures
-                        self.ida_ncfn += 1; // global counter for convergence failures
+                        *ncf_ptr += 1; // local counter for convergence failures
+                        self.counters.ida_ncfn += 1; // global counter for convergence failures
 
                         // Reduce step size for a new prediction
                         // Note that if nflag=IDA_CONSTR_RTolCVR then rr was already set in IDANls
@@ -1901,7 +1906,7 @@ where
                         self.ida_hh *= self.ida_rr;
 
                         // Test if there were too many convergence failures
-                        if *ncfPtr < self.ida_maxncf {
+                        if *ncf_ptr < self.ida_maxncf {
                             //return(PREDICT_AGAIN);
                             Ok(())
                         //} else if nflag == IDA_RES_RTolCVR {
@@ -1922,7 +1927,6 @@ where
     /// reset phi[1] and psi[0].
     fn reset(&mut self) -> () {
         self.ida_psi[0] = self.ida_hh;
-        //N_VScale(self.ida_rr, self.ida_phi[1], self.ida_phi[1]);
         self.ida_phi *= self.ida_rr;
     }
 
@@ -1931,7 +1935,7 @@ where
     /// used, makes the final selection of stepsize and order for the next step, and updates the phi
     /// array.
     fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
-        self.ida_nst += 1;
+        self.counters.ida_nst += 1;
         let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);
         self.ida_kused = self.ida_kk;
         self.ida_hused = self.ida_hh;
@@ -1949,7 +1953,7 @@ where
         // neccessary information is available yet.
 
         if self.ida_phase == 0 {
-            if self.ida_nst > 1 {
+            if self.counters.ida_nst > 1 {
                 self.ida_kk += 1;
                 let mut hnew = P::Scalar::two() * self.ida_hh;
                 let tmp = hnew.abs() * self.ida_hmax_inv;
@@ -2591,7 +2595,7 @@ mod tests {
         let knew = 4;
         let err_k = 29.10297975314245;
         let err_km1 = 3.531162835377502;
-        let nflag = true;
+        let nflag = false;
 
         let problem = Dummy {};
         let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
@@ -2619,7 +2623,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_test_error2() {
         //--- IDATestError Before:
         let ck = 0.2025812352167927;
@@ -2675,7 +2678,7 @@ mod tests {
         let knew = 4;
         let err_k = 0.2561137489433976;
         let err_km1 = 0.455601916633899;
-        let nflag = false;
+        let nflag = true;
 
         let problem = Dummy {};
         let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
@@ -3086,7 +3089,7 @@ mod tests {
             TolControlSS::new(1e-4, 1e-4),
         );
 
-        ida.ida_nst = nst;
+        ida.counters.ida_nst = nst;
         ida.ida_kk = kk;
         ida.ida_hh = hh;
         ida.ida_rr = rr;
@@ -3129,7 +3132,7 @@ mod tests {
         let nst = 358;
         let maxord = 5;
 
-        assert_eq!(ida.ida_nst, nst);
+        assert_eq!(ida.counters.ida_nst, nst);
         assert_eq!(ida.ida_kk, kk);
         assert_eq!(ida.ida_hh, hh);
         assert_nearly_eq!(ida.ida_rr, rr, 1e-6);

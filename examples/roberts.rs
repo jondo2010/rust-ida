@@ -13,7 +13,6 @@
 //! The problem is solved with IDA using the DENSE linear solver, with a user-supplied Jacobian.
 //! Output is printed at t = .4, 4, 40, ..., 4e10.
 
-//#[feature(test)]
 use ida::{linear::*, nonlinear::*, traits::*, *};
 
 use ndarray::{array, prelude::*};
@@ -77,32 +76,89 @@ impl Jacobian for Roberts {
     }
 }
 
-#[test]
-fn test_dense() {
+use prettytable::{cell, row, Cell, Row, Table, table};
+
+fn main() {
     pretty_env_logger::init();
     profiler::register_thread_with_profiler();
+
+    const RTOL: f64 = 1.0e-4;
+    const ATOL: [f64; 3] = [1.0e-8, 1.0e-6, 1.0e-6];
 
     let problem = Roberts {};
 
     let yy0 = array![1.0, 0.0, 0.0];
     let yp0 = array![-0.04, 0.04, 0.0];
-    let ec = TolControlSV::new(1.0e-4, array![1.0e-8, 1.0e-6, 1.0e-6]);
+
+    let ec = TolControlSV::new(RTOL, ndarray::Array1::from_iter(ATOL.iter().cloned()));
     let t0 = 0.0;
-    let mut tout = 0.4;
-    let mut tret = 0.0;
     let mut yy = ndarray::Array::zeros(problem.model_size());
     let mut yp = ndarray::Array::zeros(problem.model_size());
 
+    let header = &[
+        "idaRoberts_dns: Robertson kinetics DAE serial example problem for IDA Three equation chemical kinetics problem.",
+        "Linear solver: DENSE, with user-supplied Jacobian.",
+        &format!("Tolerance parameters: rtol = {:.5e} atol = {:.5?}", RTOL, ATOL),
+        &format!("Initial conditions y0 = [{:.5e} {:.5e} {:.5e}]", yy0[0], yy0[1], yy0[2]),
+        "Constraints and id not used.",
+    ].join("\n");
+
+    let th = table!([header]);
+    th.printstd();
+
+    let mut table_out = Table::new();
+    table_out.set_titles(row!["t", "y1", "y2", "y3", "nst", "k", "h"]);
+
     let mut ida: Ida<_, Dense<_>, Newton<_>, _> = Ida::new(problem, yy0, yp0, ec);
 
-    let res = ida.solve(
-        tout,
-        &mut tret,
-        &mut yy.view_mut(),
-        &mut yp.view_mut(),
-        IdaTask::Normal,
-    );
-    //dbg!(&ida);
-    profiler::write_profile("profile.json");
-    res.unwrap();
+    // In loop, call IDASolve, print results, and test for error.
+    // Break out of loop when NOUT preset output times have been reached.
+
+    let mut iout = 0;
+    let mut tout = 0.4;
+    let retval = loop {
+        let mut tret = 0.0;
+
+        let retval = ida.solve(
+            tout,
+            &mut tret,
+            &mut yy.view_mut(),
+            &mut yp.view_mut(),
+            IdaTask::Normal,
+        );
+
+        let nst = ida.get_num_steps();
+        let kused = ida.get_last_order();
+        let hused = ida.get_last_step();
+
+        table_out.add_row(row![
+            format!("{:.5e}", tret),
+            format!("{:.5e}", yy[0]),
+            format!("{:.5e}", yy[1]),
+            format!("{:.5e}", yy[2]),
+            nst,
+            kused,
+            format!("{:.5e}", hused),
+        ]);
+
+        match retval {
+            Err(_) => {
+                break retval.map(|_| ());
+            }
+            Ok(IdaSolveStatus::Root) => {}
+            Ok(IdaSolveStatus::Success) => {
+                iout += 1;
+                tout *= 10.0;
+            }
+            _ => {}
+        }
+
+        if iout == 12 {
+            break Ok(());
+        }
+    };
+
+    table_out.printstd();
+    dbg!(retval);
+    //profiler::write_profile("profile.json");
 }

@@ -1,9 +1,10 @@
+use log::{trace, warn};
 use ndarray::prelude::*;
-use log::trace;
 
 use super::constants::IdaConst;
 use super::linear::{LSolver, LSolverType};
 use super::traits::IdaProblem;
+use super::IdaCounters;
 
 /// State variables involved in the linear problem
 #[derive(Clone, Debug)]
@@ -53,15 +54,15 @@ where
     /// njtimes = total number of calls to jtimes
     njtimes: usize,
     /// nst0 = saved nst (for performance monitor)
-    //nst0: usize,
+    nst0: usize,
     /// nni0 = saved nni (for performance monitor)
-    //nni0: usize,
+    nni0: usize,
     /// ncfn0 = saved ncfn (for performance monitor)
-    //ncfn0: usize,
+    ncfn0: usize,
     /// ncfl0 = saved ncfl (for performance monitor)
-    //ncfl0: usize,
+    ncfl0: usize,
     /// nwarn = no. of warnings (for perf. monitor)
-    //nwarn: usize,
+    nwarn: usize,
     /*
         long int last_flag; // last error return flag
 
@@ -89,7 +90,6 @@ where
         IDALsJacTimesVecFn jtimes;
         void *jt_data;
     */
-
     /// current value of scalar (-alphas/hh) in Jacobian
     pub(super) ida_cj: P::Scalar,
     /// cj value saved from last call to lsetup
@@ -110,14 +110,13 @@ where
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
-        + IdaConst<Scalar=P::Scalar>,
+        + IdaConst<Scalar = P::Scalar>,
     LS: LSolver<P::Scalar>,
 {
     pub fn new(problem: P) -> Self {
         use num_traits::identities::{One, Zero};
         use num_traits::Float;
         use num_traits::NumCast;
-        use IdaConst;
         // Retrieve the LS type */
         //LSType = SUNLinSolGetType(LS);
 
@@ -198,6 +197,12 @@ where
             njtsetup: 0,
             njtimes: 0,
 
+            nst0: 0,
+            ncfl0: 0,
+            ncfn0: 0,
+            nni0: 0,
+            nwarn: 0,
+
             // Set default values for the rest of the Ls parameters
             eplifac: P::Scalar::pt05(),
             dqincfac: P::Scalar::one(),
@@ -248,9 +253,15 @@ where
             // Call Jacobian routine
             //retval = self.jac(IDA_mem->ida_tn, IDA_mem->ida_cj, y, yp, r, idals_mem->J, idals_mem->J_data, vt1, vt2, vt3);
             //TODO fix
-            self.problem
-                .jac(P::Scalar::zero(), self.ida_cj, y.view(), yp.view(), r.view(), self.J.view_mut());
-            
+            self.problem.jac(
+                P::Scalar::zero(),
+                self.ida_cj,
+                y.view(),
+                yp.view(),
+                r.view(),
+                self.J.view_mut(),
+            );
+
             /*
             if (retval < 0) {
                 IDAProcessError(
@@ -272,8 +283,6 @@ where
         self.ls.setup(self.J.view_mut());
         //self.last_flag = SUNLinSolSetup(idals_mem->LS, idals_mem->J);
         //return(self.last_flag);
-
-        trace!("J after setup: {:?}", &self.J);
     }
 
     /// idaLsSolve
@@ -366,7 +375,9 @@ where
         */
 
         // Call solver
-        let retval = self.ls.solve(self.J.view(), self.x.view_mut(), b.view(), tol);
+        let retval = self
+            .ls
+            .solve(self.J.view(), self.x.view_mut(), b.view(), tol);
 
         // Copy appropriate result to b (depending on solver type)
         if let LSolverType::Iterative | LSolverType::MatrixIterative = ls_type {
@@ -437,5 +448,49 @@ where
         */
 
         //return(0);
+    }
+
+    /// idaLsPerf: accumulates performance statistics information for IDA
+    pub fn ls_perf(&mut self, counters: &IdaCounters, perftask: bool) {
+        // when perftask == 0, store current performance statistics
+        if !perftask {
+            self.nst0 = counters.ida_nst;
+            self.nni0 = counters.ida_nni;
+            self.ncfn0 = counters.ida_ncfn;
+            self.ncfl0 = self.ncfl;
+            self.nwarn = 0;
+            return;
+        }
+
+        // Compute statistics since last call
+        //
+        // Note: the performance monitor that checked whether the average
+        // number of linear iterations was too close to maxl has been
+        // removed, since the 'maxl' value is no longer owned by the
+        // IDALs interface.
+
+        let nstd = counters.ida_nst - self.nst0;
+        let nnid = counters.ida_nni - self.nni0;
+        if nstd == 0 || nnid == 0 {
+            return;
+        };
+
+        let rcfn = (counters.ida_ncfn - self.ncfn0) as f64 / (nstd as f64);
+        let rcfl = (self.ncfl - self.ncfl0) as f64 / (nnid as f64);
+        let lcfn = rcfn > 0.9;
+        let lcfl = rcfl > 0.9;
+        if !(lcfn || lcfl) {
+            return;
+        }
+        self.nwarn += 1;
+        if self.nwarn > 10 {
+            return;
+        }
+        if lcfn {
+            warn!("Warning: at t = {}, poor iterative algorithm performance. Nonlinear convergence failure rate is {}.", 0.0, rcfn);
+        }
+        if lcfl {
+            warn!("Warning: at t = {}, poor iterative algorithm performance. Linear convergence failure rate is {}.", 0.0, rcfl);
+        }
     }
 }

@@ -8,7 +8,8 @@ use rand::distributions::Uniform;
 fn bench_dense(bencher: &mut criterion::Bencher, cols: usize) {
     // Fill A matrix with uniform random data in [0,1/cols]
     // Add anti-identity to ensure the solver needs to do row-swapping
-    let mut mat_a = Array::random((cols, cols), Uniform::new(0., 1.0 / (cols as f64))) + Array::eye(cols).slice_move(s![.., ..;-1]);
+    let mut mat_a = Array::random((cols, cols), Uniform::new(0., 1.0 / (cols as f64)))
+        + Array::eye(cols).slice_move(s![.., ..;-1]);
 
     // Fill x vector with uniform random data in [0,1]
     let mut x = Array::random(cols, Uniform::new(0.0, 1.0));
@@ -18,7 +19,11 @@ fn bench_dense(bencher: &mut criterion::Bencher, cols: usize) {
 
     bencher.iter(|| dense.setup(mat_a.clone()).unwrap());
     dense.setup(mat_a.view_mut()).unwrap();
-    bencher.iter(|| dense.solve(mat_a.view(), x.view_mut(), b.view(), 0.0).unwrap());
+    bencher.iter(|| {
+        dense
+            .solve(mat_a.view(), x.view_mut(), b.view(), 0.0)
+            .unwrap()
+    });
 
     /*
     let b_comp = mat_a_original.dot(&x);
