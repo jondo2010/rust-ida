@@ -9,15 +9,17 @@ mod error;
 mod ida_io;
 mod ida_ls;
 mod ida_nls;
+
 pub mod linear;
 pub mod nonlinear;
 mod norm_rms;
+pub mod tol_control;
 pub mod traits;
-
 use constants::*;
 use error::IdaError;
 use ida_nls::IdaNLProblem;
 use norm_rms::{NormRms, NormRmsMasked};
+use tol_control::TolControl;
 use traits::*;
 
 use profiler::profile_scope;
@@ -30,75 +32,6 @@ use num_traits::{
     Float,
 };
 
-/// specifies scalar relative and absolute tolerances.
-#[derive(Clone, Debug)]
-pub struct TolControlSS<Scalar> {
-    /// relative tolerance
-    ida_rtol: Scalar,
-    /// scalar absolute tolerance
-    ida_atol: Scalar,
-}
-
-impl<Scalar> TolControlSS<Scalar> {
-    pub fn new(rtol: Scalar, atol: Scalar) -> Self {
-        Self {
-            ida_rtol: rtol,
-            ida_atol: atol,
-        }
-    }
-}
-
-impl<Scalar> TolControl<Scalar> for TolControlSS<Scalar>
-where
-    Scalar: num_traits::Float,
-{
-    fn ewt_set<S1, S2>(&self, ycur: ArrayBase<S1, Ix1>, mut ewt: ArrayBase<S2, Ix1>)
-    where
-        S1: ndarray::Data<Elem = Scalar>,
-        S2: ndarray::DataMut<Elem = Scalar>,
-    {
-        ndarray::Zip::from(&mut ewt).and(&ycur).apply(|ewt, ycur| {
-            *ewt = (self.ida_rtol * ycur.abs() + self.ida_atol).recip();
-        });
-    }
-}
-
-/// specifies scalar relative tolerance and a vector absolute tolerance (a potentially different
-/// absolute tolerance for each vector component).
-#[derive(Clone, Debug)]
-pub struct TolControlSV<Scalar> {
-    /// relative tolerance
-    ida_rtol: Scalar,
-    /// vector absolute tolerance
-    ida_atol: Array1<Scalar>,
-}
-
-impl<Scalar> TolControlSV<Scalar> {
-    pub fn new(rtol: Scalar, atol: Array1<Scalar>) -> Self {
-        Self {
-            ida_rtol: rtol,
-            ida_atol: atol,
-        }
-    }
-}
-
-impl<Scalar> TolControl<Scalar> for TolControlSV<Scalar>
-where
-    Scalar: num_traits::Float,
-{
-    fn ewt_set<S1, S2>(&self, ycur: ArrayBase<S1, Ix1>, mut ewt: ArrayBase<S2, Ix1>)
-    where
-        S1: ndarray::Data<Elem = Scalar>,
-        S2: ndarray::DataMut<Elem = Scalar>,
-    {
-        ndarray::Zip::from(&mut ewt)
-            .and(&ycur)
-            .and(&self.ida_atol)
-            .apply(|ewt, ycur, atol| {
-                *ewt = (self.ida_rtol * ycur.abs() + *atol).recip();
-            });
-    }
-}
 
 #[derive(Copy, Clone)]
 pub enum IdaTask {
@@ -524,6 +457,8 @@ where
         ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
         ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
     {
+        profile_scope!(format!("solve(tout={:?})", tout));
+
         if self.counters.ida_nst == 0 {
             // This is the first call
 
@@ -719,7 +654,7 @@ where
 
                 let ier = 0;
                 if ier != 0 {
-                    profiler::ProfileScope::new(format!("get_solution"));
+                    //profiler::ProfileScope::new(format!("get_solution"));
                     self.get_solution(self.nlp.ida_tn, yret, ypret);
                     *tret = self.nlp.ida_tn;
                     self.ida_tretlast = self.nlp.ida_tn;
@@ -1312,15 +1247,17 @@ where
         //return IDA_ILL_INPUT;  /* This return should never happen. */
     }
 
-    /// This routine performs one internal IDA step, from tn to tn + hh. It calls other routines to do all the work.
+    /// This routine performs one internal IDA step, from `tn` to `tn + hh`. It calls other
+    /// routines to do all the work.
     ///
-    /// It solves a system of differential/algebraic equations of the form F(t,y,y') = 0, for one step.
-    /// In IDA, tt is used for t, yy is used for y, and yp is used for y'. The function F is supplied
-    /// as 'res' by the user.
+    /// It solves a system of differential/algebraic equations of the form `F(t,y,y') = 0`, for
+    /// one step.
+    /// In IDA, `tt` is used for `t`, `yy` is used for `y`, and `yp` is used for `y'`. The function
+    /// F is supplied as 'res' by the user.
     ///
-    /// The methods used are modified divided difference, fixed leading coefficient forms of backward
-    /// differentiation formulas. The code adjusts the stepsize and order to control the local error
-    /// per step.
+    /// The methods used are modified divided difference, fixed leading coefficient forms of
+    /// backward differentiation formulas. The code adjusts the stepsize and order to control the
+    /// local error per step.
     ///
     /// The main operations done here are as follows:
     /// * initialize various quantities;
@@ -1354,10 +1291,7 @@ where
     ///                     IDA_CONSTR_FAIL   IDA_CONV_FAIL
     ///                     IDA_REP_RES_ERR
     fn step(&mut self) -> Result<(), failure::Error> {
-        //realtype saved_t, ck;
-        //realtype err_k, err_km1;
-        //int nflag, kflag;
-        let mut ck = P::Scalar::one();
+        profile_scope!(format!("step(), nst={}", self.counters.ida_nst));
 
         let saved_t = self.nlp.ida_tn;
 
@@ -1376,12 +1310,12 @@ where
 
         // Looping point for attempts to take a step
 
-        let (err_k, err_km1) = loop {
+        let (ck, err_k, err_km1) = loop {
             //-----------------------
             // Set method coefficients
             //-----------------------
 
-            ck = self.set_coeffs();
+            let ck = self.set_coeffs();
 
             //kflag = IDA_SUCCESS;
 
@@ -1390,11 +1324,11 @@ where
             //-----------------------------------------------------
 
             self.nlp.ida_tn += self.ida_hh;
-            self.ida_tstop.map(|tstop| {
+            if let Some(tstop) = self.ida_tstop {
                 if ((self.nlp.ida_tn - tstop) * self.ida_hh) > P::Scalar::one() {
                     self.nlp.ida_tn = tstop;
                 }
-            });
+            }
 
             //-----------------------
             // Advance state variables
@@ -1434,7 +1368,7 @@ where
                 })?;
 
             if converged {
-                break (err_k, err_km1);
+                break (ck, err_k, err_km1);
             }
         };
 
@@ -1465,6 +1399,8 @@ where
     ///
     /// Returns the 'variable stepsize error coefficient ck'
     fn set_coeffs(&mut self) -> P::Scalar {
+        profile_scope!(format!("set_coeffs()"));
+
         // Set coefficients for the current stepsize h
         if (self.ida_hh != self.ida_hused) || (self.ida_kk != self.ida_kused) {
             self.ida_ns = 0;
@@ -1527,6 +1463,8 @@ where
     /// This routine attempts to solve the nonlinear system using the linear solver specified.
     /// NOTE: this routine uses N_Vector ee as the scratch vector tempv3 passed to lsetup.
     fn nonlinear_solve(&mut self) -> Result<(), failure::Error> {
+        profile_scope!(format!("nonlinear_solve()"));
+
         // Initialize if the first time called
         let mut call_lsetup = false;
 
@@ -1587,6 +1525,7 @@ where
         retval?;
 
         // If otherwise successful, check and enforce inequality constraints.
+        trace!("nst={}, yy={:.5e}", self.counters.ida_nst, self.nlp.ida_yy);
 
         // Check constraints and get mask vector mm, set where constraints failed
         if self.ida_constraints_set {
@@ -1627,7 +1566,9 @@ where
     /// IDAPredict
     /// This routine predicts the new values for vectors yy and yp.
     fn predict(&mut self) -> () {
-        self.ida_cvals.assign(&Array::ones(self.ida_cvals.shape()));
+        profile_scope!(format!("predict()"));
+
+        self.ida_cvals.fill(P::Scalar::one());
 
         // yypredict = cvals * phi[0..kk+1]
         //(void) N_VLinearCombination(self.ida_kk+1, self.ida_cvals, self.ida_phi, self.ida_yypredict);
@@ -1688,6 +1629,9 @@ where
         P::Scalar, // err_km1
         bool,      // nflag
     ) {
+        dbg!(&self.ida_phi);
+        dbg!(&self.ida_ee);
+
         // Compute error for order k.
         let enorm_k = self.wrms_norm(&self.ida_ee, &self.nlp.ida_ewt, self.ida_suppressalg);
         let err_k = self.ida_sigma[self.ida_kk] * enorm_k; // error norms
@@ -1705,7 +1649,7 @@ where
             let enorm_km1 =
                 self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
             err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
-            let terr_km1: P::Scalar = err_km1 * <P::Scalar as NumCast>::from(self.ida_kk).unwrap();
+            let terr_km1 = err_km1 * <P::Scalar as NumCast>::from(self.ida_kk).unwrap();
 
             if self.ida_kk > 2 {
                 // Compute error at order k-2
@@ -1935,12 +1879,16 @@ where
     /// used, makes the final selection of stepsize and order for the next step, and updates the phi
     /// array.
     fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
+        profile_scope!(format!("complete_step()"));
+        trace!("complete_step(err_k={:?}, err_km1={:?})", err_k, err_km1);
+
         self.counters.ida_nst += 1;
         let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);
         self.ida_kused = self.ida_kk;
         self.ida_hused = self.ida_hh;
 
         if (self.ida_knew == self.ida_kk - 1) || (self.ida_kk == self.ida_maxord) {
+            trace!("nst={}, ida_phase={}->1",self.counters.ida_nst, self.ida_phase);
             self.ida_phase = 1;
         }
 
@@ -1963,35 +1911,32 @@ where
                 self.ida_hh = hnew;
             }
         } else {
+            #[derive(Debug)]
             enum Action {
-                None,
                 Lower,
                 Maintain,
                 Raise,
             }
 
-            let mut action = Action::None;
-
             // Set action = LOWER/MAINTAIN/RAISE to specify order decision
 
-            if self.ida_knew == (self.ida_kk - 1) {
-                action = Action::Lower;
+            let (action, err_kp1) = if self.ida_knew == (self.ida_kk - 1) {
+                (Action::Lower, P::Scalar::zero())
             } else if self.ida_kk == self.ida_maxord {
-                action = Action::Maintain;
+                (Action::Maintain, P::Scalar::zero())
             } else if (self.ida_kk + 1) >= self.ida_ns || (kdiff == 1) {
-                action = Action::Maintain;
-            }
+                (Action::Maintain, P::Scalar::zero())
+            } else {
 
-            // Estimate the error at order k+1, unless already decided to reduce order, or already using
-            // maximum order, or stepsize has not been constant, or order was just raised.
+                // Estimate the error at order k+1, unless already decided to reduce order, or already using
+                // maximum order, or stepsize has not been constant, or order was just raised.
 
-            let mut err_kp1 = P::Scalar::zero();
-
-            if let Action::None = action {
-                //N_VLinearSum(ONE, self.ida_ee, -ONE, self.ida_phi[self.ida_kk + 1], self.ida_tempv1);
-                let ida_tempv1 = &self.ida_ee - &self.ida_phi.index_axis(Axis(0), self.ida_kk + 1);
-                let enorm = self.wrms_norm(&ida_tempv1, &self.nlp.ida_ewt, self.ida_suppressalg);
-                err_kp1 = enorm / <P::Scalar as NumCast>::from(self.ida_kk + 2).unwrap();
+                // tempv1 = ee - phi[kk+1]
+                let enorm = {
+                    let temp = &self.ida_ee - &self.ida_phi.index_axis(Axis(0), self.ida_kk + 1);
+                    self.wrms_norm(&temp, &self.nlp.ida_ewt, self.ida_suppressalg)
+                };
+                let err_kp1 = enorm / <P::Scalar as NumCast>::from(self.ida_kk + 2).unwrap();
 
                 // Choose among orders k-1, k, k+1 using local truncation error norms.
 
@@ -1999,23 +1944,22 @@ where
                 let terr_kp1 = <P::Scalar as NumCast>::from(self.ida_kk + 2).unwrap() * err_kp1;
 
                 if self.ida_kk == 1 {
-                    if terr_kp1 >= P::Scalar::half() * terr_k {
-                        action = Action::Maintain;
+                    if terr_kp1 >= (P::Scalar::half() * terr_k) {
+                        (Action::Maintain, err_kp1)
                     } else {
-                        action = Action::Raise;
+                        (Action::Raise, err_kp1)
                     }
                 } else {
                     let terr_km1 = <P::Scalar as NumCast>::from(self.ida_kk).unwrap() * err_km1;
                     if terr_km1 <= terr_k.min(terr_kp1) {
-                        action = Action::Lower;
+                        (Action::Lower, err_kp1)
                     } else if terr_kp1 >= terr_k {
-                        action = Action::Maintain;
+                        (Action::Maintain, err_kp1)
                     } else {
-                        action = Action::Raise;
+                        (Action::Raise, err_kp1)
                     }
                 }
-            }
-            //takeaction:
+            };
 
             // Set the estimated error norm and, on change of order, reset kk.
             let err_knew = match action {
@@ -2029,6 +1973,13 @@ where
                 }
                 _ => err_k,
             };
+            trace!(
+                "nst={}, {:?}, kk={}, knew={:?}",
+                self.counters.ida_nst,
+                action,
+                self.ida_kk,
+                err_knew
+            );
 
             // Compute rr = tentative ratio hnew/hh from error norm estimate.
             // Reduce hh if rr <= 1, double hh if rr >= 2, else leave hh as is.
@@ -2038,8 +1989,7 @@ where
             //ida_rr = SUNRpowerR( TWO * err_knew + PT0001, -ONE/(self.ida_kk + 1) );
             self.ida_rr = {
                 let base = P::Scalar::two() * err_knew + P::Scalar::pt0001();
-                let arg = -P::Scalar::one()
-                    / (<P::Scalar as NumCast>::from(self.ida_kk).unwrap() + P::Scalar::one());
+                let arg = -(<P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap()).recip();
                 base.powf(arg)
             };
 
@@ -2057,6 +2007,7 @@ where
 
             self.ida_hh = hnew;
         }
+        trace!("nst={}, hh={:?}", self.counters.ida_nst, self.ida_hh);
         // end of phase if block
 
         // Save ee for possible order increase on next step
@@ -2069,9 +2020,10 @@ where
 
         // Update phi arrays
 
-        // To update phi arrays compute X += Z where                  */
-        // X = [ phi[kused], phi[kused-1], phi[kused-2], ... phi[1] ] */
-        // Z = [ ee,         phi[kused],   phi[kused-1], ... phi[0] ] */
+        // To update phi arrays compute X += Z where
+        // X = [ phi[kused], phi[kused-1], phi[kused-2], ... phi[1] ]
+        // Z = [ ee,         phi[kused],   phi[kused-1], ... phi[0] ]
+
         self.ida_Zvecs
             .index_axis_mut(Axis(0), 0)
             .assign(&self.ida_ee);
@@ -2124,6 +2076,7 @@ where
         ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
         ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
     {
+        profile_scope!(format!("get_solution(t={:?})", t));
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
         let tfuzz = P::Scalar::hundred()
@@ -2206,6 +2159,7 @@ where
         S1: ndarray::Data<Elem = P::Scalar>,
         S2: ndarray::Data<Elem = P::Scalar>,
     {
+        profile_scope!(format!("wrms_norm()"));
         if mask {
             x.norm_wrms_masked(w, &self.ida_id)
         } else {
@@ -2286,6 +2240,7 @@ mod tests {
     use super::*;
     use ndarray::*;
     use nearly_eq::*;
+    use tol_control::*;
 
     #[derive(Clone, Copy, Debug)]
     struct Dummy {}

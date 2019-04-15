@@ -13,7 +13,7 @@
 //! The problem is solved with IDA using the DENSE linear solver, with a user-supplied Jacobian.
 //! Output is printed at t = .4, 4, 40, ..., 4e10.
 
-use ida::{linear::*, nonlinear::*, traits::*, *};
+use ida::{linear::*, nonlinear::*, traits::*, tol_control::*, *};
 
 use ndarray::{array, prelude::*};
 
@@ -160,5 +160,6 @@ fn main() {
 
     table_out.printstd();
     dbg!(retval);
-    //profiler::write_profile("profile.json");
+
+    profiler::write_profile("profile.json");
 }

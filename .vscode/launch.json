@@ -4,18 +4,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug test 'Roberts'",
+            "name": "Debug 'Roberts'",
             "sourceLanguages": [
                 "rust"
             ],
             "cargo": {
                 "args": [
-                    "test",
-                    "--no-run",
-                    "--test",
+                    "run",
+                    "--example",
                     "roberts",
-                    "--",
-                    "--nocapture",
                 ],
             },
             "env": {

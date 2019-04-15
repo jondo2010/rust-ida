@@ -69,13 +69,6 @@ pub trait Jacobian: ModelSpec {
         S4: ndarray::DataMut<Elem = Self::Scalar>;
 }
 
-pub trait TolControl<Scalar> {
-    fn ewt_set<S1, S2>(&self, ycur: ArrayBase<S1, Ix1>, mut ewt: ArrayBase<S2, Ix1>)
-    where
-        S1: ndarray::Data<Elem = Scalar>,
-        S2: ndarray::DataMut<Elem = Scalar>;
-}
-
 /// Core implementation for explicit schemes
 pub trait IdaProblem: Residual + Jacobian {}
 
