@@ -2,7 +2,6 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ida::linear::*;
 use ndarray::{s, Array};
 use ndarray_rand::RandomExt;
-use nearly_eq::assert_nearly_eq;
 use rand::distributions::Uniform;
 
 fn bench_dense(bencher: &mut criterion::Bencher, cols: usize) {

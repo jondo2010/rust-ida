@@ -252,6 +252,7 @@ where
         + num_traits::NumAssignRef
         + ndarray::ScalarOperand
         + std::fmt::Debug
+        + std::fmt::LowerExp
         + IdaConst<Scalar = P::Scalar>,
 {
     /// Creates a new IdaProblem given a ModelSpec, initial Arrays of yy0 and yyp
@@ -1525,7 +1526,7 @@ where
         retval?;
 
         // If otherwise successful, check and enforce inequality constraints.
-        trace!("nst={}, yy={:.5e}", self.counters.ida_nst, self.nlp.ida_yy);
+        //trace!("nst={}, yy={:.5e}", self.counters.ida_nst, self.nlp.ida_yy);
 
         // Check constraints and get mask vector mm, set where constraints failed
         if self.ida_constraints_set {
@@ -1629,8 +1630,8 @@ where
         P::Scalar, // err_km1
         bool,      // nflag
     ) {
-        dbg!(&self.ida_phi);
-        dbg!(&self.ida_ee);
+        trace!("test_error phi={:.5e}", self.ida_phi);
+        trace!("test_error ee={:.5e}", self.ida_ee);
 
         // Compute error for order k.
         let enorm_k = self.wrms_norm(&self.ida_ee, &self.nlp.ida_ewt, self.ida_suppressalg);
@@ -1880,7 +1881,7 @@ where
     /// array.
     fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
         profile_scope!(format!("complete_step()"));
-        trace!("complete_step(err_k={:?}, err_km1={:?})", err_k, err_km1);
+        trace!("complete_step(err_k={:.5e}, err_km1={:.5e})", err_k, err_km1);
 
         self.counters.ida_nst += 1;
         let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);
@@ -1974,7 +1975,7 @@ where
                 _ => err_k,
             };
             trace!(
-                "nst={}, {:?}, kk={}, knew={:?}",
+                "nst={}, {:#?}, kk={}, err_knew={:.5e}",
                 self.counters.ida_nst,
                 action,
                 self.ida_kk,
@@ -2007,7 +2008,7 @@ where
 
             self.ida_hh = hnew;
         }
-        trace!("nst={}, hh={:?}", self.counters.ida_nst, self.ida_hh);
+        trace!("nst={}, hh={:.5e}", self.counters.ida_nst, self.ida_hh);
         // end of phase if block
 
         // Save ee for possible order increase on next step
@@ -2041,6 +2042,13 @@ where
             .ida_Zvecs
             .slice_axis(Axis(0), Slice::from(0..self.ida_kused + 1));
         sliceXvecs += &sliceZvecs;
+
+        let mut phi_kused = self.ida_phi.index_axis_mut(Axis(0),self.ida_kused);
+        phi_kused += &self.ida_ee;
+
+        let mut phi0 = self.ida_phi.slice_axis_mut(Axis(0), Slice::from(1..self.ida_kused-1));
+        let phi1 = self.ida_phi.slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused));
+        phi0 += &phi1;
     }
 
     /// This routine evaluates `y(t)` and `y'(t)` as the value and derivative of the interpolating
@@ -2076,7 +2084,7 @@ where
         ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
         ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
     {
-        profile_scope!(format!("get_solution(t={:?})", t));
+        profile_scope!(format!("get_solution(t={:.5e})", t));
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
         let tfuzz = P::Scalar::hundred()

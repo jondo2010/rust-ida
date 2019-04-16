@@ -50,11 +50,11 @@ impl Residual for Roberts {
 impl Jacobian for Roberts {
     fn jac<S1, S2, S3, S4>(
         &self,
-        tt: Self::Scalar,
+        _tt: Self::Scalar,
         cj: Self::Scalar,
         yy: ArrayBase<S1, Ix1>,
-        yp: ArrayBase<S2, Ix1>,
-        rr: ArrayBase<S3, Ix1>,
+        _yp: ArrayBase<S2, Ix1>,
+        _rr: ArrayBase<S3, Ix1>,
         mut jac: ArrayBase<S4, Ix2>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
@@ -76,7 +76,7 @@ impl Jacobian for Roberts {
     }
 }
 
-use prettytable::{cell, row, Cell, Row, Table, table};
+use prettytable::{cell, row, Table, table};
 
 fn main() {
     pretty_env_logger::init();
