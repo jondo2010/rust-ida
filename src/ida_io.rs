@@ -45,11 +45,27 @@ where
         self.counters.ida_nst
     }
 
-    pub fn get_num_res_evals(&self) -> u64 {
+    pub fn get_num_res_evals(&self) -> usize {
         self.nlp.ida_nre
     }
 
-    pub fn get_num_lin_solv_setups(&self) -> u64 {
+    pub fn get_num_lin_solv_setups(&self) -> usize {
         self.nlp.ida_nsetups
+    }
+
+    pub fn get_num_jac_evals(&self) -> usize {
+        self.nlp.lp.nje
+    }
+
+    pub fn get_num_nonlin_solv_iters(&self) -> usize {
+        /* get number of iterations for IC calc */
+        /* get number of iterations from the NLS */
+        self.counters.ida_nni + self.nls.get_num_iters()
+    }
+
+    /// IDAGetNumLinResEvals returns the number of calls to the DAE residual needed for the DQ
+    /// Jacobian approximation or J*v product approximation
+    pub fn get_num_lin_res_evals(&self) -> usize {
+        self.nlp.lp.nreDQ
     }
 }

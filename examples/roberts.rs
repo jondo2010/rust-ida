@@ -13,7 +13,7 @@
 //! The problem is solved with IDA using the DENSE linear solver, with a user-supplied Jacobian.
 //! Output is printed at t = .4, 4, 40, ..., 4e10.
 
-use ida::{linear::*, nonlinear::*, traits::*, tol_control::*, *};
+use ida::{linear::*, nonlinear::*, tol_control::*, traits::*, *};
 
 use ndarray::{array, prelude::*};
 
@@ -76,7 +76,7 @@ impl Jacobian for Roberts {
     }
 }
 
-use prettytable::{cell, row, Table, table};
+use prettytable::{cell, row, table, Table};
 
 fn main() {
     pretty_env_logger::init();
@@ -96,8 +96,8 @@ fn main() {
     let header = &[
         "idaRoberts_dns: Robertson kinetics DAE serial example problem for IDA Three equation chemical kinetics problem.",
         "Linear solver: DENSE, with user-supplied Jacobian.",
-        &format!("Tolerance parameters: rtol = {:.5e} atol = {:.5?}", RTOL, ATOL),
-        &format!("Initial conditions y0 = [{:.5e} {:.5e} {:.5e}]", yy0[0], yy0[1], yy0[2]),
+        &format!("Tolerance parameters: rtol = {:e} atol = [{:e}, {:e}, {:e}]", RTOL, ATOL[0], ATOL[1], ATOL[2]),
+        &format!("Initial conditions y0 = [{:e} {:e} {:e}]", yy0[0], yy0[1], yy0[2]),
         "Constraints and id not used.",
     ].join("\n");
 
@@ -117,11 +117,7 @@ fn main() {
     let retval = loop {
         let mut tret = 0.0;
 
-        let retval = ida.solve(
-            tout,
-            &mut tret,
-            IdaTask::Normal,
-        );
+        let retval = ida.solve(tout, &mut tret, IdaTask::Normal);
 
         let nst = ida.get_num_steps();
         let kused = ida.get_last_order();
@@ -151,13 +147,25 @@ fn main() {
             _ => {}
         }
 
-        if iout == 12 {
+        if iout == 1 {
             break Ok(());
         }
     };
 
     table_out.printstd();
     dbg!(retval.unwrap());
+
+    let stats = table!(
+        [bFgH2->"Final Run Statistics:",],
+        ["Number of steps:", ida.get_num_steps(),],
+        ["Number of residual evaluations:", ida.get_num_res_evals() + ida.get_num_lin_res_evals()],
+        ["Number of Jacobian evaluations:", ida.get_num_jac_evals()],
+        ["Number of nonlinear iterations:", ida.get_num_nonlin_solv_iters()]
+        //"Number of error test failures:", netf,
+        //"Number of nonlinear conv. failures:", ncfn,
+        //"Number of root fn. evaluations:", nge,
+    );
+    stats.printstd();
 
     profiler::write_profile("profile.json");
 }

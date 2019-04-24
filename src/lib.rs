@@ -153,20 +153,12 @@ where
     //pub(super) ida_cj: P::Scalar,
     /// cj value saved from last successful step
     ida_cjlast: P::Scalar,
-    /// cj value saved from last call to lsetup
-    //pub(super) ida_cjold: P::Scalar,
-    /// ratio of cj values: cj/cjold
-    //pub(super) ida_cjratio: P::Scalar,
-    /// scalar used in Newton iteration convergence test
-    //pub(super) ida_ss: P::Scalar,
-    /// norm of previous nonlinear solver update
-    //pub(super) ida_oldnrm: P::Scalar,
+
     /// test constant in Newton convergence test
-    ida_epsNewt: P::Scalar,
+    ida_eps_newt: P::Scalar,
+
     /// coeficient of the Newton covergence test
     ida_epcon: P::Scalar,
-    /// tolerance in direct test on Newton corrections
-    //pub(super) ida_toldel: P::Scalar,
 
     // Limits
     /// max numer of convergence failures
@@ -193,6 +185,7 @@ where
     //ida_netf: u64,
     /// number of Newton iterations performed
     //ida_nni: u64,
+
     // Arrays for Fused Vector Operations
     ida_cvals: Array1<P::Scalar>,
     ida_dvals: Array1<P::Scalar>,
@@ -292,7 +285,7 @@ where
             ida_mxstep: MXSTEP_DEFAULT as u64,
             ida_hmax_inv: NumCast::from(HMAX_INV_DEFAULT).unwrap(),
             ida_hin: P::Scalar::zero(),
-            ida_epsNewt: P::Scalar::zero(),
+            ida_eps_newt: P::Scalar::zero(),
             ida_epcon: NumCast::from(EPCON).unwrap(),
             ida_maxnef: MXNEF as u64,
             ida_maxncf: MXNCF as u64,
@@ -540,8 +533,8 @@ where
             phi *= self.ida_hh;
 
             // Set the convergence test constants epsNewt and toldel
-            self.ida_epsNewt = self.ida_epcon;
-            self.nlp.ida_toldel = P::Scalar::pt0001() * self.ida_epsNewt;
+            self.ida_eps_newt = self.ida_epcon;
+            self.nlp.ida_toldel = P::Scalar::pt0001() * self.ida_eps_newt;
         } // end of first-call block.
 
         // Call lperf function and set nstloc for later performance testing.
@@ -683,6 +676,15 @@ where
                 self.ida_suppressalg,
             );
 
+            /*
+            trace!(
+                "At t = {:.5e}, nstloc={}; nrm = {:.5e}",
+                self.nlp.ida_tn,
+                nstloc,
+                nrm
+            );
+            */
+
             self.ida_tolsf = P::Scalar::epsilon() * nrm;
             if self.ida_tolsf > P::Scalar::one() {
                 self.ida_tolsf *= P::Scalar::ten();
@@ -690,7 +692,7 @@ where
                 *tret = self.nlp.ida_tn;
                 self.ida_tretlast = self.nlp.ida_tn;
                 if self.counters.ida_nst > 0 {
-                    let ier = self.get_solution(self.nlp.ida_tn);
+                    let _ier = self.get_solution(self.nlp.ida_tn);
                 }
                 //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_TOO_MUCH_ACC, self.nlp.ida_tn);
                 //istate = IDA_TOO_MUCH_ACC;
@@ -1472,15 +1474,19 @@ where
 
         let w = self.nlp.ida_ewt.clone();
 
+        trace!("ewt={:.5e}", self.nlp.ida_ewt);
+
         // solve the nonlinear system
         let retval = self.nls.solve(
             &mut self.nlp,
             self.ida_delta.view(),
             self.ida_ee.view_mut(),
             w,
-            self.ida_epsNewt,
+            self.ida_eps_newt,
             call_lsetup,
         );
+
+        trace!("ee={:.5e}", self.ida_ee);
 
         // update yy and yp based on the final correction from the nonlinear solve
         self.nlp.ida_yy = &self.nlp.ida_yypredict + &self.ida_ee;
@@ -1513,7 +1519,7 @@ where
             vnorm = IDAWrmsNorm(IDA_mem, self.ida_tempv1, self.ida_ewt, SUNFALSE); /*  ||v|| */
 
             // If vector v of constraint corrections is small in norm, correct and accept this step
-            if vnorm <= self.ida_epsNewt {
+            if vnorm <= self.ida_eps_newt {
             N_VLinearSum(ONE, self.ida_ee, -ONE, self.ida_tempv1, self.ida_ee); /* ee <- ee - v */
             return (IDA_SUCCESS);
             } else {
@@ -1536,28 +1542,15 @@ where
     fn predict(&mut self) -> () {
         profile_scope!(format!("predict()"));
 
-        self.ida_cvals.fill(P::Scalar::one());
-
         // yypredict = cvals * phi[0..kk+1]
         //(void) N_VLinearCombination(self.ida_kk+1, self.ida_cvals, self.ida_phi, self.ida_yypredict);
         {
-            let phi = self
-                .ida_phi
-                .slice_axis(Axis(0), Slice::from(0..self.ida_kk + 1));
-
-            // We manually broadcast here so we can turn it into a column vec
-            let cvals = self.ida_cvals.slice(s![0..self.ida_kk + 1]);
-            let cvals = cvals
-                .broadcast((phi.len_of(Axis(1)), phi.len_of(Axis(0))))
-                .unwrap()
-                .reversed_axes();
-
-            let mut yypredict = self
-                .nlp
-                .ida_yypredict
-                .slice_axis_mut(Axis(0), Slice::from(0..));
-
-            yypredict.assign(&(&phi * &cvals).sum_axis(Axis(0)));
+            self.nlp.ida_yypredict.assign(
+                &self
+                    .ida_phi
+                    .slice_axis(Axis(0), Slice::from(0..self.ida_kk + 1))
+                    .sum_axis(Axis(0)),
+            );
         }
 
         // yppredict = gamma[1..kk+1] * phi[1..kk+1]
@@ -1574,13 +1567,13 @@ where
                 .unwrap()
                 .reversed_axes();
 
-            let mut yppredict = self
-                .nlp
-                .ida_yppredict
-                .slice_axis_mut(Axis(0), Slice::from(0..));
-
-            yppredict.assign(&(&phi * &gamma).sum_axis(Axis(0)));
+            self.nlp.ida_yppredict.assign(&(&phi * &gamma).sum_axis(Axis(0)));
         }
+        trace!(
+            "predict() yypredict={:.6e} yppredict={:.6e}",
+            self.nlp.ida_yypredict,
+            self.nlp.ida_yppredict
+        );
     }
 
     /// IDATestError
@@ -2006,7 +1999,7 @@ where
 
         for (i, mut z_row) in z_view.genrows_mut().into_iter().enumerate() {
             // z[i] = ee + phi[kused] + phi[kused-1] + .. + phi[i]
-            z_row += &self.ida_ee;
+            z_row.assign(&self.ida_ee);
             z_row += &self
                 .ida_phi
                 .slice_axis(Axis(0), Slice::from(i..self.ida_kused + 1))
@@ -2834,48 +2827,35 @@ mod tests {
         // Set preconditions:
         {
             #[rustfmt::skip]
-            let ida_phi = array![
+            ida.ida_phi.assign(&array![
                 [ 9.9999826803802172e-01, 1.7295310279504897e-06, 2.4309503863111873e-09, ],
                 [ -1.7319612278663124e-06, 1.7280723633349389e-06, 3.8888645313736536e-09, ],
                 [ 2.2514114651871690e-12, -4.3759938466525865e-09, 4.3737424351873994e-09, ],
                 [ 0.0000000000000000e+00, 0.0000000000000000e+00, 0.0000000000000000e+00, ],
                 [ 0.0000000000000000e+00, 0.0000000000000000e+00, 0.0000000000000000e+00, ],
                 [ 0.0000000000000000e+00, 0.0000000000000000e+00, 0.0000000000000000e+00, ],
-            ];
-            let ida_ee = array![
+            ]);
+            ida.ida_ee.assign(&array![
                 -4.2122294839452673e-13,
                 -2.4605442771223734e-09,
                 2.4609655000707684e-09,
-            ];
-            let ida_ewt = array![
+            ]);
+            ida.nlp.ida_ewt.assign(&array![
                 9.9990174161763662e+03,
                 9.9982707680480811e+05,
                 9.9999975690502045e+05,
-            ];
-            let kk = 2;
-            let kused = 1;
-            let knew = 2;
-            let phase = 0;
-            let hh = 4.3299105720961540e-05;
-            let hused = 2.1649552860480770e-05;
-            let rr = 0.0000000000000000e+00;
-            let hmax_inv = 0.0000000000000000e+00;
-            let nst = 2;
-            let maxord = 5;
+            ]);
 
-            ida.counters.ida_nst = nst;
-            ida.ida_kk = kk;
-            ida.ida_hh = hh;
-            ida.ida_rr = rr;
-            ida.ida_kused = kused;
-            ida.ida_hused = hused;
-            ida.ida_knew = knew;
-            ida.ida_maxord = maxord;
-            ida.ida_phase = phase;
-            ida.ida_hmax_inv = hmax_inv;
-            ida.ida_ee.assign(&ida_ee);
-            ida.ida_phi.assign(&ida_phi);
-            ida.nlp.ida_ewt.assign(&ida_ewt);
+            ida.ida_kk = 2;
+            ida.ida_kused = 1;
+            ida.ida_knew = 2;
+            ida.ida_phase = 0;
+            ida.ida_hh = 4.3299105720961540e-05;
+            ida.ida_hused = 2.1649552860480770e-05;
+            ida.ida_rr = 0.0000000000000000e+00;
+            ida.ida_hmax_inv = 0.0000000000000000e+00;
+            ida.counters.ida_nst = 2;
+            ida.ida_maxord = 5;
         }
 
         ida.complete_step(err_k, err_km1);

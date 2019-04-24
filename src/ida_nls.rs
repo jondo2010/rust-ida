@@ -16,19 +16,19 @@ where
 {
     // Vectors
     /// work space for y vector (= user's yret)
-    pub(super) ida_yy: Array<P::Scalar, Ix1>,
+    pub(super) ida_yy: Array1<P::Scalar>,
     /// work space for y' vector (= user's ypret)
-    pub(super) ida_yp: Array<P::Scalar, Ix1>,
+    pub(super) ida_yp: Array1<P::Scalar>,
     /// predicted y vector
-    pub(super) ida_yypredict: Array<P::Scalar, Ix1>,
+    pub(super) ida_yypredict: Array1<P::Scalar>,
     /// predicted y' vector
-    pub(super) ida_yppredict: Array<P::Scalar, Ix1>,
+    pub(super) ida_yppredict: Array1<P::Scalar>,
 
     /// error weight vector
-    pub(super) ida_ewt: Array<P::Scalar, Ix1>,
+    pub(super) ida_ewt: Array1<P::Scalar>,
 
     /// saved residual vector
-    pub(super) ida_savres: Array<P::Scalar, Ix1>,
+    pub(super) ida_savres: Array1<P::Scalar>,
     /// current internal value of t
     pub(super) ida_tn: P::Scalar,
 
@@ -40,15 +40,15 @@ where
     pub(super) ida_toldel: P::Scalar,
 
     /// number of function (res) calls
-    pub(super) ida_nre: u64,
+    pub(super) ida_nre: usize,
 
     /// number of lsetup calls
-    pub(super) ida_nsetups: u64,
+    pub(super) ida_nsetups: usize,
 
     /// Linear Problem
     pub(super) lp: IdaLProblem<P, LS>,
 
-    a: Array<P::Scalar, Ix2>,
+    a: Array2<P::Scalar>,
 }
 
 impl<P, LS> IdaNLProblem<P, LS>

@@ -38,7 +38,7 @@ where
     /// dqincfac = optional increment factor in Jv
     dqincfac: P::Scalar,
     /// nje = no. of calls to jac
-    nje: usize,
+    pub(super) nje: usize,
     /// npe = total number of precond calls
     npe: usize,
     /// nli = total number of linear iterations
@@ -48,7 +48,7 @@ where
     /// ncfl = total number of convergence failures
     ncfl: usize,
     /// nreDQ = total number of calls to res
-    nreDQ: usize,
+    pub(super) nreDQ: usize,
     /// njtsetup = total number of calls to jtsetup
     njtsetup: usize,
     /// njtimes = total number of calls to jtimes
