@@ -92,8 +92,6 @@ fn main() {
 
     let ec = TolControlSV::new(RTOL, ndarray::Array1::from_iter(ATOL.iter().cloned()));
     let t0 = 0.0;
-    let mut yy = ndarray::Array::zeros(problem.model_size());
-    let mut yp = ndarray::Array::zeros(problem.model_size());
 
     let header = &[
         "idaRoberts_dns: Robertson kinetics DAE serial example problem for IDA Three equation chemical kinetics problem.",
@@ -122,14 +120,14 @@ fn main() {
         let retval = ida.solve(
             tout,
             &mut tret,
-            &mut yy.view_mut(),
-            &mut yp.view_mut(),
             IdaTask::Normal,
         );
 
         let nst = ida.get_num_steps();
         let kused = ida.get_last_order();
         let hused = ida.get_last_step();
+
+        let yy = ida.get_yy();
 
         table_out.add_row(row![
             format!("{:.5e}", tret),
@@ -159,7 +157,7 @@ fn main() {
     };
 
     table_out.printstd();
-    dbg!(retval);
+    dbg!(retval.unwrap());
 
     profiler::write_profile("profile.json");
 }

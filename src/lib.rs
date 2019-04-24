@@ -185,8 +185,6 @@ where
     //// Counters
     counters: IdaCounters,
 
-    /// number of internal steps taken
-    //ida_nst: u64,
     /// number of function (res) calls
     //pub(super) ida_nre: u64,
     /// number of corrector convergence failures
@@ -418,8 +416,6 @@ where
     ///
     /// * `tout` The next time at which a computed solution is desired.
     /// * `tret` The time reached by the solver (output).
-    /// * `yret` The computed solution vector y (output).
-    /// * `ypret` The computed solution vector ˙y (output).
     /// * `itask` A flag indicating the job of the solver for the next user step. The IDA NORMAL task is to have the solver take internal steps until it has reached or just passed the user specified tout parameter. The solver then interpolates in order to return approximate values of y(tout) and ˙y(tout). The IDA ONE STEP option tells the solver to just take one internal step and return the solution at the point reached by that step
     ///
     /// # Returns
@@ -444,20 +440,12 @@ where
     /// IDA_ERR_FAIL
     /// IDA_REP_RES_ERR
     /// IDA_RES_FAIL
-    pub fn solve<S1, S2>(
+    pub fn solve(
         &mut self,
         tout: P::Scalar,
         tret: &mut P::Scalar,
-        yret: &mut ArrayBase<S1, Ix1>,
-        ypret: &mut ArrayBase<S2, Ix1>,
         itask: IdaTask,
-    ) -> Result<IdaSolveStatus, failure::Error>
-    where
-        S1: ndarray::DataMut<Elem = P::Scalar>,
-        S2: ndarray::DataMut<Elem = P::Scalar>,
-        ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
-        ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
-    {
+    ) -> Result<IdaSolveStatus, failure::Error> {
         profile_scope!(format!("solve(tout={:?})", tout));
 
         if self.counters.ida_nst == 0 {
@@ -553,7 +541,7 @@ where
 
             // Set the convergence test constants epsNewt and toldel
             self.ida_epsNewt = self.ida_epcon;
-            self.nlp.ida_toldel = P::Scalar::pt001() * self.ida_epsNewt;
+            self.nlp.ida_toldel = P::Scalar::pt0001() * self.ida_epsNewt;
         } // end of first-call block.
 
         // Call lperf function and set nstloc for later performance testing.
@@ -612,7 +600,7 @@ where
 
             // Now test for all other stop conditions.
 
-            let istate = self.stop_test1(tout, tret, yret, ypret, itask);
+            let istate = self.stop_test1(tout, tret, itask);
             match istate {
                 Err(_)
                 | Ok(IdaSolveStatus::Root)
@@ -635,8 +623,8 @@ where
                 // Here yy=yret and yp=ypret already have the current solution.
                 Err(IdaError::IllegalInput {
                     msg: format!(
-                        "At t = {:?}, mxstep steps taken before reaching tout.",
-                        self.nlp.ida_tn
+                        "At t = {:.5e}, mxstep steps ({}) taken before reaching tout.",
+                        self.nlp.ida_tn, self.ida_mxstep
                     ),
                 })?
                 //istate = IDA_TOO_MUCH_WORK;
@@ -656,7 +644,7 @@ where
                 let ier = 0;
                 if ier != 0 {
                     //profiler::ProfileScope::new(format!("get_solution"));
-                    self.get_solution(self.nlp.ida_tn, yret, ypret);
+                    self.get_solution(self.nlp.ida_tn);
                     *tret = self.nlp.ida_tn;
                     self.ida_tretlast = self.nlp.ida_tn;
 
@@ -702,7 +690,7 @@ where
                 *tret = self.nlp.ida_tn;
                 self.ida_tretlast = self.nlp.ida_tn;
                 if self.counters.ida_nst > 0 {
-                    let ier = self.get_solution(self.nlp.ida_tn, yret, ypret);
+                    let ier = self.get_solution(self.nlp.ida_tn);
                 }
                 //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_TOO_MUCH_ACC, self.nlp.ida_tn);
                 //istate = IDA_TOO_MUCH_ACC;
@@ -717,7 +705,7 @@ where
 
             // Process all failed-step cases, and exit loop.
             sflag.map_err(|err| {
-                let ier = self.get_solution(self.nlp.ida_tn, yret, ypret);
+                let ier = self.get_solution(self.nlp.ida_tn);
                 match ier {
                     Ok(_) => {
                         *tret = self.nlp.ida_tn;
@@ -774,7 +762,7 @@ where
 
             // Now check all other stop conditions.
 
-            let istate = self.stop_test2(tout, tret, yret, ypret, itask);
+            let istate = self.stop_test2(tout, tret, itask);
             match istate {
                 Err(_)
                 | Ok(IdaSolveStatus::Root)
@@ -947,13 +935,6 @@ where
             return(IDA_LINIT_FAIL);
           }
         }
-
-        // Initialize the nonlinear solver (must occur after linear solver is initialize) so that lsetup and lsolve pointer have been set
-        ier = idaNlsInit(IDA_mem);
-        if (ier != IDA_SUCCESS) {
-          IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_NLS_INIT_FAIL);
-          return(IDA_NLS_INIT_FAIL);
-        }
         */
 
         //return(IDA_SUCCESS);
@@ -1075,20 +1056,12 @@ where
     ///
     /// In the tstop cases, this routine may adjust the stepsize hh to cause
     /// the next step to reach tstop exactly.
-    fn stop_test1<S1, S2>(
+    fn stop_test1(
         &mut self,
         tout: P::Scalar,
         tret: &mut P::Scalar,
-        yret: &mut ArrayBase<S1, Ix1>,
-        ypret: &mut ArrayBase<S2, Ix1>,
         itask: IdaTask,
-    ) -> Result<IdaSolveStatus, failure::Error>
-    where
-        S1: ndarray::DataMut<Elem = P::Scalar>,
-        S2: ndarray::DataMut<Elem = P::Scalar>,
-        ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
-        ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
-    {
+    ) -> Result<IdaSolveStatus, failure::Error> {
         match itask {
             IdaTask::Normal => {
                 if let Some(tstop) = self.ida_tstop {
@@ -1111,7 +1084,7 @@ where
                 }
 
                 if dbg!((self.nlp.ida_tn - tout) * self.ida_hh) >= P::Scalar::zero() {
-                    self.get_solution(tout, yret, ypret)?;
+                    self.get_solution(tout)?;
                     self.ida_tretlast = tout;
                     *tret = tout;
                     return Ok(IdaSolveStatus::Success);
@@ -1123,12 +1096,11 @@ where
                         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
 
                     if (self.nlp.ida_tn - tstop).abs() <= troundoff {
-                        self.get_solution(tstop, yret, ypret).map_err(|_| {
-                            IdaError::BadStopTime {
+                        self.get_solution(tstop)
+                            .map_err(|_| IdaError::BadStopTime {
                                 tstop: tstop.to_f64().unwrap(),
                                 t: self.nlp.ida_tn.to_f64().unwrap(),
-                            }
-                        })?;
+                            })?;
 
                         self.ida_tretlast = tstop;
                         *tret = tstop;
@@ -1157,7 +1129,7 @@ where
     ///
     /// The return values are:
     ///  CONTINUE_STEPS     if no stop conditions were found
-    ///  IDA_SUCCESS        for a normal return to the user
+    ///  IDA_S>UCCESS        for a normal return to the user
     ///  IDA_TSTOP_RETURN   for a tstop-reached return to the user
     ///  IDA_ILL_INPUT      for an illegal-input return to the user
     ///
@@ -1169,20 +1141,12 @@ where
     ///
     /// Note: No test is made for an error return from IDAGetSolution here,
     /// because the same test was made prior to the step.
-    fn stop_test2<S1, S2>(
+    fn stop_test2(
         &mut self,
         tout: P::Scalar,
         tret: &mut P::Scalar,
-        yret: &mut ArrayBase<S1, Ix1>,
-        ypret: &mut ArrayBase<S2, Ix1>,
         itask: IdaTask,
-    ) -> Result<IdaSolveStatus, failure::Error>
-    where
-        S1: ndarray::DataMut<Elem = P::Scalar>,
-        S2: ndarray::DataMut<Elem = P::Scalar>,
-        ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
-        ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
-    {
+    ) -> Result<IdaSolveStatus, failure::Error> {
         match itask {
             IdaTask::Normal => {
                 // Test for tn past tout.
@@ -1190,7 +1154,7 @@ where
                     // /* ier = */ IDAGetSolution(IDA_mem, tout, yret, ypret);
                     *tret = tout;
                     self.ida_tretlast = tout;
-                    let ier = self.get_solution(tout, yret, ypret);
+                    let _ier = self.get_solution(tout);
                     return Ok(IdaSolveStatus::Success);
                 }
 
@@ -1201,7 +1165,7 @@ where
                         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
 
                     if (self.nlp.ida_tn - tstop).abs() <= troundoff {
-                        let ier = self.get_solution(tstop, yret, ypret);
+                        let _ier = self.get_solution(tstop);
                         *tret = tstop;
                         self.ida_tretlast = tstop;
                         self.ida_tstop = None;
@@ -1215,9 +1179,6 @@ where
                 }
 
                 return Ok(IdaSolveStatus::ContinueSteps);
-                //return(IDA_TSTOP_RETURN);
-                //Err(IdaError::BadStopTime { tstop: self.ida_tstop.to_f64().unwrap(), t: self.nlp.ida_tn.to_f64().unwrap(), })?
-                //return(CONTINUE_STEPS);
             }
             IdaTask::OneStep => {
                 if let Some(tstop) = self.ida_tstop {
@@ -1227,7 +1188,7 @@ where
                         * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
 
                     if (self.nlp.ida_tn - tstop).abs() <= troundoff {
-                        let ier = self.get_solution(tstop, yret, ypret);
+                        let _ier = self.get_solution(tstop);
                         *tret = tstop;
                         self.ida_tretlast = tstop;
                         self.ida_tstop = None;
@@ -1244,8 +1205,6 @@ where
                 return Ok(IdaSolveStatus::Success);
             }
         }
-
-        //return IDA_ILL_INPUT;  /* This return should never happen. */
     }
 
     /// This routine performs one internal IDA step, from `tn` to `tn + hh`. It calls other
@@ -1293,6 +1252,11 @@ where
     ///                     IDA_REP_RES_ERR
     fn step(&mut self) -> Result<(), failure::Error> {
         profile_scope!(format!("step(), nst={}", self.counters.ida_nst));
+        trace!(
+            "step(), nst={}, tn={:.6e}",
+            self.counters.ida_nst,
+            self.nlp.ida_tn
+        );
 
         let saved_t = self.nlp.ida_tn;
 
@@ -1341,7 +1305,10 @@ where
             // Nonlinear system solution
             let (err_k, err_km1, converged) = self
                 .nonlinear_solve()
-                .map_err(|err| (P::Scalar::zero(), P::Scalar::zero(), err))
+                .map_err(|err| {
+                    trace!("nonlinear_solve() error: {:#?}", err);
+                    (P::Scalar::zero(), P::Scalar::zero(), err)
+                })
                 .and_then(|res| {
                     // If NLS was successful, perform error test
                     let (err_k, err_km1, nflag) = self.test_error(ck);
@@ -1683,9 +1650,8 @@ where
     /// IDARestore
     /// This routine restores tn, psi, and phi in the event of a failure.
     /// It changes back `phi-star` to `phi` (changed in `set_coeffs()`)
-    ///
-    ///
     fn restore(&mut self, saved_t: P::Scalar) -> () {
+        trace!("restore(saved_t={:.6e})", saved_t);
         self.nlp.ida_tn = saved_t;
 
         // Restore psi[0 .. kk] = psi[1 .. kk + 1] - hh
@@ -1881,7 +1847,11 @@ where
     /// array.
     fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
         profile_scope!(format!("complete_step()"));
-        trace!("complete_step(err_k={:.5e}, err_km1={:.5e})", err_k, err_km1);
+        trace!(
+            "complete_step(err_k={:.5e}, err_km1={:.5e})",
+            err_k,
+            err_km1
+        );
 
         self.counters.ida_nst += 1;
         let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);
@@ -1889,7 +1859,11 @@ where
         self.ida_hused = self.ida_hh;
 
         if (self.ida_knew == self.ida_kk - 1) || (self.ida_kk == self.ida_maxord) {
-            trace!("nst={}, ida_phase={}->1",self.counters.ida_nst, self.ida_phase);
+            trace!(
+                "nst={}, ida_phase={}->1",
+                self.counters.ida_nst,
+                self.ida_phase
+            );
             self.ida_phase = 1;
         }
 
@@ -2030,14 +2004,13 @@ where
             .ida_Zvecs
             .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1));
 
-        for (i, mut z_row) in z_view
-            .genrows_mut()
-            .into_iter()
-            .enumerate()
-        {
+        for (i, mut z_row) in z_view.genrows_mut().into_iter().enumerate() {
             // z[i] = ee + phi[kused] + phi[kused-1] + .. + phi[i]
             z_row += &self.ida_ee;
-            z_row += &self.ida_phi.slice_axis(Axis(0), Slice::from(i..self.ida_kused+1)).sum_axis(Axis(0));
+            z_row += &self
+                .ida_phi
+                .slice_axis(Axis(0), Slice::from(i..self.ida_kused + 1))
+                .sum_axis(Axis(0));
         }
 
         self.ida_phi
@@ -2066,18 +2039,7 @@ where
     /// # Errors
     ///
     /// * `IdaError::BadTimeValue` if `t` is not within the interval of the last step taken.
-    pub fn get_solution<'a, S1, S2>(
-        &mut self,
-        t: P::Scalar,
-        yret: &'a mut ArrayBase<S1, Ix1>,
-        ypret: &'a mut ArrayBase<S2, Ix1>,
-    ) -> Result<(), failure::Error>
-    where
-        S1: ndarray::DataMut<Elem = P::Scalar>,
-        S2: ndarray::DataMut<Elem = P::Scalar>,
-        ArrayBase<S1, Ix1>: ndarray::IntoNdProducer,
-        ArrayBase<S2, Ix1>: ndarray::IntoNdProducer,
-    {
+    pub fn get_solution(&mut self, t: P::Scalar) -> Result<(), failure::Error> {
         profile_scope!(format!("get_solution(t={:.5e})", t));
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
@@ -2119,25 +2081,27 @@ where
         }
 
         //retval = N_VLinearCombination(kord+1, self.ida_cvals, self.ida_phi,  yret);
-        ndarray::Zip::from(yret)
+        let cvals = self.ida_cvals.slice(s![0..kord + 1]);
+        ndarray::Zip::from(self.nlp.ida_yy.view_mut())
             .and(
                 self.ida_phi
                     .slice_axis(Axis(0), Slice::from(0..kord + 1))
                     .lanes(Axis(0)),
             )
             .apply(|z, row| {
-                *z = (&row * &self.ida_cvals.slice(s![0..kord + 1])).sum();
+                *z = (&row * &cvals).sum();
             });
 
         //retval = N_VLinearCombination(kord, self.ida_dvals, self.ida_phi+1, ypret);
-        ndarray::Zip::from(ypret)
+        let dvals = self.ida_dvals.slice(s![0..kord]);
+        ndarray::Zip::from(&mut self.nlp.ida_yp)
             .and(
                 self.ida_phi
                     .slice_axis(Axis(0), Slice::from(1..kord + 1))
                     .lanes(Axis(0)),
             )
             .apply(|z, row| {
-                *z = (&row * &self.ida_dvals.slice(s![0..kord])).sum();
+                *z = (&row * &dvals).sum();
             });
 
         Ok(())
@@ -2240,9 +2204,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::*;
-    use nearly_eq::*;
     use approx::assert_relative_eq;
+
+    use ndarray::array;
+    use nearly_eq::*;
     use tol_control::*;
 
     #[derive(Clone, Copy, Debug)]
@@ -2292,37 +2257,14 @@ mod tests {
     #[test]
     fn test_set_coeffs() {
         //Before
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                4.1295003522440181e-07,
-                1.6518008147114031e-12,
-                9.9999958704831304e-01,
-            ],
-            [
-                -6.4049734044789205e-08,
-                -2.5619916159829551e-13,
-                6.4049990326726996e-08,
-            ],
-            [
-                2.1135440604995772e-08,
-                8.4541889872000439e-14,
-                -2.1135525197726480e-08,
-            ],
-            [
-                -2.2351400807868742e-08,
-                -8.9405756031743853e-14,
-                2.2351489636470618e-08,
-            ],
-            [
-                1.8323105973439385e-08,
-                7.3292641194159994e-14,
-                -1.8323176512520801e-08,
-            ],
-            [
-                -2.2423672161947766e-10,
-                -8.9709159667337618e-16,
-                2.2422474012398869e-10,
-            ],
+            [ 4.1295003522440181e-07, 1.6518008147114031e-12, 9.9999958704831304e-01, ],
+            [ -6.4049734044789205e-08, -2.5619916159829551e-13, 6.4049990326726996e-08, ],
+            [ 2.1135440604995772e-08, 8.4541889872000439e-14, -2.1135525197726480e-08, ],
+            [ -2.2351400807868742e-08, -8.9405756031743853e-14, 2.2351489636470618e-08, ],
+            [ 1.8323105973439385e-08, 7.3292641194159994e-14, -1.8323176512520801e-08, ],
+            [ -2.2423672161947766e-10, -8.9709159667337618e-16, 2.2422474012398869e-10, ],
         ];
         let ida_psi = array![
             6.6874844417638421e+08,
@@ -2400,37 +2342,14 @@ mod tests {
 
         //--- IDASetCoeffs After
         let ck_expect = 0.3214285714285713969;
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                4.1295003522440181e-07,
-                1.6518008147114031e-12,
-                9.9999958704831304e-01,
-            ],
-            [
-                -6.4049734044789205e-08,
-                -2.5619916159829551e-13,
-                6.4049990326726996e-08,
-            ],
-            [
-                2.0023048994206519e-08,
-                8.0092316720842518e-14,
-                -2.0023129134688242e-08,
-            ],
-            [
-                -2.2351400807868742e-08,
-                -8.9405756031743853e-14,
-                2.2351489636470618e-08,
-            ],
-            [
-                1.8323105973439385e-08,
-                7.3292641194159994e-14,
-                -1.8323176512520801e-08,
-            ],
-            [
-                -2.2423672161947766e-10,
-                -8.9709159667337618e-16,
-                2.2422474012398869e-10,
-            ],
+            [ 4.1295003522440181e-07, 1.6518008147114031e-12, 9.9999958704831304e-01, ],
+            [ -6.4049734044789205e-08, -2.5619916159829551e-13, 6.4049990326726996e-08, ],
+            [ 2.0023048994206519e-08, 8.0092316720842518e-14, -2.0023129134688242e-08, ],
+            [ -2.2351400807868742e-08, -8.9405756031743853e-14, 2.2351489636470618e-08, ],
+            [ 1.8323105973439385e-08, 7.3292641194159994e-14, -1.8323176512520801e-08, ],
+            [ -2.2423672161947766e-10, -8.9709159667337618e-16, 2.2422474012398869e-10, ],
         ];
         let ida_psi = array![
             6.6874844417638421e+08,
@@ -2504,37 +2423,14 @@ mod tests {
         let ck = 1.091414141414142;
         let suppressalg = 0;
         let kk = 5;
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                3.634565317158998e-05,
-                1.453878335134203e-10,
-                0.9999636542014404,
-            ],
-            [
-                -6.530333550677049e-06,
-                -2.612329458968465e-11,
-                6.530359673556191e-06,
-            ],
-            [
-                1.946442728026142e-06,
-                7.786687275994346e-12,
-                -1.946450515496441e-06,
-            ],
-            [
-                -8.097632208221231e-07,
-                -3.239585549038764e-12,
-                8.097664556005615e-07,
-            ],
-            [
-                3.718130977075839e-07,
-                1.487573462300438e-12,
-                -3.71814615793545e-07,
-            ],
-            [
-                -3.24421895454213e-07,
-                -1.297915245220823e-12,
-                3.244230624265827e-07,
-            ],
+            [ 3.634565317158998e-05, 1.453878335134203e-10, 0.9999636542014404, ],
+            [ -6.530333550677049e-06, -2.612329458968465e-11, 6.530359673556191e-06, ],
+            [ 1.946442728026142e-06, 7.786687275994346e-12, -1.946450515496441e-06, ],
+            [ -8.097632208221231e-07, -3.239585549038764e-12, 8.097664556005615e-07, ],
+            [ 3.718130977075839e-07, 1.487573462300438e-12, -3.71814615793545e-07, ],
+            [ -3.24421895454213e-07, -1.297915245220823e-12, 3.244230624265827e-07, ],
         ];
         let ida_ee = array![
             2.65787533317467e-07,
@@ -2586,37 +2482,14 @@ mod tests {
         let ck = 0.2025812352167927;
         let suppressalg = 0;
         let kk = 4;
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                3.051237735052657e-05,
-                1.220531905117091e-10,
-                0.9999694875005963,
-            ],
-            [
-                -2.513114849098281e-06,
-                -1.005308974226734e-11,
-                2.513124902721765e-06,
-            ],
-            [
-                4.500284453718991e-07,
-                1.800291970640913e-12,
-                -4.500302448499092e-07,
-            ],
-            [
-                -1.366709389821433e-07,
-                -5.467603693902342e-13,
-                1.366714866794709e-07,
-            ],
-            [
-                7.278821769100639e-08,
-                2.911981566628798e-13,
-                -7.278850816613011e-08,
-            ],
-            [
-                -8.304741244343501e-09,
-                -3.324587131187576e-14,
-                8.304772990651073e-09,
-            ],
+            [ 3.051237735052657e-05, 1.220531905117091e-10, 0.9999694875005963, ],
+            [ -2.513114849098281e-06, -1.005308974226734e-11, 2.513124902721765e-06, ],
+            [ 4.500284453718991e-07, 1.800291970640913e-12, -4.500302448499092e-07, ],
+            [ -1.366709389821433e-07, -5.467603693902342e-13, 1.366714866794709e-07, ],
+            [ 7.278821769100639e-08, 2.911981566628798e-13, -7.278850816613011e-08, ],
+            [ -8.304741244343501e-09, -3.324587131187576e-14, 8.304772990651073e-09, ],
         ];
         let ida_ee = array![
             -2.981302228744271e-08,
@@ -2665,37 +2538,14 @@ mod tests {
 
     #[test]
     fn test_predict1() {
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                1.0570152037228958e-07,
-                4.2280612558303261e-13,
-                9.9999989429805680e-01,
-            ],
-            [
-                -3.3082196412696304e-08,
-                -1.3232881828710420e-13,
-                3.3082328676061534e-08,
-            ],
-            [
-                1.8675273859330434e-08,
-                7.4701128706323864e-14,
-                -1.8675348801050254e-08,
-            ],
-            [
-                -1.9956501813542136e-08,
-                -7.9826057803058290e-14,
-                1.9956580862443821e-08,
-            ],
-            [
-                1.2851942479612096e-09,
-                5.1407743965993651e-15,
-                -1.2851948368212051e-09,
-            ],
-            [
-                -2.2423672161947766e-10,
-                -8.9709159667337618e-16,
-                2.2422474012398869e-10,
-            ],
+            [ 1.0570152037228958e-07, 4.2280612558303261e-13, 9.9999989429805680e-01, ],
+            [ -3.3082196412696304e-08, -1.3232881828710420e-13, 3.3082328676061534e-08, ],
+            [ 1.8675273859330434e-08, 7.4701128706323864e-14, -1.8675348801050254e-08, ],
+            [ -1.9956501813542136e-08, -7.9826057803058290e-14, 1.9956580862443821e-08, ],
+            [ 1.2851942479612096e-09, 5.1407743965993651e-15, -1.2851948368212051e-09, ],
+            [ -2.2423672161947766e-10, -8.9709159667337618e-16, 2.2422474012398869e-10, ],
         ];
         let ida_gamma = array![
             0.0000000000000000e+00,
@@ -2736,37 +2586,14 @@ mod tests {
         ida.predict();
 
         //--- IDAPredict After
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                1.0570152037228958e-07,
-                4.2280612558303261e-13,
-                9.9999989429805680e-01,
-            ],
-            [
-                -3.3082196412696304e-08,
-                -1.3232881828710420e-13,
-                3.3082328676061534e-08,
-            ],
-            [
-                1.8675273859330434e-08,
-                7.4701128706323864e-14,
-                -1.8675348801050254e-08,
-            ],
-            [
-                -1.9956501813542136e-08,
-                -7.9826057803058290e-14,
-                1.9956580862443821e-08,
-            ],
-            [
-                1.2851942479612096e-09,
-                5.1407743965993651e-15,
-                -1.2851948368212051e-09,
-            ],
-            [
-                -2.2423672161947766e-10,
-                -8.9709159667337618e-16,
-                2.2422474012398869e-10,
-            ],
+            [ 1.0570152037228958e-07, 4.2280612558303261e-13, 9.9999989429805680e-01, ],
+            [ -3.3082196412696304e-08, -1.3232881828710420e-13, 3.3082328676061534e-08, ],
+            [ 1.8675273859330434e-08, 7.4701128706323864e-14, -1.8675348801050254e-08, ],
+            [ -1.9956501813542136e-08, -7.9826057803058290e-14, 1.9956580862443821e-08, ],
+            [ 1.2851942479612096e-09, 5.1407743965993651e-15, -1.2851948368212051e-09, ],
+            [ -2.2423672161947766e-10, -8.9709159667337618e-16, 2.2422474012398869e-10, ],
         ];
         let ida_yypredict = array![
             9.1294597818923714e-08,
@@ -2780,28 +2607,13 @@ mod tests {
         ];
 
         assert_eq!(ida.ida_kk, kk);
-        assert_nearly_eq!(ida.ida_phi, ida_phi, 1e-9);
-        assert_nearly_eq!(ida.nlp.ida_yypredict, ida_yypredict, 1e-9);
-        assert_nearly_eq!(ida.nlp.ida_yppredict, ida_yppredict, 1e-9);
+        assert_nearly_eq!(ida.ida_phi, ida_phi);
+        assert_nearly_eq!(ida.nlp.ida_yypredict, ida_yypredict);
+        assert_nearly_eq!(ida.nlp.ida_yppredict, ida_yppredict);
     }
 
     #[test]
     fn test_restore1() {
-        let saved_t = 717553.4942644858;
-        #[rustfmt::skip]
-        let phi_before = array![[0.00280975951420059, 1.125972706132338e-08, 0.9971902292261264], [-0.0001926545663078034, -7.857235149861102e-10,0.0001926553520857565], [2.945636347837807e-05, 1.066748079583829e-10,-2.945647009050819e-05], [-5.518529121250618e-06, -4.529997656241677e-11,5.518574540464112e-06], [2.822681468681011e-06, -4.507342025411469e-11,-2.822636100488049e-06], [-8.124641701620927e-08,-8.669560754165103e-11,8.133355922669991e-08], ];
-        #[rustfmt::skip]
-        let psi_before = array![ 47467.05706123715, 94934.1141224743, 142401.1711837114, 166134.69971433, 189868.2282449486, 107947.0192373629 ];
-        let cvals_before = array![1., 1., 1., 1., 1., 0.];
-        let beta_before = array![1., 1., 1., 1.2, 1.4, 1.];
-
-        #[rustfmt::skip]
-        let phi_after = array![[0.00280975951420059,1.125972706132338e-08, 0.9971902292261264,], [-0.0001926545663078034,-7.857235149861102e-10,0.0001926553520857565,], [2.945636347837807e-05,1.066748079583829e-10,-2.945647009050819e-05,], [-4.598774267708849e-06,-3.774998046868064e-11,4.598812117053426e-06,], [2.016201049057865e-06,-3.219530018151049e-11,-2.016168643205749e-06,], [-8.124641701620927e-08,-8.669560754165103e-11,8.133355922669991e-08,], ];
-        #[rustfmt::skip]
-        let psi_after = array![ 47467.05706123715, 94934.11412247429, 118667.6426530929, 142401.1711837114, 189868.2282449486, 107947.0192373629 ];
-        let cvals_after = array![0.8333333333333334, 0.7142857142857142, 1., 1., 1., 0.];
-        let beta_after = array![1., 1., 1., 1.2, 1.4, 1.];
-
         let problem = Dummy {};
         let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
             problem,
@@ -2810,203 +2622,94 @@ mod tests {
             TolControlSS::new(1e-4, 1e-4),
         );
 
+        let saved_t = 1.2123749601869230e-03;
+
         // Set preconditions:
-        ida.nlp.ida_tn = 765020.5513257229;
-        ida.ida_ns = 3;
-        ida.ida_kk = 4;
-        ida.ida_hh = 47467.05706123715;
-        ida.ida_phi.assign(&phi_before);
-        ida.ida_psi.assign(&psi_before);
-        ida.ida_cvals.assign(&cvals_before);
-        ida.ida_beta.assign(&beta_before);
+        {
+            ida.nlp.ida_tn = 1.9051606517223076e-03;
+            ida.ida_ns = 1;
+            ida.ida_kk = 2;
+            ida.ida_hh = 6.9278569153538464e-04;
+            #[rustfmt::skip]
+            ida.ida_phi.assign(&array![
+                [ 9.9995150785077214e-01, 3.2239271870584518e-05, 1.6252877357362511e-05, ],
+                [ -2.7707635503825098e-05, 9.7313256739903617e-06, 1.7976309829765466e-05, ],
+                [ 3.4935651154088256e-09, -1.0880124117276491e-05, 1.0876630551341415e-05, ],
+                [ 5.6694097544747856e-10, 2.1378758881496850e-08, -2.1945701078189652e-08, ],
+                [ -1.3875550771817554e-10, 1.3559268269012917e-06, -1.3557880688400603e-06, ],
+                [ -1.1465196356066767e-10, 2.0021935974335382e-07, -2.0010470777979317e-07, ]
+            ]);
+            ida.ida_psi.assign(&array![
+                6.9278569153538464e-04,
+                1.0391785373030770e-03,
+                1.3855713830707693e-03,
+                7.7938390297730776e-04,
+                3.4639284576769232e-04,
+                0.0000000000000000e+00
+            ]);
+            ida.ida_cvals.assign(&array![
+                1.0000000000000000e+00,
+                1.0000000000000000e+00,
+                1.0000000000000000e+00,
+                0.0000000000000000e+00,
+                0.0000000000000000e+00,
+                0.0000000000000000e+00
+            ]);
+            ida.ida_beta.assign(&array![
+                1.0000000000000000e+00,
+                2.0000000000000000e+00,
+                3.0000000000000000e+00,
+                4.8000000000000007e+00,
+                1.5000000000000000e+01,
+                0.0000000000000000e+00
+            ]);
+        }
 
         // Call the function under test
         ida.restore(saved_t);
 
-        assert_nearly_eq!(ida.nlp.ida_tn, saved_t);
-        assert_eq!(ida.ida_ns, 3);
-        assert_eq!(ida.ida_kk, 4);
-        assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
-        assert_nearly_eq!(ida.ida_beta, beta_after, 1e-6);
-        assert_nearly_eq!(ida.ida_psi, psi_after, 1e-6);
-        assert_nearly_eq!(ida.ida_phi, phi_after, 1e-6);
-    }
-
-    #[test]
-    fn test_restore2() {
-        let saved_t = 3623118336.24244;
+        //--- IDARestore After: saved_t=1.2123749601869230e-03 tn=1.2123749601869230e-03 ns=1 kk=2
         #[rustfmt::skip]
-        let phi_before = array![ [5.716499633245077e-07,2.286601144610028e-12, 0.9999994283477499,], [-1.555846772013456e-07,-6.223394599091205e-13,1.555852991517385e-07,], [7.018252655941472e-08,2.807306512268244e-13,-7.01828076998538e-08,], [-4.56160628763917e-08,-1.824647796129851e-13,4.561624269904529e-08,], [5.593228676143622e-08,2.237297583983664e-13,-5.593253344183256e-08,], [-2.242367216194777e-10,-8.970915966733762e-16,2.242247401239887e-10,], ];
-        #[rustfmt::skip]
-        let psi_before = array![  857870592.1885694,   1286805888.282854,   1715741184.377139,   1930208832.424281,   2144676480.471424,    26020582.4876316];
-        #[rustfmt::skip]
-        let cvals_before = array![1., 1., 1., 1., 1., 1.];
-        #[rustfmt::skip]
-        let beta_before = array![1., 2., 3., 4.8, 7.199999999999999, 10.28571428571428];
-        //--- IDARestore After: saved_t=   3623118336.24244 tn=   3623118336.24244 ns=1 kk=4
-        #[rustfmt::skip]
-        let phi_after = array![ [5.716499633245077e-07,2.286601144610028e-12, 0.9999994283477499,], [-7.779233860067279e-08,-3.111697299545603e-13,7.779264957586927e-08,], [2.339417551980491e-08,9.35768837422748e-14,-2.33942692332846e-08,], [-9.503346432581604e-09,-3.801349575270522e-14,9.503383895634436e-09,], [7.768373161310588e-09,3.107357755532867e-14,-7.768407422476745e-09,], [-2.242367216194777e-10,-8.970915966733762e-16,2.242247401239887e-10,], ];
-        #[rustfmt::skip]
-        let psi_after= array![  428935296.0942847,   857870592.1885694,   1072338240.235712,   1286805888.282854,   2144676480.471424,    26020582.4876316];
-        #[rustfmt::skip]
-        let cvals_after = array![ 0.5, 0.3333333333333333, 0.2083333333333333, 0.1388888888888889, 1., 1. ];
-        #[rustfmt::skip]
-        let beta_after = array![1., 2., 3., 4.8, 7.199999999999999, 10.28571428571428];
-
-        let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
-            problem,
-            array![0., 0., 0.],
-            array![0., 0., 0.],
-            TolControlSS::new(1e-4, 1e-4),
-        );
-
-        // Set preconditions:
-        ida.nlp.ida_tn = 4480988928.431009;
-        ida.ida_ns = 1;
-        ida.ida_kk = 4;
-        ida.ida_hh = 857870592.1885694;
-        ida.ida_phi.assign(&phi_before);
-        ida.ida_psi.assign(&psi_before);
-        ida.ida_cvals.assign(&cvals_before);
-        ida.ida_beta.assign(&beta_before);
-
-        // Call the function under test
-        ida.restore(saved_t);
-
-        assert_nearly_eq!(ida.nlp.ida_tn, saved_t);
-        assert_eq!(ida.ida_ns, 1);
-        assert_eq!(ida.ida_kk, 4);
-        assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
-        assert_nearly_eq!(ida.ida_beta, beta_after, 1e-6);
-        assert_nearly_eq!(ida.ida_psi, psi_after, 1e-6);
-        assert_nearly_eq!(ida.ida_phi, phi_after, 1e-6);
-    }
-
-    #[test]
-    fn test_restore3() {
-        let saved_t = 13638904.64873992;
-        let phi_before = array![
-            [
-                0.0001523741818966069,
-                6.095884948264652e-10,
-                0.9998476252085154,
-            ],
-            [
-                -1.964117218731689e-05,
-                -7.858910051867137e-11,
-                1.964125077907938e-05,
-            ],
-            [
-                4.048658569496216e-06,
-                1.620249912028008e-11,
-                -4.048674765925692e-06,
-            ],
-            [
-                -1.215165175266232e-06,
-                -4.863765573523665e-12,
-                1.21517004866448e-06,
-            ],
-            [
-                4.909710408845208e-07,
-                1.965778579990634e-12,
-                -4.909729965008022e-07,
-            ],
-            [
-                -2.529640523993838e-07,
-                -1.012593011825966e-12,
-                2.529650614751456e-07,
-            ],
-        ];
-        let psi_before = array![
-            1656116.685489699,
-            2484175.028234549,
-            3312233.370979399,
-            4140291.713724249,
-            5060356.538996303,
-            5520388.951632331
-        ];
-        let cvals_before = array![1., 1., 1., 1., 1., 1.];
-        let beta_before = array![1., 2., 3., 4., 4.864864864864866, 6.370656370656372];
-        //--- IDARestore After: saved_t=  13638904.64873992 tn=  13638904.64873992 ns=1 kk=5
         let phi_after = array![
-            [
-                0.0001523741818966069,
-                6.095884948264652e-10,
-                0.9998476252085154,
-            ],
-            [
-                -9.820586093658443e-06,
-                -3.929455025933569e-11,
-                9.820625389539692e-06,
-            ],
-            [
-                1.349552856498739e-06,
-                5.400833040093358e-12,
-                -1.349558255308564e-06,
-            ],
-            [
-                -3.037912938165579e-07,
-                -1.215941393380916e-12,
-                3.0379251216612e-07,
-            ],
-            [
-                1.009218250707071e-07,
-                4.040767081091857e-13,
-                -1.009222270584982e-07,
-            ],
-            [
-                -3.970769064935782e-08,
-                -1.589464182199546e-13,
-                3.970784904367437e-08,
-            ],
+            [ 9.9995150785077214e-01, 3.2239271870584518e-05, 1.6252877357362511e-05, ],
+            [ -1.3853817751912549e-05, 4.8656628369951808e-06, 8.9881549148827332e-06, ],
+            [ 1.1645217051362752e-09, -3.6267080390921635e-06, 3.6255435171138049e-06, ],
+            [ 5.6694097544747856e-10, 2.1378758881496850e-08, -2.1945701078189652e-08, ],
+            [ -1.3875550771817554e-10, 1.3559268269012917e-06, -1.3557880688400603e-06, ],
+            [ -1.1465196356066767e-10, 2.0021935974335382e-07, -2.0010470777979317e-07, ]
         ];
         let psi_after = array![
-            828058.3427448499,
-            1656116.685489699,
-            2484175.02823455,
-            3404239.853506604,
-            3864272.266142632,
-            5520388.951632331,
+            3.4639284576769237e-04,
+            6.9278569153538464e-04,
+            1.3855713830707693e-03,
+            7.7938390297730776e-04,
+            3.4639284576769232e-04,
+            0.0000000000000000e+00
         ];
         let cvals_after = array![
-            0.5,
-            0.3333333333333333,
-            0.25,
-            0.2055555555555555,
-            0.156969696969697,
-            1.,
+            5.0000000000000000e-01,
+            3.3333333333333331e-01,
+            1.0000000000000000e+00,
+            0.0000000000000000e+00,
+            0.0000000000000000e+00,
+            0.0000000000000000e+00
         ];
-        let beta_after = array![1., 2., 3., 4., 4.864864864864866, 6.370656370656372];
-
-        let problem = Dummy {};
-        let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
-            problem,
-            array![0., 0., 0.],
-            array![0., 0., 0.],
-            TolControlSS::new(1e-4, 1e-4),
-        );
-
-        // Set preconditions:
-        ida.nlp.ida_tn = 15295021.33422961;
-        ida.ida_ns = 1;
-        ida.ida_kk = 5;
-        ida.ida_hh = 1656116.685489699;
-        ida.ida_phi.assign(&phi_before);
-        ida.ida_psi.assign(&psi_before);
-        ida.ida_cvals.assign(&cvals_before);
-        ida.ida_beta.assign(&beta_before);
-
-        // Call the function under test
-        ida.restore(saved_t);
+        let beta_after = array![
+            1.0000000000000000e+00,
+            2.0000000000000000e+00,
+            3.0000000000000000e+00,
+            4.8000000000000007e+00,
+            1.5000000000000000e+01,
+            0.0000000000000000e+00
+        ];
 
         assert_nearly_eq!(ida.nlp.ida_tn, saved_t);
         assert_eq!(ida.ida_ns, 1);
-        assert_eq!(ida.ida_kk, 5);
-        assert_nearly_eq!(ida.ida_cvals, cvals_after, 1e-6);
-        assert_nearly_eq!(ida.ida_beta, beta_after, 1e-6);
-        assert_nearly_eq!(ida.ida_psi, psi_after, 1e-6);
-        assert_nearly_eq!(ida.ida_phi, phi_after, 1e-6);
+        assert_eq!(ida.ida_kk, 2);
+        assert_nearly_eq!(ida.ida_cvals, cvals_after);
+        assert_nearly_eq!(ida.ida_beta, beta_after);
+        assert_nearly_eq!(ida.ida_psi, psi_after);
+        assert_nearly_eq!(ida.ida_phi, phi_after);
     }
 
     #[test]
@@ -3070,38 +2773,35 @@ mod tests {
 
         ida.complete_step(err_k, err_km1);
 
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                9.9999913401863560e-01,
-                8.6549484628302034e-07,
-                4.8651812062436036e-10,
-            ],
-            [
-                -8.6598136440364466e-07,
-                8.6549484628302034e-07,
-                4.8651812062436036e-10,
-            ],
-            [
-                7.5001558608301906e-13,
-                -4.8726813621044346e-10,
-                4.8651812062436036e-10,
-            ],
+            [ 9.9999913401863560e-01, 8.6549484628302034e-07, 4.8651812062436036e-10, ],
+            [ -8.6598136440364466e-07, 8.6549484628302034e-07, 4.8651812062436036e-10, ],
+            [ 7.5001558608301906e-13, -4.8726813621044346e-10, 4.8651812062436036e-10, ],
             [0.0, 0.0, 0.0,],
             [0.0, 0.0, 0.0,],
             [0.0, 0.0, 0.0,],
         ];
-        let ida_ee = array![7.5001558608301906e-13,-4.8726813621044346e-10,4.8651812062436036e-10,];
-        let ida_ewt = array![9.9990000999900003e+03,1.0000000000000000e+06,1.0000000000000000e+06,];
-        let kk=1;
-        let kused=1;
-        let knew=1;
-        let phase=0;
-        let hh=2.1649552860480770e-05;
-        let hused=2.1649552860480770e-05;
-        let rr=0.0000000000000000e+00;
-        let hmax_inv=0.0000000000000000e+00;
-        let nst=1;
-        let maxord=5;
+        let ida_ee = array![
+            7.5001558608301906e-13,
+            -4.8726813621044346e-10,
+            4.8651812062436036e-10,
+        ];
+        let ida_ewt = array![
+            9.9990000999900003e+03,
+            1.0000000000000000e+06,
+            1.0000000000000000e+06,
+        ];
+        let kk = 1;
+        let kused = 1;
+        let knew = 1;
+        let phase = 0;
+        let hh = 2.1649552860480770e-05;
+        let hused = 2.1649552860480770e-05;
+        let rr = 0.0000000000000000e+00;
+        let hmax_inv = 0.0000000000000000e+00;
+        let nst = 1;
+        let maxord = 5;
 
         assert_eq!(ida.counters.ida_nst, nst);
         assert_eq!(ida.ida_kk, kk);
@@ -3133,19 +2833,35 @@ mod tests {
 
         // Set preconditions:
         {
-            let ida_phi = array![[9.9999826803802172e-01,1.7295310279504897e-06,2.4309503863111873e-09,],[-1.7319612278663124e-06,1.7280723633349389e-06,3.8888645313736536e-09,],[2.2514114651871690e-12,-4.3759938466525865e-09,4.3737424351873994e-09,],[0.0000000000000000e+00,0.0000000000000000e+00,0.0000000000000000e+00,],[0.0000000000000000e+00,0.0000000000000000e+00,0.0000000000000000e+00,],[0.0000000000000000e+00,0.0000000000000000e+00,0.0000000000000000e+00,],  ];
-            let ida_ee = array![-4.2122294839452673e-13,-2.4605442771223734e-09,2.4609655000707684e-09,];
-            let ida_ewt = array![9.9990174161763662e+03,9.9982707680480811e+05,9.9999975690502045e+05,];
-            let kk=2;
-            let kused=1;
-            let knew=2;
-            let phase=0;
-            let hh=4.3299105720961540e-05;
-            let hused=2.1649552860480770e-05;
-            let rr=0.0000000000000000e+00;
+            #[rustfmt::skip]
+            let ida_phi = array![
+                [ 9.9999826803802172e-01, 1.7295310279504897e-06, 2.4309503863111873e-09, ],
+                [ -1.7319612278663124e-06, 1.7280723633349389e-06, 3.8888645313736536e-09, ],
+                [ 2.2514114651871690e-12, -4.3759938466525865e-09, 4.3737424351873994e-09, ],
+                [ 0.0000000000000000e+00, 0.0000000000000000e+00, 0.0000000000000000e+00, ],
+                [ 0.0000000000000000e+00, 0.0000000000000000e+00, 0.0000000000000000e+00, ],
+                [ 0.0000000000000000e+00, 0.0000000000000000e+00, 0.0000000000000000e+00, ],
+            ];
+            let ida_ee = array![
+                -4.2122294839452673e-13,
+                -2.4605442771223734e-09,
+                2.4609655000707684e-09,
+            ];
+            let ida_ewt = array![
+                9.9990174161763662e+03,
+                9.9982707680480811e+05,
+                9.9999975690502045e+05,
+            ];
+            let kk = 2;
+            let kused = 1;
+            let knew = 2;
+            let phase = 0;
+            let hh = 4.3299105720961540e-05;
+            let hused = 2.1649552860480770e-05;
+            let rr = 0.0000000000000000e+00;
             let hmax_inv = 0.0000000000000000e+00;
-            let nst=2;
-            let maxord=5;
+            let nst = 2;
+            let maxord = 5;
 
             ida.counters.ida_nst = nst;
             ida.ida_kk = kk;
@@ -3164,7 +2880,15 @@ mod tests {
 
         ida.complete_step(err_k, err_km1);
 
-        let ida_phi = array![[9.9999653607862404e-01,3.4507668531616537e-06,1.3154522852943008e-08,],[-1.7319593976777956e-06,1.7212358252111640e-06,1.0723572466631820e-08,],[1.8301885167926423e-12,-6.8365381237749594e-09,6.8347079352581675e-09,],[-4.2122294839452673e-13,-2.4605442771223734e-09,2.4609655000707684e-09,],[0.0000000000000000e+00,0.0000000000000000e+00,0.0000000000000000e+00,],[0.0000000000000000e+00,0.0000000000000000e+00,0.0000000000000000e+00,],  ];
+        #[rustfmt::skip]
+        let ida_phi = array![
+            [ 9.9999653607862404e-01, 3.4507668531616537e-06, 1.3154522852943008e-08, ],
+            [ -1.7319593976777956e-06, 1.7212358252111640e-06, 1.0723572466631820e-08, ],
+            [ 1.8301885167926423e-12, -6.8365381237749594e-09, 6.8347079352581675e-09, ],
+            [ -4.2122294839452673e-13, -2.4605442771223734e-09, 2.4609655000707684e-09, ],
+            [ 0.0000000000000000e+00, 0.0000000000000000e+00, 0.0000000000000000e+00, ],
+            [ 0.0000000000000000e+00, 0.0000000000000000e+00, 0.0000000000000000e+00, ],
+        ];
         let ida_ee = array![
             -4.2122294839452673e-13,
             -2.4605442771223734e-09,
@@ -3175,16 +2899,16 @@ mod tests {
             9.9982707680480811e+05,
             9.9999975690502045e+05,
         ];
-        let kk=3;
-        let kused=2;
-        let knew=2;
-        let phase=0;
-        let hh=8.6598211441923079e-05;
-        let hused=4.3299105720961540e-05;
-        let rr=0.0000000000000000e+00;
-        let hmax_inv=0.0000000000000000e+00;
-        let nst=3;
-        let maxord=5;
+        let kk = 3;
+        let kused = 2;
+        let knew = 2;
+        let phase = 0;
+        let hh = 8.6598211441923079e-05;
+        let hused = 4.3299105720961540e-05;
+        let rr = 0.0000000000000000e+00;
+        let hmax_inv = 0.0000000000000000e+00;
+        let nst = 3;
+        let maxord = 5;
 
         assert_eq!(ida.counters.ida_nst, nst);
         assert_eq!(ida.ida_kk, kk);
@@ -3215,37 +2939,14 @@ mod tests {
         let err_km1 = 0.0434084688121079;
         // Set preconditions:
         {
+            #[rustfmt::skip]
             let ida_phi = array![
-                [
-                    9.9989651723441231e-01,
-                    3.6526684773526134e-05,
-                    6.6956080814055887e-05,
-                ],
-                [
-                    -1.3744883185162313e-05,
-                    1.6198423621611769e-07,
-                    1.3582898948830698e-05,
-                ],
-                [
-                    1.8985246772161757e-09,
-                    -3.1828827656675421e-07,
-                    3.1638975173052525e-07,
-                ],
-                [
-                    6.0782494622797157e-11,
-                    3.6508292328524681e-07,
-                    -3.6514370600191418e-07,
-                ],
-                [
-                    -1.3875550771817554e-10,
-                    1.3559268269012917e-06,
-                    -1.3557880688400603e-06,
-                ],
-                [
-                    -1.1465196356066767e-10,
-                    2.0021935974335382e-07,
-                    -2.0010470777979317e-07,
-                ],
+                [ 9.9989651723441231e-01, 3.6526684773526134e-05, 6.6956080814055887e-05, ],
+                [ -1.3744883185162313e-05, 1.6198423621611769e-07, 1.3582898948830698e-05, ],
+                [ 1.8985246772161757e-09, -3.1828827656675421e-07, 3.1638975173052525e-07, ],
+                [ 6.0782494622797157e-11, 3.6508292328524681e-07, -3.6514370600191418e-07, ],
+                [ -1.3875550771817554e-10, 1.3559268269012917e-06, -1.3557880688400603e-06, ],
+                [ -1.1465196356066767e-10, 2.0021935974335382e-07, -2.0010470777979317e-07, ],
             ];
             let ida_ee = array![
                 -3.0358000609489579e-11,
@@ -3257,17 +2958,17 @@ mod tests {
                 9.9636062495315843e+05,
                 9.9334892491071229e+05,
             ];
-            let kk=3;
-            let kused=2;
-            let knew=2;
-            let phase=1;
-            let hh=3.4384304814216195e-04;
-            let hused=3.4384304814216195e-04;
-            let rr=1.7379509697128959e+00;
-            let hmax_inv=0.0000000000000000e+00;
-            let nst=12;
-            let maxord=5;
-   
+            let kk = 3;
+            let kused = 2;
+            let knew = 2;
+            let phase = 1;
+            let hh = 3.4384304814216195e-04;
+            let hused = 3.4384304814216195e-04;
+            let rr = 1.7379509697128959e+00;
+            let hmax_inv = 0.0000000000000000e+00;
+            let nst = 12;
+            let maxord = 5;
+
             ida.counters.ida_nst = nst;
             ida.ida_kk = kk;
             ida.ida_hh = hh;
@@ -3285,37 +2986,14 @@ mod tests {
 
         ida.complete_step(err_k, err_km1);
 
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                9.9988277428017636e-01,
-                3.6530683152509582e-05,
-                8.0695036671266405e-05,
-            ],
-            [
-                -1.3742954235991083e-05,
-                3.9983789834474729e-09,
-                1.3738955857210521e-05,
-            ],
-            [
-                1.9289491712294831e-09,
-                -1.5798585723267022e-07,
-                1.5605690837982388e-07,
-            ],
-            [
-                3.0424494013307578e-11,
-                1.6030241933408400e-07,
-                -1.6033284335070136e-07,
-            ],
-            [
-                -3.0358000609489579e-11,
-                -2.0478050395116282e-07,
-                2.0481086265121282e-07,
-            ],
-            [
-                -1.1465196356066767e-10,
-                2.0021935974335382e-07,
-                -2.0010470777979317e-07,
-            ],
+            [ 9.9988277428017636e-01, 3.6530683152509582e-05, 8.0695036671266405e-05, ],
+            [ -1.3742954235991083e-05, 3.9983789834474729e-09, 1.3738955857210521e-05, ],
+            [ 1.9289491712294831e-09, -1.5798585723267022e-07, 1.5605690837982388e-07, ],
+            [ 3.0424494013307578e-11, 1.6030241933408400e-07, -1.6033284335070136e-07, ],
+            [ -3.0358000609489579e-11, -2.0478050395116282e-07, 2.0481086265121282e-07, ],
+            [ -1.1465196356066767e-10, 2.0021935974335382e-07, -2.0010470777979317e-07, ],
         ];
         let ida_ee = array![
             -3.0358000609489579e-11,
@@ -3331,12 +3009,12 @@ mod tests {
         let kused = 3;
         let knew = 2;
         let phase = 1;
-        let hh=6.8768609628432390e-04;
-        let hused=3.4384304814216195e-04;
-        let rr=2.2575213239991561e+00;
-        let hmax_inv=0.0000000000000000e+00;
-        let nst=13;
-        let maxord=5;
+        let hh = 6.8768609628432390e-04;
+        let hused = 3.4384304814216195e-04;
+        let rr = 2.2575213239991561e+00;
+        let hmax_inv = 0.0000000000000000e+00;
+        let nst = 13;
+        let maxord = 5;
 
         assert_eq!(ida.counters.ida_nst, nst);
         assert_eq!(ida.ida_kk, kk);
@@ -3547,37 +3225,15 @@ mod tests {
         let tn = 3623118336.24244;
         let kused = 4;
         let hused = 428935296.0942847;
+
+        #[rustfmt::skip]
         let ida_phi = array![
-            [
-                5.716499633245077e-07,
-                2.286601144610028e-12,
-                0.9999994283477499,
-            ],
-            [
-                -7.779233860067279e-08,
-                -3.111697299545603e-13,
-                7.779264957586927e-08,
-            ],
-            [
-                2.339417551980491e-08,
-                9.35768837422748e-14,
-                -2.33942692332846e-08,
-            ],
-            [
-                -9.503346432581604e-09,
-                -3.801349575270522e-14,
-                9.503383895634436e-09,
-            ],
-            [
-                7.768373161310588e-09,
-                3.107357755532867e-14,
-                -7.768407422476745e-09,
-            ],
-            [
-                -2.242367216194777e-10,
-                -8.970915966733762e-16,
-                2.242247401239887e-10,
-            ],
+            [ 5.716499633245077e-07, 2.286601144610028e-12, 0.9999994283477499, ],
+            [ -7.779233860067279e-08, -3.111697299545603e-13, 7.779264957586927e-08, ],
+            [ 2.339417551980491e-08, 9.35768837422748e-14, -2.33942692332846e-08, ],
+            [ -9.503346432581604e-09, -3.801349575270522e-14, 9.503383895634436e-09, ],
+            [ 7.768373161310588e-09, 3.107357755532867e-14, -7.768407422476745e-09, ],
+            [ -2.242367216194777e-10, -8.970915966733762e-16, 2.242247401239887e-10, ],
         ];
         let ida_psi = array![
             428935296.0942847,
@@ -3615,13 +3271,9 @@ mod tests {
         ida.ida_phi.assign(&ida_phi);
         ida.ida_psi.assign(&ida_psi);
 
-        let mut yret = Array::zeros((3));
-        let mut ypret = Array::zeros((3));
+        ida.get_solution(t).unwrap();
 
-        ida.get_solution(t, &mut yret.view_mut(), &mut ypret.view_mut())
-            .unwrap();
-
-        assert_nearly_eq!(yret, yret_expect, 1e-6);
-        assert_nearly_eq!(ypret, ypret_expect, 1e-6);
+        assert_nearly_eq!(ida.get_yy(), yret_expect);
+        assert_nearly_eq!(ida.get_yp(), ypret_expect);
     }
 }

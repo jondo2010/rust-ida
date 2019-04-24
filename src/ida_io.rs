@@ -7,6 +7,16 @@ where
     NLS: nonlinear::NLSolver<P>,
     TolC: TolControl<P::Scalar>,
 {
+    /// Return a view of the y vector
+    pub fn get_yy(&self) -> ndarray::ArrayView1<P::Scalar> {
+        self.nlp.ida_yy.view()
+    }
+
+    /// Return a view of the y' vector
+    pub fn get_yp(&self) -> ndarray::ArrayView1<P::Scalar> {
+        self.nlp.ida_yp.view()
+    }
+
     pub fn get_last_order(&self) -> usize {
         self.ida_kused
     }
