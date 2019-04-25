@@ -1062,20 +1062,17 @@ where
         tret: &mut P::Scalar,
         itask: IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error> {
+        if let Some(tstop) = self.ida_tstop {
+            // Test for tn past tstop, tn = tretlast, tn past tout, tn near tstop.
+            if ((self.nlp.ida_tn - tstop) * self.ida_hh) > P::Scalar::zero() {
+                Err(IdaError::BadStopTime {
+                    tstop: tstop.to_f64().unwrap(),
+                    t: self.nlp.ida_tn.to_f64().unwrap(),
+                })?
+            }
+        }
         match itask {
             IdaTask::Normal => {
-                if let Some(tstop) = self.ida_tstop {
-                    // Test for tn past tstop, tn = tretlast, tn past tout, tn near tstop.
-                    if ((self.nlp.ida_tn - tstop) * self.ida_hh) > P::Scalar::zero() {
-                        //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_BAD_TSTOP, self.ida_tstop, self.nlp.ida_tn);
-                        //return(IDA_ILL_INPUT);
-                        Err(IdaError::BadStopTime {
-                            tstop: tstop.to_f64().unwrap(),
-                            t: self.nlp.ida_tn.to_f64().unwrap(),
-                        })?
-                    }
-                }
-
                 // Test for tout = tretlast, and for tn past tout.
                 if tout == self.ida_tretlast {
                     self.ida_tretlast = tout;
@@ -1116,8 +1113,36 @@ where
 
                 Ok(IdaSolveStatus::ContinueSteps)
             }
+
             IdaTask::OneStep => {
-                unimplemented!();
+                // Test for tn past tretlast.
+                if (self.nlp.ida_tn - self.ida_tretlast) * self.ida_hh > P::Scalar::zero() {
+                    let _ier = self.get_solution(self.nlp.ida_tn);
+                    self.ida_tretlast = self.nlp.ida_tn;
+                    *tret = self.nlp.ida_tn;
+                    return Ok(IdaSolveStatus::Success);
+                }
+
+                if let Some(tstop) = self.ida_tstop {
+                    // Test for tn at tstop and for tn near tstop
+                    let troundoff = P::Scalar::hundred()
+                        * P::Scalar::epsilon()
+                        * (self.nlp.ida_tn.abs() + self.ida_hh.abs());
+
+                    if (self.nlp.ida_tn - tstop).abs() <= troundoff {
+                        self.get_solution(tstop)?;
+                        self.ida_tretlast = tstop;
+                        *tret = tstop;
+                        return Ok(IdaSolveStatus::TStop);
+                    }
+
+                    if (self.nlp.ida_tn + self.ida_hh - tstop) * self.ida_hh > P::Scalar::zero() {
+                        self.ida_hh = (tstop - self.nlp.ida_tn)
+                            * (P::Scalar::one() - P::Scalar::four() * P::Scalar::epsilon());
+                    }
+                }
+
+                Ok(IdaSolveStatus::ContinueSteps)
             }
         }
     }
@@ -1180,6 +1205,7 @@ where
 
                 return Ok(IdaSolveStatus::ContinueSteps);
             }
+
             IdaTask::OneStep => {
                 if let Some(tstop) = self.ida_tstop {
                     // Test for tn at tstop and for tn near tstop
