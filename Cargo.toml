@@ -40,3 +40,6 @@ rand                = { version = "0.6.5" }
 [[bench]]
 name = "dense"
 harness = false
+
+[profile.release]
+debug = true

@@ -106,6 +106,7 @@ fn main() {
 
     let mut table_out = Table::new();
     table_out.set_titles(row!["t", "y1", "y2", "y3", "nst", "k", "h"]);
+    table_out.set_format(*prettytable::format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
 
     let mut ida: Ida<_, Dense<_>, Newton<_>, _> = Ida::new(problem, yy0, yp0, ec);
 
@@ -155,16 +156,28 @@ fn main() {
     table_out.printstd();
     dbg!(retval.unwrap());
 
-    let stats = table!(
-        [bFgH2->"Final Run Statistics:",],
-        ["Number of steps:", ida.get_num_steps(),],
-        ["Number of residual evaluations:", ida.get_num_res_evals() + ida.get_num_lin_res_evals()],
+    let mut stats = table!(
+        ["Number of steps:", ida.get_num_steps()],
+        [
+            "Number of residual evaluations:",
+            ida.get_num_res_evals() + ida.get_num_lin_res_evals(),
+        ],
         ["Number of Jacobian evaluations:", ida.get_num_jac_evals()],
-        ["Number of nonlinear iterations:", ida.get_num_nonlin_solv_iters()]
-        //"Number of error test failures:", netf,
-        //"Number of nonlinear conv. failures:", ncfn,
-        //"Number of root fn. evaluations:", nge,
+        [
+            "Number of nonlinear iterations:",
+            ida.get_num_nonlin_solv_iters(),
+        ],
+        [
+            "Number of error test failures:",
+            ida.get_num_err_test_fails(),
+        ]
     );
+
+    stats.set_format(*prettytable::format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
+    stats.set_titles(row![bFgH2->"Final Run Statistics:"]);
+    //"Number of nonlinear conv. failures:", ncfn,
+    //"Number of root fn. evaluations:", nge,
+
     stats.printstd();
 
     profiler::write_profile("profile.json");

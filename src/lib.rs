@@ -32,7 +32,6 @@ use num_traits::{
     Float,
 };
 
-
 #[derive(Copy, Clone)]
 pub enum IdaTask {
     Normal,
@@ -145,7 +144,6 @@ where
     ida_hused: P::Scalar,
     /// rr = hnext / hused
     ida_rr: P::Scalar,
-
 
     /// value of tret previously returned by IDASolve
     ida_tretlast: P::Scalar,
@@ -1085,7 +1083,7 @@ where
                     return Ok(IdaSolveStatus::Success);
                 }
 
-                if dbg!((self.nlp.ida_tn - tout) * self.ida_hh) >= P::Scalar::zero() {
+                if (self.nlp.ida_tn - tout) * self.ida_hh >= P::Scalar::zero() {
                     self.get_solution(tout)?;
                     self.ida_tretlast = tout;
                     *tret = tout;
@@ -1474,8 +1472,6 @@ where
 
         let w = self.nlp.ida_ewt.clone();
 
-        trace!("ewt={:.5e}", self.nlp.ida_ewt);
-
         // solve the nonlinear system
         let retval = self.nls.solve(
             &mut self.nlp,
@@ -1485,8 +1481,6 @@ where
             self.ida_eps_newt,
             call_lsetup,
         );
-
-        trace!("ee={:.5e}", self.ida_ee);
 
         // update yy and yp based on the final correction from the nonlinear solve
         self.nlp.ida_yy = &self.nlp.ida_yypredict + &self.ida_ee;
@@ -1567,13 +1561,17 @@ where
                 .unwrap()
                 .reversed_axes();
 
-            self.nlp.ida_yppredict.assign(&(&phi * &gamma).sum_axis(Axis(0)));
+            self.nlp
+                .ida_yppredict
+                .assign(&(&phi * &gamma).sum_axis(Axis(0)));
         }
+        /*
         trace!(
             "predict() yypredict={:.6e} yppredict={:.6e}",
             self.nlp.ida_yypredict,
             self.nlp.ida_yppredict
         );
+        */
     }
 
     /// IDATestError
@@ -1841,9 +1839,11 @@ where
     fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
         profile_scope!(format!("complete_step()"));
         trace!(
-            "complete_step(err_k={:.5e}, err_km1={:.5e})",
+            "complete_step(err_k={:.5e}, err_km1={:.5e}), nst={}, phase={}",
             err_k,
-            err_km1
+            err_km1,
+            self.counters.ida_nst,
+            self.ida_phase
         );
 
         self.counters.ida_nst += 1;
@@ -1852,11 +1852,6 @@ where
         self.ida_hused = self.ida_hh;
 
         if (self.ida_knew == self.ida_kk - 1) || (self.ida_kk == self.ida_maxord) {
-            trace!(
-                "nst={}, ida_phase={}->1",
-                self.counters.ida_nst,
-                self.ida_phase
-            );
             self.ida_phase = 1;
         }
 
@@ -1895,7 +1890,6 @@ where
             } else if (self.ida_kk + 1) >= self.ida_ns || (kdiff == 1) {
                 (Action::Maintain, P::Scalar::zero())
             } else {
-
                 // Estimate the error at order k+1, unless already decided to reduce order, or already using
                 // maximum order, or stepsize has not been constant, or order was just raised.
 
@@ -1942,7 +1936,7 @@ where
                 _ => err_k,
             };
             trace!(
-                "nst={}, {:#?}, kk={}, err_knew={:.5e}",
+                "    nst={}, {:#?}, kk={}, err_knew={:.5e}",
                 self.counters.ida_nst,
                 action,
                 self.ida_kk,
@@ -1975,7 +1969,7 @@ where
 
             self.ida_hh = hnew;
         }
-        trace!("nst={}, hh={:.5e}", self.counters.ida_nst, self.ida_hh);
+        trace!("    next hh={:.5e}", self.ida_hh);
         // end of phase if block
 
         // Save ee for possible order increase on next step

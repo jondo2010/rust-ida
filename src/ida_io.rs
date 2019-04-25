@@ -53,6 +53,10 @@ where
         self.nlp.ida_nsetups
     }
 
+    pub fn get_num_err_test_fails(&self) -> usize {
+        self.counters.ida_netf
+    }
+
     pub fn get_num_jac_evals(&self) -> usize {
         self.nlp.lp.nje
     }
