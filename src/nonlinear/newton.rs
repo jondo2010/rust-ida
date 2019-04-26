@@ -29,7 +29,7 @@ where
             delta: Array::zeros(size),
             jcur: false,
             curiter: 0,
-            maxiters: maxiters,
+            maxiters,
             niters: 0,
             nconvfails: 0,
         }

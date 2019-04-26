@@ -153,8 +153,7 @@ where
     }
 
     // return 0 to indicate success
-
-    return 0;
+    0
 }
 
 /// `dense_get_rs` solves the N-dimensional system A x = b using the LU factorization in A and the
@@ -171,8 +170,7 @@ where
     let n = mat_a.cols();
 
     // Permute b, based on pivot information in p
-    for k in 0..n {
-        let pk = p[k];
+    for (k, &pk) in p.iter().enumerate().take(n) {
         if pk != k {
             b.swap([k], [pk]);
         }

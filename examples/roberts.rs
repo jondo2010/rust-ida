@@ -118,7 +118,7 @@ fn main() {
     let retval = loop {
         let mut tret = 0.0;
 
-        let retval = ida.solve(tout, &mut tret, IdaTask::Normal);
+        let retval = ida.solve(tout, &mut tret, IdaTask::OneStep);
 
         let nst = ida.get_num_steps();
         let kused = ida.get_last_order();
@@ -148,7 +148,7 @@ fn main() {
             _ => {}
         }
 
-        if iout == 1 {
+        if iout == 120 {
             break Ok(());
         }
     };
