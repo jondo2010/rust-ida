@@ -30,7 +30,7 @@ pub trait Residual: ModelSpec {
         tt: Self::Scalar,
         yy: ArrayBase<S1, Ix1>,
         yp: ArrayBase<S2, Ix1>,
-        mut rr: ArrayBase<S3, Ix1>,
+        rr: ArrayBase<S3, Ix1>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
         S2: ndarray::Data<Elem = Self::Scalar>,
@@ -61,7 +61,7 @@ pub trait Jacobian: ModelSpec {
         yy: ArrayBase<S1, Ix1>,
         yp: ArrayBase<S2, Ix1>,
         rr: ArrayBase<S3, Ix1>,
-        mut jac: ArrayBase<S4, Ix2>,
+        jac: ArrayBase<S4, Ix2>,
     ) where
         S1: ndarray::Data<Elem = Self::Scalar>,
         S2: ndarray::Data<Elem = Self::Scalar>,

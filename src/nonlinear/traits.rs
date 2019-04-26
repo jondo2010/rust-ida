@@ -45,7 +45,7 @@ where
     fn sys<S1, S2>(
         &mut self,
         y: ArrayBase<S1, Ix1>,
-        mut f: ArrayBase<S2, Ix1>,
+        f: ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
@@ -107,7 +107,7 @@ where
     fn solve<S1, S2>(
         &mut self,
         y: ArrayBase<S1, Ix1>,
-        mut b: ArrayBase<S2, Ix1>,
+        b: ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
         S1: Data<Elem = M::Scalar>,
@@ -206,7 +206,7 @@ pub trait NLSolver<M: ModelSpec> {
         &mut self,
         problem: &mut NLP,
         y0: ArrayBase<S1, Ix1>,
-        mut y: ArrayBase<S2, Ix1>,
+        y: ArrayBase<S2, Ix1>,
         w: ArrayBase<S3, Ix1>,
         tol: M::Scalar,
         call_lsetup: bool,

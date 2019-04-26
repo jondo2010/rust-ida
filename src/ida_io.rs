@@ -70,6 +70,6 @@ where
     /// IDAGetNumLinResEvals returns the number of calls to the DAE residual needed for the DQ
     /// Jacobian approximation or J*v product approximation
     pub fn get_num_lin_res_evals(&self) -> usize {
-        self.nlp.lp.nreDQ
+        self.nlp.lp.nre_dq
     }
 }

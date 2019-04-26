@@ -16,7 +16,7 @@ mod norm_rms;
 pub mod tol_control;
 pub mod traits;
 use constants::*;
-use error::IdaError;
+use error::{IdaError, Recoverable};
 use ida_nls::IdaNLProblem;
 use norm_rms::{NormRms, NormRmsMasked};
 use tol_control::TolControl;
@@ -219,8 +219,7 @@ where
     //int ida_mxgnull;          /* number of warning messages about possible g==0  */
 
     // Arrays for Fused Vector Operations
-    ida_Xvecs: Array<P::Scalar, Ix2>,
-    ida_Zvecs: Array<P::Scalar, Ix2>,
+    ida_zvecs: Array<P::Scalar, Ix2>,
 
     /// Nonlinear Solver
     nls: NLS,
@@ -368,8 +367,7 @@ where
             ida_cvals: Array::zeros(MXORDP1),
             ida_dvals: Array::zeros(MAXORD_DEFAULT),
 
-            ida_Xvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
-            ida_Zvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
+            ida_zvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
 
             //ida_rtol: P::Scalar::zero(),
             //ida_Satol: P::Scalar::zero(),
@@ -622,7 +620,6 @@ where
             }
 
             // Call lperf to generate warnings of poor performance.
-
             self.nlp.lp.ls_perf(&self.counters, true);
 
             // Reset and check ewt (if not first call).
@@ -632,37 +629,18 @@ where
                     self.nlp.ida_ewt.view_mut(),
                 );
 
-                let ier = 0;
-                if ier != 0 {
-                    //profiler::ProfileScope::new(format!("get_solution"));
-                    self.get_solution(self.nlp.ida_tn);
+                if self.nlp.ida_ewt.iter().any(|&x| x <= P::Scalar::zero()) {
+                    let _ier = self.get_solution(self.nlp.ida_tn);
                     *tret = self.nlp.ida_tn;
                     self.ida_tretlast = self.nlp.ida_tn;
 
-                    /*
-                    match self.ida_itol {
-                        ToleranceType::TolWF => {
-                            //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_FAIL, self.nlp.ida_tn);
-                            Err(IdaError::IllegalInput {
-                                msg: format!(
-                                    "At t = {:?} the user-provide EwtSet function failed.",
-                                    self.nlp.ida_tn
-                                ),
-                            })?
-                        }
-                        _ => {
-                            //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_BAD, self.nlp.ida_tn);
-                            Err(IdaError::IllegalInput {
-                                msg: format!(
-                                    "At t = {:?} some ewt component has become <= 0.0.",
-                                    self.nlp.ida_tn
-                                ),
-                            })?
-                        }
-                    }
-                    */
-                    //istate = IDA_ILL_INPUT;
-                    //break;
+                    //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_EWT_NOW_BAD, self.nlp.ida_tn);
+                    Err(IdaError::IllegalInput {
+                        msg: format!(
+                            "At t = {:?} some ewt component has become <= 0.0.",
+                            self.nlp.ida_tn
+                        ),
+                    })?
                 }
             }
 
@@ -693,8 +671,6 @@ where
                     let _ier = self.get_solution(self.nlp.ida_tn);
                 }
                 //IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDASolve", MSG_TOO_MUCH_ACC, self.nlp.ida_tn);
-                //istate = IDA_TOO_MUCH_ACC;
-                //break;
                 Err(IdaError::TooMuchAccuracy {
                     t: self.nlp.ida_tn.to_f64().unwrap(),
                 })?
@@ -713,7 +689,6 @@ where
                     }
                     Err(e2) => {
                         error!("Error occured with get_solution: {:?}", e2.as_fail());
-                        //err.context(e2)
                     }
                 }
                 // Forward the error
@@ -938,104 +913,6 @@ where
         */
 
         //return(IDA_SUCCESS);
-    }
-
-    /// IDAEwtSet
-    ///
-    /// This routine is responsible for loading the error weight vector ewt, according to itol, as
-    /// follows:
-    ///
-    /// (1) `ewt[i] = 1 / (rtol * abs(ycur[i]) + atol), i=0,...,Neq-1`
-    ///     if `itol = IDA_SS`
-    /// (2) `ewt[i] = 1 / (rtol * abs(ycur[i]) + atol[i]), i=0,...,Neq-1`
-    ///     if `itol = IDA_SV`
-    ///
-    ///  `ewt_set` returns true if ewt is successfully set as above to a
-    ///  positive vector and false otherwise. In the latter case, ewt is
-    ///  considered undefined.
-    ///
-    /// All the real work is done in the routines `ewt_set_ss`, `ewt_set_sv`.
-    pub fn ewt_set<S1, S2>(
-        &mut self,
-        ycur: &ArrayBase<S1, Ix1>,
-        weight: &mut ArrayBase<S2, Ix1>,
-    ) -> bool
-    where
-        S1: ndarray::Data<Elem = P::Scalar>,
-        S2: ndarray::DataMut<Elem = P::Scalar>,
-    {
-        /*
-        match self.ida_itol {
-            ToleranceType::TolSS => self.ewt_set_ss(ycur, weight),
-            ToleranceType::TolSV => self.ewt_set_sv(ycur, weight),
-            _ => false,
-        }
-        */
-        false
-    }
-
-    /// IDAEwtSetSS
-    ///
-    /// This routine sets ewt as decribed above in the case itol=IDA_SS.
-    /// It tests for non-positive components before inverting. IDAEwtSetSS
-    /// returns 0 if ewt is successfully set to a positive vector
-    /// and -1 otherwise. In the latter case, ewt is considered
-    /// undefined.
-    fn ewt_set_ss<S1, S2>(
-        &mut self,
-        ycur: &ArrayBase<S1, Ix1>,
-        weight: &mut ArrayBase<S2, Ix1>,
-    ) -> bool
-    where
-        S1: ndarray::Data<Elem = P::Scalar>,
-        S2: ndarray::DataMut<Elem = P::Scalar>,
-    {
-        //let tempv1 = ycur.mapv(|x| (self.ida_rtol * x.abs()) + self.ida_Satol);
-        //self.ida_tempv1.zip_mut_with(ycur, |z, &a| { *z = });
-        /*
-        N_VAbs(ycur, self.ida_tempv1);
-        N_VScale(self.ida_rtol, self.ida_tempv1, self.ida_tempv1);
-        N_VAddConst(self.ida_tempv1, self.ida_Satol, self.ida_tempv1);
-        */
-        /*
-        if tempv1.fold(P::Scalar::max_value(), |acc, &x| acc.min(x)) <= P::Scalar::zero() {
-            //if tempv1.iter().min().unwrap() <= &P::Scalar::zero() {
-            false
-        } else {
-            weight.zip_mut_with(&tempv1, |w, &t| *w = t.recip());
-            true
-        }
-        */
-
-        //if (N_VMin(self.ida_tempv1) <= ZERO) {return false}
-        //N_VInv(self.ida_tempv1, weight);
-        return true;
-    }
-
-    /// IDAEwtSetSV
-    ///
-    /// This routine sets ewt as decribed above in the case itol=IDA_SV.
-    /// It tests for non-positive components before inverting. IDAEwtSetSV
-    /// returns 0 if ewt is successfully set to a positive vector
-    /// and -1 otherwise. In the latter case, ewt is considered
-    /// undefined.
-    fn ewt_set_sv<S1, S2>(
-        &mut self,
-        ycur: &ArrayBase<S1, Ix1>,
-        weight: &mut ArrayBase<S2, Ix1>,
-    ) -> bool
-    where
-        S1: ndarray::Data<Elem = P::Scalar>,
-        S2: ndarray::DataMut<Elem = P::Scalar>,
-    {
-        /*
-        N_VAbs(ycur, self.ida_tempv1);
-        N_VLinearSum(self.ida_rtol, self.ida_tempv1, ONE, self.ida_Vatol, self.ida_tempv1);
-        if (N_VMin(self.ida_tempv1) <= ZERO) {return false;}
-        N_VInv(self.ida_tempv1, weight);
-        return true;
-        */
-        unimplemented!();
     }
 
     //-----------------------------------------------------------------
@@ -1331,22 +1208,13 @@ where
             // Nonlinear system solution
             let (err_k, err_km1, converged) = self
                 .nonlinear_solve()
-                .map_err(|err| {
-                    trace!("nonlinear_solve() error: {:#?}", err);
-                    (P::Scalar::zero(), P::Scalar::zero(), err)
-                })
-                .and_then(|res| {
+                .map_err(|err| (P::Scalar::zero(), P::Scalar::zero(), err))
+                .and_then(|_| {
                     // If NLS was successful, perform error test
-                    let (err_k, err_km1, nflag) = self.test_error(ck);
-                    if nflag {
-                        Ok((err_k, err_km1, true))
-                    } else {
-                        Err((err_k, err_km1, failure::Error::from(IdaError::TestFail)))
-                    }
+                    self.test_error(ck)
                 })
+                // Test for convergence or error test failures
                 .or_else(|(err_k, err_km1, err)| {
-                    // Test for convergence or error test failures
-
                     // restore and decide what to do
                     self.restore(saved_t);
 
@@ -1609,34 +1477,35 @@ where
     fn test_error(
         &mut self,
         ck: P::Scalar,
-    ) -> (
-        P::Scalar, // err_k
-        P::Scalar, // err_km1
-        bool,      // nflag
-    ) {
+    ) -> Result<
+        (
+            P::Scalar, // err_k
+            P::Scalar, // err_km1
+            bool,      // converged
+        ),
+        (P::Scalar, P::Scalar, failure::Error),
+    > {
         //trace!("test_error phi={:.5e}", self.ida_phi);
         //trace!("test_error ee={:.5e}", self.ida_ee);
 
         // Compute error for order k.
         let enorm_k = self.wrms_norm(&self.ida_ee, &self.nlp.ida_ewt, self.ida_suppressalg);
         let err_k = self.ida_sigma[self.ida_kk] * enorm_k; // error norms
-        let mut err_km1 = P::Scalar::zero(); // estimated error at k-1
-        let mut err_km2 = P::Scalar::zero(); // estimated error at k-2
 
         // local truncation error norm
         let terr_k = err_k * <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap();
 
-        self.ida_knew = self.ida_kk;
 
-        if self.ida_kk > 1 {
+        let (err_km1, knew) = if self.ida_kk > 1 {
             // Compute error at order k-1
             self.ida_delta = &self.ida_phi.index_axis(Axis(0), self.ida_kk) + &self.ida_ee;
             let enorm_km1 =
                 self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
-            err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
+            // estimated error at k-1
+            let err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
             let terr_km1 = err_km1 * <P::Scalar as NumCast>::from(self.ida_kk).unwrap();
 
-            if self.ida_kk > 2 {
+            let knew = if self.ida_kk > 2 {
                 // Compute error at order k-2
                 // ida_delta = ida_phi[ida_kk - 1] + ida_delta
                 self.ida_delta
@@ -1645,23 +1514,40 @@ where
 
                 let enorm_km2 =
                     self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
-                err_km2 = self.ida_sigma[self.ida_kk - 2] * enorm_km2;
+                // estimated error at k-2
+                let err_km2 = self.ida_sigma[self.ida_kk - 2] * enorm_km2;
                 let terr_km2 = err_km2 * <P::Scalar as NumCast>::from(self.ida_kk - 1).unwrap();
 
                 // Decrease order if errors are reduced
                 if terr_km1.max(terr_km2) <= terr_k {
-                    self.ida_knew = self.ida_kk - 1;
+                    self.ida_kk - 1
+                } else {
+                    self.ida_kk
                 }
             } else {
                 // Decrease order to 1 if errors are reduced by at least 1/2
                 if terr_km1 <= (terr_k * P::Scalar::half()) {
-                    self.ida_knew = self.ida_kk - 1;
+                    self.ida_kk - 1
+                } else {
+                    self.ida_kk
                 }
-            }
+            };
+
+            (err_km1, knew)
+        } else {
+            (P::Scalar::zero(), self.ida_kk)
         };
 
+        self.ida_knew = knew;
+
         // Perform error test
-        (err_k, err_km1, (ck * enorm_k) <= P::Scalar::one())
+        let converged = (ck * enorm_k) <= P::Scalar::one();
+
+        if converged {
+            Ok((err_k, err_km1, true))
+        } else {
+            Err((err_k, err_km1, failure::Error::from(IdaError::TestFail)))
+        }
     }
 
     /// IDARestore
@@ -1822,29 +1708,46 @@ where
                         }
                     }
 
-                    _ => {
+                    IdaError::RecoverableFail { rec_type } => {
                         // recoverable failure
-
                         *ncf_ptr += 1; // local counter for convergence failures
                         self.counters.ida_ncfn += 1; // global counter for convergence failures
 
                         // Reduce step size for a new prediction
-                        // Note that if nflag=IDA_CONSTR_RTolCVR then rr was already set in IDANls
-                        //if (nflag != IDA_CONSTR_RTolCVR) { self.ida_rr = P::Scalar::quarter() };
+                        match rec_type {
+                            // Note that if nflag=IDA_CONSTR_RECVR then rr was already set in IDANls
+                            Recoverable::Constraint => {}
+                            _ => {
+                                self.ida_rr = P::Scalar::quarter();
+                            }
+                        }
+
                         self.ida_hh *= self.ida_rr;
 
                         // Test if there were too many convergence failures
                         if *ncf_ptr < self.ida_maxncf {
                             //return(PREDICT_AGAIN);
                             Ok(())
-                        //} else if nflag == IDA_RES_RTolCVR {
-                        //    return (IDA_REP_RES_ERR);
-                        //} else if nflag == IDA_CONSTR_RTolCVR {
-                        //    return (IDA_CONSTR_FAIL);
                         } else {
-                            //return (IDA_CONV_FAIL);
-                            Err(failure::Error::from(IdaError::ConvergenceFail {}))
+                            match rec_type {
+                                // return (IDA_REP_RES_ERR);
+                                Recoverable::Residual => {
+                                    Err(failure::Error::from(IdaError::ResidualFail {}))
+                                }
+
+                                // return (IDA_CONSTR_FAIL);
+                                Recoverable::Constraint => {
+                                    Err(failure::Error::from(IdaError::ConstraintFail {}))
+                                }
+
+                                // return (IDA_CONV_FAIL);
+                                _ => Err(failure::Error::from(IdaError::ConvergenceFail {})),
+                            }
                         }
+                    }
+
+                    _ => {
+                        unimplemented!("Should never happen");
                     }
                 }
             })
@@ -2014,7 +1917,7 @@ where
         // Note: this is a recurrence relation, and needs to be performed as below
 
         let mut z_view = self
-            .ida_Zvecs
+            .ida_zvecs
             .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1));
 
         for (i, mut z_row) in z_view.genrows_mut().into_iter().enumerate() {
@@ -2217,7 +2120,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_relative_eq;
 
     use ndarray::array;
     use nearly_eq::*;
@@ -2240,7 +2142,7 @@ mod tests {
             _tres: Self::Scalar,
             _yy: ArrayBase<S1, Ix1>,
             _yp: ArrayBase<S2, Ix1>,
-            mut resval: ArrayBase<S3, Ix1>,
+            mut _resval: ArrayBase<S3, Ix1>,
         ) where
             S1: ndarray::Data<Elem = Self::Scalar>,
             S2: ndarray::Data<Elem = Self::Scalar>,
@@ -2252,12 +2154,12 @@ mod tests {
     impl Jacobian for Dummy {
         fn jac<S1, S2, S3, S4>(
             &self,
-            tt: Self::Scalar,
-            cj: Self::Scalar,
-            yy: ArrayBase<S1, Ix1>,
-            yp: ArrayBase<S2, Ix1>,
-            rr: ArrayBase<S3, Ix1>,
-            mut j: ArrayBase<S4, Ix2>,
+            _tt: Self::Scalar,
+            _cj: Self::Scalar,
+            _yy: ArrayBase<S1, Ix1>,
+            _yp: ArrayBase<S2, Ix1>,
+            _rr: ArrayBase<S3, Ix1>,
+            mut _j: ArrayBase<S4, Ix2>,
         ) where
             S1: ndarray::Data<Elem = Self::Scalar>,
             S2: ndarray::Data<Elem = Self::Scalar>,
@@ -2462,7 +2364,6 @@ mod tests {
         let knew = 4;
         let err_k = 29.10297975314245;
         let err_km1 = 3.531162835377502;
-        let nflag = false;
 
         let problem = Dummy {};
         let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
@@ -2481,12 +2382,11 @@ mod tests {
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
-        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck);
+        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck).expect_err("Should be TestFail");
 
         assert_eq!(ida.ida_knew, knew);
         assert_nearly_eq!(err_k_new, err_k);
         assert_nearly_eq!(err_km1_new, err_km1);
-        assert_eq!(nflag_new, nflag);
     }
 
     #[test]
@@ -2541,7 +2441,7 @@ mod tests {
         ida.ida_sigma.assign(&ida_sigma);
 
         // Call the function under test
-        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck);
+        let (err_k_new, err_km1_new, nflag_new) = ida.test_error(ck).unwrap();
 
         assert_eq!(ida.ida_knew, knew);
         assert_nearly_eq!(err_k_new, err_k);
@@ -3031,6 +2931,7 @@ mod tests {
         assert_nearly_eq!(ida.nlp.ida_ewt, ida_ewt);
     }
 
+    /*
     #[test]
     fn test_nonlinear_solve() {
         let problem = Dummy {};
@@ -3216,6 +3117,7 @@ mod tests {
         let nsetups = 3;
         let maxord = 5;
     }
+    */
 
     #[test]
     fn test_get_solution() {

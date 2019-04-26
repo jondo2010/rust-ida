@@ -1,4 +1,4 @@
-use log::{trace, warn};
+use log::{warn};
 use ndarray::prelude::*;
 
 use super::constants::IdaConst;
@@ -19,7 +19,7 @@ where
     ls: LS,
 
     /// J = dF/dy + cj*dF/dy'
-    J: Array<P::Scalar, Ix2>,
+    mat_j: Array<P::Scalar, Ix2>,
 
     //ytemp;       /// temp vector used by IDAAtimesDQ
     //yptemp;      /// temp vector used by IDAAtimesDQ
@@ -31,7 +31,7 @@ where
 
     // Iterative solver tolerance
     /// sqrt(N)                                      
-    sqrtN: P::Scalar,
+    sqrt_n: P::Scalar,
     /// eplifac = linear convergence factor          
     eplifac: P::Scalar,
 
@@ -47,8 +47,8 @@ where
     nps: usize,
     /// ncfl = total number of convergence failures
     ncfl: usize,
-    /// nreDQ = total number of calls to res
-    pub(super) nreDQ: usize,
+    /// total number of calls to res
+    pub(super) nre_dq: usize,
     /// njtsetup = total number of calls to jtsetup
     njtsetup: usize,
     /// njtimes = total number of calls to jtimes
@@ -189,7 +189,7 @@ where
 
             // Initialize counters
             nje: 0,
-            nreDQ: 0,
+            nre_dq: 0,
             npe: 0,
             nli: 0,
             nps: 0,
@@ -207,7 +207,7 @@ where
             eplifac: P::Scalar::pt05(),
             dqincfac: P::Scalar::one(),
             //last_flag : IDALS_SUCCESS
-            sqrtN: <P::Scalar as NumCast>::from(problem.model_size())
+            sqrt_n: <P::Scalar as NumCast>::from(problem.model_size())
                 .unwrap()
                 .sqrt(),
 
@@ -215,7 +215,7 @@ where
             ida_cjold: P::Scalar::zero(),
             ida_cjratio: P::Scalar::zero(),
 
-            J: Array::zeros((problem.model_size(), problem.model_size())),
+            mat_j: Array::zeros((problem.model_size(), problem.model_size())),
             x: Array::zeros(problem.model_size()),
 
             problem,
@@ -243,12 +243,12 @@ where
         //self.rcur  = r;
 
         // recompute if J if it is non-NULL
-        if !self.J.is_empty() {
+        if !self.mat_j.is_empty() {
             // Increment nje counter.
             self.nje += 1;
 
             // Zero out J; call Jacobian routine jac; return if it failed.
-            self.J.fill(P::Scalar::zero());
+            self.mat_j.fill(P::Scalar::zero());
 
             // Call Jacobian routine
             //retval = self.jac(IDA_mem->ida_tn, IDA_mem->ida_cj, y, yp, r, idals_mem->J, idals_mem->J_data, vt1, vt2, vt3);
@@ -259,7 +259,7 @@ where
                 y.view(),
                 yp.view(),
                 r.view(),
-                self.J.view_mut(),
+                self.mat_j.view_mut(),
             );
 
             /*
@@ -280,7 +280,7 @@ where
         }
 
         // Call LS setup routine -- the LS will call idaLsPSetup if applicable
-        self.ls.setup(self.J.view_mut());
+        self.ls.setup(self.mat_j.view_mut()).unwrap();
         //self.last_flag = SUNLinSolSetup(idals_mem->LS, idals_mem->J);
         //return(self.last_flag);
     }
@@ -295,9 +295,9 @@ where
         &mut self,
         mut b: ArrayBase<S1, Ix1>,
         weight: ArrayBase<S2, Ix1>,
-        ycur: ArrayBase<S3, Ix1>,
-        ypcur: ArrayBase<S4, Ix1>,
-        rescur: ArrayBase<S5, Ix1>,
+        _ycur: ArrayBase<S3, Ix1>,
+        _ypcur: ArrayBase<S4, Ix1>,
+        _rescur: ArrayBase<S5, Ix1>,
     ) where
         S1: ndarray::DataMut<Elem = P::Scalar>,
         S2: ndarray::Data<Elem = P::Scalar>,
@@ -318,7 +318,7 @@ where
 
         let tol = match ls_type {
             LSolverType::Iterative | LSolverType::MatrixIterative => {
-                self.sqrtN * self.eplifac
+                self.sqrt_n * self.eplifac
                 //self.sqrtN * idals_mem->eplifac * IDA_mem->ida_epsNewt
             }
             _ => P::Scalar::zero(),
@@ -377,7 +377,7 @@ where
         // Call solver
         let retval = self
             .ls
-            .solve(self.J.view(), self.x.view_mut(), b.view(), tol);
+            .solve(self.mat_j.view(), self.x.view_mut(), b.view(), tol);
 
         // Copy appropriate result to b (depending on solver type)
         if let LSolverType::Iterative | LSolverType::MatrixIterative = ls_type {

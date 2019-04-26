@@ -91,7 +91,7 @@ fn main() {
     let yp0 = array![-0.04, 0.04, 0.0];
 
     let ec = TolControlSV::new(RTOL, ndarray::Array1::from_iter(ATOL.iter().cloned()));
-    let t0 = 0.0;
+    //let t0 = 0.0;
 
     let header = &[
         "idaRoberts_dns: Robertson kinetics DAE serial example problem for IDA Three equation chemical kinetics problem.",

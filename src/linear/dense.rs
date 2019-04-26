@@ -1,7 +1,5 @@
 use super::*;
 
-use log::trace;
-
 #[derive(Clone, Debug)]
 pub struct Dense<Scalar> {
     x: Scalar,

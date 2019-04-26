@@ -1,4 +1,3 @@
-use log::trace;
 use ndarray::prelude::*;
 
 use super::constants::IdaConst;
@@ -143,9 +142,9 @@ where
     /// idaNlsLSetup
     fn setup<S1, S2>(
         &mut self,
-        ycor: ArrayBase<S1, Ix1>,
+        _ycor: ArrayBase<S1, Ix1>,
         res: ArrayBase<S2, Ix1>,
-        jbad: bool,
+        _jbad: bool,
     ) -> Result<bool, failure::Error>
     where
         S1: ndarray::Data<Elem = P::Scalar>,
@@ -176,7 +175,7 @@ where
     /// idaNlsLSolve
     fn solve<S1, S2>(
         &mut self,
-        ycor: ArrayBase<S1, Ix1>,
+        _ycor: ArrayBase<S1, Ix1>,
         mut delta: ArrayBase<S2, Ix1>,
     ) -> Result<(), failure::Error>
     where
@@ -204,7 +203,7 @@ where
     /// idaNlsConvTest
     fn ctest<S1, S2, S3>(
         &mut self,
-        y: ArrayBase<S1, Ix1>,
+        _y: ArrayBase<S1, Ix1>,
         del: ArrayBase<S2, Ix1>,
         tol: P::Scalar,
         ewt: ArrayBase<S3, Ix1>,

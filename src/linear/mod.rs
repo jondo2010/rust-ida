@@ -97,7 +97,7 @@ where
     fn solve<S1, S2, S3>(
         &self,
         mat_a: ArrayBase<S1, Ix2>,
-        mut x: ArrayBase<S2, Ix1>,
+        x: ArrayBase<S2, Ix1>,
         b: ArrayBase<S3, Ix1>,
         tol: Scalar,
     ) -> Result<(), failure::Error>

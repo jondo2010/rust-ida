@@ -1,5 +1,19 @@
 use failure::Fail;
 
+#[derive(Debug)]
+pub enum Recoverable {
+    /// IDA_RES_RECVR
+    Residual,
+    /// IDA_LSETUP_RECVR
+    LSetup,
+    /// IDA_LSOLVE_RECVR
+    LSolve,
+    /// IDA_CONSTR_RECVR
+    Constraint,
+    /// IDA_NLS_SETUP_RECVR
+    NLSSetup,
+}
+
 #[derive(Debug, Fail)]
 pub enum IdaError {
     // ERROR_TEST_FAIL
@@ -55,6 +69,11 @@ pub enum IdaError {
                    had a recoverable error, but IDACalcIC was unable to recover"
     )]
     NoRecovery {},
+
+    #[fail(display = "Recoverable failure")]
+    RecoverableFail {
+        rec_type: Recoverable,
+    },
 
     /// IDA_CONSTR_FAIL
     /// The inequality constraints were violated, and the solver was unable to recover.
