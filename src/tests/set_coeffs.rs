@@ -160,3 +160,82 @@ fn test1() {
     assert_nearly_eq!(ida.nlp.lp.ida_cj, cj);
     assert_nearly_eq!(ck, ck_expect);
 }
+
+#[test]
+fn test2() {
+    let problem = Dummy {};
+    let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
+        problem,
+        array![0., 0., 0.],
+        array![0., 0., 0.],
+        TolControlSS::new(1e-4, 1e-4),
+    );
+
+    // Set preconditions:
+    {
+        #[rustfmt::skip]
+        let ida_phi = array![[9.9992400889930733e-01,3.5884428024527148e-05,4.0106672668125017e-05,],[-1.3748619452022122e-05,1.1636437126348729e-06,1.2584975739367733e-05,],[1.7125607629565644e-09,-1.3178687286728842e-06,1.3161561679729596e-06,],[2.1033954646845001e-10,1.0217905523752639e-06,-1.0220008918107099e-06,],[-1.3875550771817554e-10,1.3559268269012917e-06,-1.3557880688400603e-06,],[-1.1465196356066767e-10,2.0021935974335382e-07,-2.0010470777979317e-07,],  ];
+        let ida_psi = array![3.4384304814216195e-04,6.8768609628432390e-04,1.0315291444264857e-03,7.7938390297730776e-04,3.4639284576769232e-04,0.0000000000000000e+00,  ];
+        let ida_alpha = array![1.0000000000000000e+00,5.0000000000000000e-01,3.3333333333333337e-01,4.4444444444444442e-01,5.0000000000000000e-01,0.0000000000000000e+00,  ];
+        let ida_beta = array![1.0000000000000000e+00,1.0000000000000000e+00,1.0000000000000000e+00,4.8000000000000007e+00,1.5000000000000000e+01,0.0000000000000000e+00,  ];
+        let ida_sigma = array![1.0000000000000000e+00,5.0000000000000000e-01,3.3333333333333337e-01,8.8888888888888884e-01,2.4380952380952383e+00,0.0000000000000000e+00,  ];
+        let ida_gamma = array![ 0.0000000000000000e+00, 2.9083036734439079e+03, 4.3624555101658616e+03, 6.2549405772650898e+03, 1.6001650180080363e+04, 0.0000000000000000e+00, ];
+        let kk=2;
+        let kused=2;
+        let ns=2;
+        let hh=3.4384304814216195e-04;
+        let hused=3.4384304814216195e-04;
+        let cj=4.3624555101658616e+03;
+        let cjlast=4.3624555101658616e+03;
+
+        ida.ida_hh = hh;
+        ida.ida_hused = hused;
+        ida.ida_ns = ns;
+        ida.ida_kused = kused;
+        ida.ida_kk = kk;
+        ida.ida_beta.assign(&ida_beta);
+        ida.ida_alpha.assign(&ida_alpha);
+        ida.ida_gamma.assign(&ida_gamma);
+        ida.ida_sigma.assign(&ida_sigma);
+        ida.ida_phi.assign(&ida_phi);
+        ida.ida_psi.assign(&ida_psi);
+        ida.ida_cjlast = cjlast;
+        ida.nlp.lp.ida_cj = cj;
+    }
+
+    // Call the function under test
+    let ck = ida.set_coeffs();
+
+    {
+        #[rustfmt::skip]
+        let ck_expect=0.3333333333333334814;
+        let ida_phi = array![[9.9992400889930733e-01,3.5884428024527148e-05,4.0106672668125017e-05,],[-1.3748619452022122e-05,1.1636437126348729e-06,1.2584975739367733e-05,],[1.7125607629565644e-09,-1.3178687286728842e-06,1.3161561679729596e-06,],[2.1033954646845001e-10,1.0217905523752639e-06,-1.0220008918107099e-06,],[-1.3875550771817554e-10,1.3559268269012917e-06,-1.3557880688400603e-06,],[-1.1465196356066767e-10,2.0021935974335382e-07,-2.0010470777979317e-07,],  ];
+        let ida_psi = array![3.4384304814216195e-04,6.8768609628432390e-04,1.0315291444264857e-03,7.7938390297730776e-04,3.4639284576769232e-04,0.0000000000000000e+00,  ];
+        let ida_alpha = array![1.0000000000000000e+00,5.0000000000000000e-01,3.3333333333333337e-01,4.4444444444444442e-01,5.0000000000000000e-01,0.0000000000000000e+00,  ];
+        let ida_beta = array![1.0000000000000000e+00,1.0000000000000000e+00,1.0000000000000000e+00,4.8000000000000007e+00,1.5000000000000000e+01,0.0000000000000000e+00,  ];
+        let ida_sigma = array![1.0000000000000000e+00,5.0000000000000000e-01,3.3333333333333337e-01,8.8888888888888884e-01,2.4380952380952383e+00,0.0000000000000000e+00,  ];
+        let ida_gamma = array![0.0000000000000000e+00,2.9083036734439079e+03,4.3624555101658616e+03,6.2549405772650898e+03,1.6001650180080363e+04,0.0000000000000000e+00,  ];
+        let kk=2;
+        let kused=2;
+        let ns=3;
+        let hh=3.4384304814216195e-04;
+        let hused=3.4384304814216195e-04;
+        let cj=4.3624555101658616e+03;
+        let cjlast=4.3624555101658616e+03;
+
+        assert_nearly_eq!(ida.ida_hh, hh);
+        assert_nearly_eq!(ida.ida_hused, hused);
+        assert_eq!(ida.ida_ns, ns);
+        assert_eq!(ida.ida_kused, kused);
+        assert_eq!(ida.ida_kk, kk);
+        assert_nearly_eq!(ida.ida_beta, ida_beta);
+        assert_nearly_eq!(ida.ida_alpha, ida_alpha);
+        assert_nearly_eq!(ida.ida_gamma, ida_gamma);
+        assert_nearly_eq!(ida.ida_sigma, ida_sigma);
+        assert_nearly_eq!(ida.ida_phi, ida_phi);
+        assert_nearly_eq!(ida.ida_psi, ida_psi);
+        assert_nearly_eq!(ida.ida_cjlast, cjlast);
+        assert_nearly_eq!(ida.nlp.lp.ida_cj, cj);
+        assert_nearly_eq!(ck, ck_expect);
+    }
+}
