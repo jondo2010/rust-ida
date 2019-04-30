@@ -35,6 +35,8 @@ use num_traits::{
     Float,
 };
 
+use serde::Serialize;
+
 #[derive(Copy, Clone)]
 pub enum IdaTask {
     Normal,
@@ -49,7 +51,7 @@ pub enum IdaSolveStatus {
 }
 
 /// Counters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IdaCounters {
     /// number of internal steps taken
     ida_nst: usize,
@@ -64,13 +66,13 @@ pub struct IdaCounters {
 }
 
 /// This structure contains fields to keep track of problem state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Serialize)]
 pub struct Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem,
-    LS: linear::LSolver<P::Scalar>,
-    NLS: nonlinear::NLSolver<P>,
-    TolC: TolControl<P::Scalar>,
+    P: IdaProblem + Serialize,
+    LS: linear::LSolver<P::Scalar> + Serialize,
+    NLS: nonlinear::NLSolver<P> + Serialize,
+    TolC: TolControl<P::Scalar> + Serialize,
 {
     //ida_itol: ToleranceType,
     /// relative tolerance
@@ -229,14 +231,17 @@ where
 
     /// Nonlinear problem
     nlp: IdaNLProblem<P, LS>,
+
+    #[serde(skip_serializing)]
+    data_trace: std::fs::File,
 }
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem,
-    LS: linear::LSolver<P::Scalar>,
-    NLS: nonlinear::NLSolver<P>,
-    TolC: TolControl<P::Scalar>,
+    P: IdaProblem + Serialize,
+    LS: linear::LSolver<P::Scalar> + Serialize,
+    NLS: nonlinear::NLSolver<P> + Serialize,
+    TolC: TolControl<P::Scalar> + Serialize,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
@@ -267,6 +272,10 @@ where
 
         ida_phi.index_axis_mut(Axis(0), 0).assign(&yy0);
         ida_phi.index_axis_mut(Axis(0), 1).assign(&yp0);
+
+        use std::io::Write;
+        let mut data_trace = std::fs::File::create("roberts_rs.json").unwrap();
+        data_trace.write_all(b"{\"data\":[\n").unwrap();
 
         //IDAResFn res, realtype t0, N_Vector yy0, N_Vector yp0
         Self {
@@ -379,6 +388,8 @@ where
             // Initialize nonlinear solver
             nls: NLS::new(yy0.len(), MAXNLSIT),
             nlp: IdaNLProblem::new(problem),
+
+            data_trace,
         }
     }
 
@@ -1158,11 +1169,13 @@ where
     ///                     IDA_REP_RES_ERR
     fn step(&mut self) -> Result<(), failure::Error> {
         profile_scope!(format!("step(), nst={}", self.counters.ida_nst));
+        /*
         trace!(
-            "step(), nst={}, tn={:.6e}",
+            "/* step() */ {{ \"nst\":{}, \"tn\":{:.6e}",
             self.counters.ida_nst,
             self.nlp.ida_tn
         );
+        */
 
         let saved_t = self.nlp.ida_tn;
 
@@ -1213,6 +1226,10 @@ where
                 .nonlinear_solve()
                 .map_err(|err| (P::Scalar::zero(), P::Scalar::zero(), err))
                 .and_then(|_| {
+                    serde_json::to_writer(&self.data_trace, self).unwrap();
+                    use std::io::Write;
+                    self.data_trace.write_all(b",\n").unwrap();
+
                     // If NLS was successful, perform error test
                     self.test_error(ck)
                 })
@@ -1369,6 +1386,8 @@ where
 
         let w = self.nlp.ida_ewt.clone();
 
+        //trace!("\"ewt\":{:.6e}", w);
+
         // solve the nonlinear system
         let retval = self.nls.solve(
             &mut self.nlp,
@@ -1378,6 +1397,8 @@ where
             self.ida_eps_newt,
             call_lsetup,
         );
+
+        //trace!("\"ee\":{:.6e}", self.ida_ee);
 
         // update yy and yp based on the final correction from the nonlinear solve
         self.nlp.ida_yy = &self.nlp.ida_yypredict + &self.ida_ee;
@@ -1390,7 +1411,6 @@ where
         retval?;
 
         // If otherwise successful, check and enforce inequality constraints.
-        //trace!("nst={}, yy={:.5e}", self.counters.ida_nst, self.nlp.ida_yy);
 
         // Check constraints and get mask vector mm, set where constraints failed
         if self.ida_constraints_set {
@@ -1497,7 +1517,6 @@ where
 
         // local truncation error norm
         let terr_k = err_k * <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap();
-
 
         let (err_km1, knew) = if self.ida_kk > 1 {
             // Compute error at order k-1
@@ -1675,11 +1694,13 @@ where
 
                             self.ida_kk = self.ida_knew;
                             // rr = 0.9 * (2 * err_knew + 0.0001)^(-1/(kk+1))
-                            self.ida_rr = P::Scalar::pt9()
-                                * (P::Scalar::two() * err_knew + P::Scalar::pt0001()).powf(
-                                    -(<P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap())
-                                        .recip(),
-                                );
+                            self.ida_rr = {
+                                let base = P::Scalar::two() * err_knew + P::Scalar::pt0001();
+                                let arg = <P::Scalar as NumCast>::from(self.ida_kk + 1)
+                                    .unwrap()
+                                    .recip();
+                                P::Scalar::pt9() * base.powf(-arg)
+                            };
                             self.ida_rr =
                                 P::Scalar::quarter().max(P::Scalar::pt9().min(self.ida_rr));
                             self.ida_hh *= self.ida_rr;
@@ -1868,8 +1889,7 @@ where
                 _ => err_k,
             };
             trace!(
-                "    nst={}, {:#?}, kk={}, err_knew={:.5e}",
-                self.counters.ida_nst,
+                "    {:#?}, kk={}, err_knew={:.5e}",
                 action,
                 self.ida_kk,
                 err_knew

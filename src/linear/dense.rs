@@ -1,6 +1,7 @@
 use super::*;
+use serde::Serialize;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Dense<Scalar> {
     x: Scalar,
 
@@ -216,7 +217,6 @@ mod tests {
             -4.8726813621044346e-10,
             4.8651812062436036e-10
         ];
-        dbg!(&b);
         assert_nearly_eq!(b, x_expect, 1e-15);
     }
 

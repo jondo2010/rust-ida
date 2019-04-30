@@ -1,4 +1,4 @@
-use log::{warn};
+use log::warn;
 use ndarray::prelude::*;
 
 use super::constants::IdaConst;
@@ -6,8 +6,10 @@ use super::linear::{LSolver, LSolverType};
 use super::traits::IdaProblem;
 use super::IdaCounters;
 
+use serde::Serialize;
+
 /// State variables involved in the linear problem
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct IdaLProblem<P, LS>
 where
     P: IdaProblem,

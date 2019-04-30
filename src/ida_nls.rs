@@ -1,13 +1,20 @@
 use ndarray::prelude::*;
 
 use super::constants::IdaConst;
+use super::error::IdaError;
 use super::ida_ls::IdaLProblem;
 use super::linear::LSolver;
-use super::nonlinear::NLProblem;
+use super::nonlinear::{NLProblem, NLSolver};
 use super::traits::IdaProblem;
 
+use serde::Serialize;
+
+// nonlinear solver parameters
+/// max convergence rate used in divergence check
+const RATEMAX: f64 = 0.9;
+
 /// State variables involved in the Non-linear problem
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IdaNLProblem<P, LS>
 where
     P: IdaProblem,
@@ -201,8 +208,9 @@ where
     }
 
     /// idaNlsConvTest
-    fn ctest<S1, S2, S3>(
+    fn ctest<S1, S2, S3, NLS>(
         &mut self,
+        solver: &NLS,
         _y: ArrayBase<S1, Ix1>,
         del: ArrayBase<S2, Ix1>,
         tol: P::Scalar,
@@ -212,19 +220,17 @@ where
         S1: ndarray::Data<Elem = P::Scalar>,
         S2: ndarray::Data<Elem = P::Scalar>,
         S3: ndarray::Data<Elem = P::Scalar>,
+        NLS: NLSolver<P>,
     {
-        //realtype delnrm;
-        //realtype rate;
-
         use crate::norm_rms::NormRms;
         use num_traits::identities::One;
         use num_traits::{Float, NumCast};
+
         // compute the norm of the correction
         let delnrm = del.norm_wrms(&ewt);
 
         // get the current nonlinear solver iteration count
-        //let m = self.nls.get_cur_iter();
-        let m = 0;
+        let m = solver.get_cur_iter();
 
         // test for convergence, first directly, then with rate estimate.
         if m == 0 {
@@ -233,10 +239,13 @@ where
                 return Ok(true);
             }
         } else {
-            let rate = (delnrm / self.ida_oldnrm)
-                .powf(P::Scalar::one() / <P::Scalar as NumCast>::from(m).unwrap());
+            let rate =
+                (delnrm / self.ida_oldnrm).powf(<P::Scalar as NumCast>::from(m).unwrap().recip());
             //rate = SUNRpowerR(delnrm / self.ida_oldnrm, P::Scalar::one() / m);
-            //if (rate > RATEMAX) return(SUN_NLS_CONV_RECVR);
+            if rate > <P::Scalar as NumCast>::from(RATEMAX).unwrap() {
+                //return(SUN_NLS_CONV_RECVR);
+                return Err(failure::Error::from(IdaError::ConvergenceFail {}));
+            }
             self.ida_ss = rate / (P::Scalar::one() - rate);
         }
 

@@ -2,10 +2,10 @@ use super::*;
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem,
-    LS: linear::LSolver<P::Scalar>,
-    NLS: nonlinear::NLSolver<P>,
-    TolC: TolControl<P::Scalar>,
+    P: IdaProblem + Serialize,
+    LS: linear::LSolver<P::Scalar> + Serialize,
+    NLS: nonlinear::NLSolver<P> + Serialize,
+    TolC: TolControl<P::Scalar> + Serialize,
 {
     /// Return a view of the y vector
     pub fn get_yy(&self) -> ndarray::ArrayView1<P::Scalar> {

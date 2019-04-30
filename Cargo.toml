@@ -24,9 +24,12 @@ thread_profiler = []
 [dependencies]
 log                 = { version = "0.4.6", features = ["std"] }
 failure             = { version = "0.1.5" }
-ndarray             = { version = "0.12.1", default-features = true }
+ndarray             = { version = "0.12.1", default-features = true, features = ["serde-1"] }
 num-traits          = { version = "0.2.6" }
 profiler            = { package = "thread_profiler", version = "0.3.0", optional = false }
+
+serde = { version = "1.0.90", features = ["derive"]}
+serde_json = {version = "1.0.39"}
 
 [dev-dependencies]
 criterion           = { version = "0.2.11" }

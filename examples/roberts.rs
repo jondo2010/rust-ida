@@ -16,9 +16,10 @@
 use ida::{linear::*, nonlinear::*, tol_control::*, traits::*, *};
 
 use ndarray::{array, prelude::*};
+use serde::Serialize;
 
-#[derive(Clone, Copy, Debug)]
-struct Roberts {}
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct Roberts {}
 
 impl ModelSpec for Roberts {
     type Scalar = f64;
@@ -118,13 +119,15 @@ fn main() {
     let retval = loop {
         let mut tret = 0.0;
 
-        let retval = ida.solve(tout, &mut tret, IdaTask::OneStep);
+        let retval = ida.solve(tout, &mut tret, IdaTask::Normal);
 
         let nst = ida.get_num_steps();
         let kused = ida.get_last_order();
         let hused = ida.get_last_step();
 
         let yy = ida.get_yy();
+
+        //println!("\"yy\":{:.6e}, \"k\":{}, \"hh\":{:.6e}", yy, kused, hused);
 
         table_out.add_row(row![
             format!("{:.5e}", tret),
@@ -148,7 +151,7 @@ fn main() {
             _ => {}
         }
 
-        if iout == 120 {
+        if iout == 1 {
             break Ok(());
         }
     };

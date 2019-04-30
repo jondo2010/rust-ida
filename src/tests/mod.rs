@@ -2,17 +2,19 @@ use super::*;
 
 use ndarray::array;
 use nearly_eq::*;
+use serde::Serialize;
 use tol_control::*;
 
-mod set_coeffs;
-mod test_error;
-mod predict;
-mod restore;
 mod complete_step;
+mod example_problems;
 mod get_solution;
 mod nonlinear_solve;
+mod predict;
+mod restore;
+mod set_coeffs;
+mod test_error;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 struct Dummy {}
 
 impl ModelSpec for Dummy {

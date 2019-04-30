@@ -1,4 +1,5 @@
 use ndarray::prelude::*;
+use serde::Serialize;
 
 pub trait TolControl<Scalar> {
     fn ewt_set<S1, S2>(&self, ycur: ArrayBase<S1, Ix1>, ewt: ArrayBase<S2, Ix1>)
@@ -8,7 +9,7 @@ pub trait TolControl<Scalar> {
 }
 
 /// specifies scalar relative and absolute tolerances.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TolControlSS<Scalar> {
     /// relative tolerance
     ida_rtol: Scalar,
@@ -42,7 +43,7 @@ where
 
 /// specifies scalar relative tolerance and a vector absolute tolerance (a potentially different
 /// absolute tolerance for each vector component).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TolControlSV<Scalar> {
     /// relative tolerance
     ida_rtol: Scalar,

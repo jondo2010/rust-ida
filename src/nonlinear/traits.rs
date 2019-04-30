@@ -136,8 +136,9 @@ where
     /// The tolerance passed to this routine by integrators is the tolerance in a weighted
     /// root-mean-squared norm with error weight vector `ewt`. Modules utilizing their own
     /// convergence criteria may ignore these functions.
-    fn ctest<S1, S2, S3>(
+    fn ctest<S1, S2, S3, NLS>(
         &mut self,
+        solver: &NLS,
         y: ArrayBase<S1, Ix1>,
         del: ArrayBase<S2, Ix1>,
         tol: M::Scalar,
@@ -146,7 +147,8 @@ where
     where
         S1: Data<Elem = M::Scalar>,
         S2: Data<Elem = M::Scalar>,
-        S3: Data<Elem = M::Scalar>;
+        S3: Data<Elem = M::Scalar>,
+        NLS: NLSolver<M>;
 }
 
 pub trait NLSolver<M: ModelSpec> {
@@ -223,6 +225,7 @@ pub trait NLSolver<M: ModelSpec> {
         0
     }
 
+    /// SUNNonlinSolGetCurIter
     /// get the iteration count for the current nonlinear solve
     fn get_cur_iter(&self) -> usize;
 

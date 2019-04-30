@@ -1,9 +1,10 @@
 use ndarray::prelude::*;
+use serde::Serialize;
 
 use crate::nonlinear::traits::*;
 use crate::traits::ModelSpec;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Newton<M: ModelSpec> {
     /// Newton update vector
     delta: Array1<M::Scalar>,
@@ -96,7 +97,7 @@ where
                                     y += &self.delta;
                                     // test for convergence
                                     problem
-                                        .ctest(y.view(), self.delta.view(), tol, w.view())
+                                        .ctest(self, y.view(), self.delta.view(), tol, w.view())
                                         .and_then(|converged| {
                                             if converged {
                                                 // if successful update Jacobian status and return
@@ -288,8 +289,9 @@ mod tests {
                 })
         }
 
-        fn ctest<S1, S2, S3>(
+        fn ctest<S1, S2, S3, NLS>(
             &mut self,
+            _solver: &NLS,
             _y: ArrayBase<S1, Ix1>,
             del: ArrayBase<S2, Ix1>,
             tol: <Self as ModelSpec>::Scalar,
@@ -299,6 +301,7 @@ mod tests {
             S1: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
             S2: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
             S3: ndarray::Data<Elem = <Self as ModelSpec>::Scalar>,
+            NLS: NLSolver<Self>,
         {
             use crate::norm_rms::NormRms;
             // compute the norm of the correction

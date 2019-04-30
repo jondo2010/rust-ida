@@ -71,9 +71,7 @@ pub enum IdaError {
     NoRecovery {},
 
     #[fail(display = "Recoverable failure")]
-    RecoverableFail {
-        rec_type: Recoverable,
-    },
+    RecoverableFail { rec_type: Recoverable },
 
     /// IDA_CONSTR_FAIL
     /// The inequality constraints were violated, and the solver was unable to recover.
