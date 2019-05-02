@@ -120,8 +120,8 @@ where
     {
         // update yy and yp based on the current correction
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, ycor, self.ida_yy);
-        self.ida_yy = &self.ida_yypredict + &ycor;
         //N_VLinearSum(ONE, self.ida_yppredict, self.ida_cj, ycor, self.ida_yp);
+        self.ida_yy = &self.ida_yypredict + &ycor;
         //self.ida_yp = &self.ida_yppredict + ycor * self.ida_cj;
         self.ida_yp.assign(&self.ida_yppredict);
         self.ida_yp.scaled_add(self.lp.ida_cj, &ycor);
@@ -160,6 +160,7 @@ where
         use num_traits::identities::One;
 
         self.ida_nsetups += 1;
+        // ida_lsetup() aka idaLsSetup()
         self.lp
             .setup(self.ida_yy.view(), self.ida_yp.view(), res.view());
 

@@ -55,8 +55,6 @@ pub enum IdaSolveStatus {
 pub struct IdaCounters {
     /// number of internal steps taken
     ida_nst: usize,
-    /// number of function (res) calls
-    ida_nre: usize,
     /// number of corrector convergence failures
     ida_ncfn: usize,
     /// number of error test failures
@@ -104,8 +102,6 @@ where
     ida_gamma: Array1<P::Scalar>,
 
     // Vectors
-    /// error weight vector
-    //ida_ewt: Array<P::Scalar, Ix1>,
     /// residual vector
     ida_delta: Array<P::Scalar, Ix1>,
     /// bit vector for diff./algebraic components
@@ -180,8 +176,6 @@ where
     //// Counters
     counters: IdaCounters,
 
-    /// number of function (res) calls
-    //pub(super) ida_nre: u64,
     /// number of corrector convergence failures
     //ida_ncfn: u64,
     /// number of error test failures
@@ -236,6 +230,19 @@ where
     data_trace: std::fs::File,
 }
 
+impl<P, LS, NLS, TolC> Drop for Ida<P, LS, NLS, TolC>
+where
+    P: IdaProblem + Serialize,
+    LS: linear::LSolver<P::Scalar> + Serialize,
+    NLS: nonlinear::NLSolver<P> + Serialize,
+    TolC: TolControl<P::Scalar> + Serialize,
+{
+    fn drop(&mut self) {
+        use std::io::Write;
+        self.data_trace.write_all(b"]}\n").unwrap();
+    }
+}
+
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
     P: IdaProblem + Serialize,
@@ -262,8 +269,10 @@ where
     ) -> Self {
         assert_eq!(problem.model_size(), yy0.len());
 
+        let problem_size = problem.model_size();
+
         // Initialize the phi array
-        let mut ida_phi = Array::zeros(problem.model_size())
+        let mut ida_phi = Array::zeros(problem_size)
             .broadcast([&[MXORDP1], yy0.shape()].concat())
             .unwrap()
             .into_dimensionality::<_>()
@@ -272,6 +281,10 @@ where
 
         ida_phi.index_axis_mut(Axis(0), 0).assign(&yy0);
         ida_phi.index_axis_mut(Axis(0), 1).assign(&yp0);
+
+        let mut nlp = IdaNLProblem::new(problem);
+        nlp.ida_yy.assign(&yy0);
+        nlp.ida_yp.assign(&yp0);
 
         use std::io::Write;
         let mut data_trace = std::fs::File::create("roberts_rs.json").unwrap();
@@ -286,10 +299,6 @@ where
             //ida_uround: UNIT_ROUNDOFF,
             tol_control,
 
-            // Set default values for integrator optional inputs
-            //ida_ehfun       = IDAErrHandler;
-            //ida_eh_data     = IDA_mem;
-            //ida_errfp       = stderr;
             ida_maxord: MAXORD_DEFAULT as usize,
             ida_mxstep: MXSTEP_DEFAULT as u64,
             ida_hmax_inv: NumCast::from(HMAX_INV_DEFAULT).unwrap(),
@@ -300,7 +309,7 @@ where
             ida_maxncf: MXNCF as u64,
             ida_suppressalg: false,
             //ida_id          = NULL;
-            ida_constraints: Array::zeros(problem.model_size()),
+            ida_constraints: Array::zeros(problem_size),
             ida_constraints_set: false,
 
             ida_cjlast: P::Scalar::zero(),
@@ -328,8 +337,8 @@ where
             ida_sigma: Array::zeros(MXORDP1),
             ida_gamma: Array::zeros(MXORDP1),
 
-            ida_delta: Array::zeros(problem.model_size()),
-            ida_id: Array::from_elem(problem.model_size(), false),
+            ida_delta: Array::zeros(problem_size),
+            ida_id: Array::from_elem(problem_size, false),
 
             // Initialize all the counters and other optional output values
             counters: IdaCounters {
@@ -337,8 +346,6 @@ where
                 ida_ncfn: 0,
                 ida_netf: 0,
                 ida_nni: 0,
-
-                ida_nre: 0,
             },
 
             ida_kused: 0,
@@ -362,7 +369,7 @@ where
             //ida_mxgnull  = 1;
 
             // Not from ida.c...
-            ida_ee: Array::zeros(problem.model_size()),
+            ida_ee: Array::zeros(problem_size),
 
             ida_tstop: None,
 
@@ -387,7 +394,7 @@ where
 
             // Initialize nonlinear solver
             nls: NLS::new(yy0.len(), MAXNLSIT),
-            nlp: IdaNLProblem::new(problem),
+            nlp,
 
             data_trace,
         }
@@ -1182,7 +1189,7 @@ where
         if self.counters.ida_nst == 0 {
             self.ida_kk = 1;
             self.ida_kused = 0;
-            self.ida_hused = P::Scalar::one();
+            self.ida_hused = P::Scalar::zero();
             self.ida_psi[0] = self.ida_hh;
             self.nlp.lp.ida_cj = self.ida_hh.recip();
             self.ida_phase = 0;
@@ -1198,6 +1205,10 @@ where
             //-----------------------
             // Set method coefficients
             //-----------------------
+
+            serde_json::to_writer(&self.data_trace, self).unwrap();
+            use std::io::Write;
+            self.data_trace.write_all(b",\n").unwrap();
 
             let ck = self.set_coeffs();
 
@@ -1226,10 +1237,6 @@ where
                 .nonlinear_solve()
                 .map_err(|err| (P::Scalar::zero(), P::Scalar::zero(), err))
                 .and_then(|_| {
-                    serde_json::to_writer(&self.data_trace, self).unwrap();
-                    use std::io::Write;
-                    self.data_trace.write_all(b",\n").unwrap();
-
                     // If NLS was successful, perform error test
                     self.test_error(ck)
                 })
@@ -1508,9 +1515,6 @@ where
         ),
         (P::Scalar, P::Scalar, failure::Error),
     > {
-        //trace!("test_error phi={:.5e}", self.ida_phi);
-        //trace!("test_error ee={:.5e}", self.ida_ee);
-
         // Compute error for order k.
         let enorm_k = self.wrms_norm(&self.ida_ee, &self.nlp.ida_ewt, self.ida_suppressalg);
         let err_k = self.ida_sigma[self.ida_kk] * enorm_k; // error norms
@@ -1530,9 +1534,7 @@ where
             let knew = if self.ida_kk > 2 {
                 // Compute error at order k-2
                 // ida_delta = ida_phi[ida_kk - 1] + ida_delta
-                self.ida_delta
-                    .assign(&self.ida_phi.index_axis(Axis(0), self.ida_kk - 1));
-                self.ida_delta.scaled_add(P::Scalar::one(), &self.ida_ee);
+                self.ida_delta += &self.ida_phi.index_axis(Axis(0), self.ida_kk - 1);
 
                 let enorm_km2 =
                     self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
@@ -1576,17 +1578,12 @@ where
     /// This routine restores tn, psi, and phi in the event of a failure.
     /// It changes back `phi-star` to `phi` (changed in `set_coeffs()`)
     fn restore(&mut self, saved_t: P::Scalar) -> () {
-        trace!("restore(saved_t={:.6e})", saved_t);
         self.nlp.ida_tn = saved_t;
 
         // Restore psi[0 .. kk] = psi[1 .. kk + 1] - hh
         for j in 1..self.ida_kk + 1 {
             self.ida_psi[j - 1] = self.ida_psi[j] - self.ida_hh;
         }
-
-        //Zip::from(&mut self.ida_psi.slice_mut(s![0..self.ida_kk]))
-        //.and(&self.ida_psi.slice(s![1..self.ida_kk+1]));
-        //ida_psi -= &self.ida_psi.slice(s![1..self.ida_kk+1]);
 
         if self.ida_ns <= self.ida_kk {
             // cvals[0 .. kk-ns+1] = 1 / beta[ns .. kk+1]
@@ -1771,6 +1768,7 @@ where
                     }
 
                     _ => {
+                        error!("Unhandled error: {:#?}", error);
                         unimplemented!("Should never happen");
                     }
                 }
@@ -1791,13 +1789,6 @@ where
     /// array.
     fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
         profile_scope!(format!("complete_step()"));
-        trace!(
-            "complete_step(err_k={:.5e}, err_km1={:.5e}), nst={}, phase={}",
-            err_k,
-            err_km1,
-            self.counters.ida_nst,
-            self.ida_phase
-        );
 
         self.counters.ida_nst += 1;
         let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);
@@ -1888,12 +1879,6 @@ where
                 }
                 _ => err_k,
             };
-            trace!(
-                "    {:#?}, kk={}, err_knew={:.5e}",
-                action,
-                self.ida_kk,
-                err_knew
-            );
 
             // Compute rr = tentative ratio hnew/hh from error norm estimate.
             // Reduce hh if rr <= 1, double hh if rr >= 2, else leave hh as is.
@@ -1921,7 +1906,6 @@ where
 
             self.ida_hh = hnew;
         }
-        trace!("    next hh={:.5e}", self.ida_hh);
         // end of phase if block
 
         // Save ee for possible order increase on next step

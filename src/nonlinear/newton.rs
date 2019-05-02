@@ -23,7 +23,11 @@ pub struct Newton<M: ModelSpec> {
 impl<M> NLSolver<M> for Newton<M>
 where
     M: ModelSpec,
-    M::Scalar: num_traits::Float + num_traits::NumRef + num_traits::NumAssignRef + std::fmt::Debug,
+    M::Scalar: num_traits::Float
+        + num_traits::NumRef
+        + num_traits::NumAssignRef
+        + std::fmt::Debug
+        + std::fmt::LowerExp,
 {
     fn new(size: usize, maxiters: usize) -> Self {
         Newton {
@@ -70,6 +74,7 @@ where
                 .and_then(|_| {
                     // if indicated, setup the linear system
                     if call_lsetup {
+                        // NLS->LSetup() aka idaNlsLSetup()
                         problem
                             .setup(y0.view(), self.delta.view(), jbad)
                             .map(|jcur| self.jcur = jcur)
