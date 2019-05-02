@@ -4,7 +4,7 @@ use super::constants::IdaConst;
 use super::error::IdaError;
 use super::ida_ls::IdaLProblem;
 use super::linear::LSolver;
-use super::nonlinear::{NLProblem, NLSolver};
+use super::nonlinear::{Error, NLProblem, NLSolver};
 use super::traits::IdaProblem;
 
 use serde::Serialize;
@@ -245,7 +245,7 @@ where
             //rate = SUNRpowerR(delnrm / self.ida_oldnrm, P::Scalar::one() / m);
             if rate > <P::Scalar as NumCast>::from(RATEMAX).unwrap() {
                 //return(SUN_NLS_CONV_RECVR);
-                return Err(failure::Error::from(IdaError::ConvergenceFail {}));
+                return Err(failure::Error::from(Error::ConvergenceRecover {}));
             }
             self.ida_ss = rate / (P::Scalar::one() - rate);
         }

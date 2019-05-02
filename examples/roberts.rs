@@ -151,7 +151,7 @@ fn main() {
             _ => {}
         }
 
-        if iout == 5 {
+        if iout == 12 {
             break Ok(());
         }
     };
