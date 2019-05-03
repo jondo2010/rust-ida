@@ -240,11 +240,15 @@ where
                 return Ok(true);
             }
         } else {
-            let rate =
-                (delnrm / self.ida_oldnrm).powf(<P::Scalar as NumCast>::from(m).unwrap().recip());
+            let rate = {
+                let base = delnrm / self.ida_oldnrm;
+                let arg = <P::Scalar as NumCast>::from(m).unwrap().recip();
+                base.powf(arg)
+            };
             //rate = SUNRpowerR(delnrm / self.ida_oldnrm, P::Scalar::one() / m);
             if rate > <P::Scalar as NumCast>::from(RATEMAX).unwrap() {
-                //return(SUN_NLS_CONV_RECVR);
+                use log::trace;
+                trace!(">Rate, tn={:?}", self.ida_tn);
                 return Err(failure::Error::from(Error::ConvergenceRecover {}));
             }
             self.ida_ss = rate / (P::Scalar::one() - rate);
