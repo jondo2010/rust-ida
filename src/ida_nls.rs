@@ -245,10 +245,8 @@ where
                 let arg = <P::Scalar as NumCast>::from(m).unwrap().recip();
                 base.powf(arg)
             };
-            //rate = SUNRpowerR(delnrm / self.ida_oldnrm, P::Scalar::one() / m);
             if rate > <P::Scalar as NumCast>::from(RATEMAX).unwrap() {
                 use log::trace;
-                trace!(">Rate, tn={:?}", self.ida_tn);
                 return Err(failure::Error::from(Error::ConvergenceRecover {}));
             }
             self.ida_ss = rate / (P::Scalar::one() - rate);

@@ -94,16 +94,16 @@ fn test1() {
     assert_eq!(ida.counters.ida_nst, nst);
     assert_eq!(ida.ida_kk, kk);
     assert_eq!(ida.ida_hh, hh);
-    assert_nearly_eq!(ida.ida_rr, rr);
+    assert_eq!(ida.ida_rr, rr);
     assert_eq!(ida.ida_kused, kused);
     assert_eq!(ida.ida_hused, hused);
     assert_eq!(ida.ida_knew, knew);
     assert_eq!(ida.ida_maxord, maxord);
     assert_eq!(ida.ida_phase, phase);
     assert_eq!(ida.ida_hmax_inv, hmax_inv);
-    assert_nearly_eq!(ida.ida_ee, ida_ee);
-    assert_nearly_eq!(ida.ida_phi, ida_phi);
-    assert_nearly_eq!(ida.nlp.ida_ewt, ida_ewt);
+    assert_eq!(ida.ida_ee, ida_ee);
+    assert_eq!(ida.nlp.ida_ewt, ida_ewt);
+    assert_eq!(ida.ida_phi, ida_phi);
 }
 
 #[test]
@@ -188,16 +188,16 @@ fn test2() {
     assert_eq!(ida.counters.ida_nst, nst);
     assert_eq!(ida.ida_kk, kk);
     assert_eq!(ida.ida_hh, hh);
-    assert_nearly_eq!(ida.ida_rr, rr);
+    assert_eq!(ida.ida_rr, rr);
     assert_eq!(ida.ida_kused, kused);
     assert_eq!(ida.ida_hused, hused);
     assert_eq!(ida.ida_knew, knew);
     assert_eq!(ida.ida_maxord, maxord);
     assert_eq!(ida.ida_phase, phase);
     assert_eq!(ida.ida_hmax_inv, hmax_inv);
-    assert_nearly_eq!(ida.ida_ee, ida_ee);
-    assert_nearly_eq!(ida.ida_phi, ida_phi);
-    assert_nearly_eq!(ida.nlp.ida_ewt, ida_ewt);
+    assert_eq!(ida.ida_ee, ida_ee);
+    assert_eq!(ida.ida_phi, ida_phi);
+    assert_eq!(ida.nlp.ida_ewt, ida_ewt);
 }
 
 #[test]
@@ -294,14 +294,14 @@ fn test3() {
     assert_eq!(ida.counters.ida_nst, nst);
     assert_eq!(ida.ida_kk, kk);
     assert_eq!(ida.ida_hh, hh);
-    assert_nearly_eq!(ida.ida_rr, rr);
+    assert_eq!(ida.ida_rr, rr);
     assert_eq!(ida.ida_kused, kused);
     assert_eq!(ida.ida_hused, hused);
     assert_eq!(ida.ida_knew, knew);
     assert_eq!(ida.ida_maxord, maxord);
     assert_eq!(ida.ida_phase, phase);
     assert_eq!(ida.ida_hmax_inv, hmax_inv);
-    assert_nearly_eq!(ida.ida_ee, ida_ee);
-    assert_nearly_eq!(ida.ida_phi, ida_phi);
-    assert_nearly_eq!(ida.nlp.ida_ewt, ida_ewt);
+    assert_eq!(ida.ida_ee, ida_ee);
+    assert_eq!(ida.ida_phi, ida_phi);
+    assert_eq!(ida.nlp.ida_ewt, ida_ewt);
 }

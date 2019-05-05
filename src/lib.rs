@@ -228,6 +228,8 @@ where
 
     #[serde(skip_serializing)]
     data_trace: std::fs::File,
+
+    n_trace: usize,
 }
 
 impl<P, LS, NLS, TolC> Drop for Ida<P, LS, NLS, TolC>
@@ -397,6 +399,7 @@ where
             nlp,
 
             data_trace,
+            n_trace: 0,
         }
     }
 
@@ -672,15 +675,6 @@ where
                 &self.nlp.ida_ewt,
                 self.ida_suppressalg,
             );
-
-            /*
-            trace!(
-                "At t = {:.5e}, nstloc={}; nrm = {:.5e}",
-                self.nlp.ida_tn,
-                nstloc,
-                nrm
-            );
-            */
 
             self.ida_tolsf = P::Scalar::epsilon() * nrm;
             if self.ida_tolsf > P::Scalar::one() {
@@ -1176,13 +1170,6 @@ where
     ///                     IDA_REP_RES_ERR
     fn step(&mut self) -> Result<(), failure::Error> {
         profile_scope!(format!("step(), nst={}", self.counters.ida_nst));
-        /*
-        trace!(
-            "/* step() */ {{ \"nst\":{}, \"tn\":{:.6e}",
-            self.counters.ida_nst,
-            self.nlp.ida_tn
-        );
-        */
 
         let saved_t = self.nlp.ida_tn;
 
@@ -1202,13 +1189,16 @@ where
         // Looping point for attempts to take a step
 
         let (ck, err_k, err_km1) = loop {
+            {
+                serde_json::to_writer(&self.data_trace, self).unwrap();
+                use std::io::Write;
+                self.data_trace.write_all(b",\n").unwrap();
+                self.n_trace += 1;
+            }
+
             //-----------------------
             // Set method coefficients
             //-----------------------
-
-            serde_json::to_writer(&self.data_trace, self).unwrap();
-            use std::io::Write;
-            self.data_trace.write_all(b",\n").unwrap();
 
             let ck = self.set_coeffs();
 
@@ -1295,20 +1285,20 @@ where
             self.ida_ns = 0;
         }
         self.ida_ns = std::cmp::min(self.ida_ns + 1, self.ida_kused + 2);
-        if self.ida_kk + 1 >= self.ida_ns {
+        if (self.ida_kk + 1) >= self.ida_ns {
             self.ida_beta[0] = P::Scalar::one();
             self.ida_alpha[0] = P::Scalar::one();
             let mut temp1 = self.ida_hh;
             self.ida_gamma[0] = P::Scalar::zero();
             self.ida_sigma[0] = P::Scalar::one();
-            for i in 1..self.ida_kk + 1 {
-                let scalar_i: P::Scalar = NumCast::from(i).unwrap();
+            for i in 1..=self.ida_kk {
+                let scalar_i = <P::Scalar as NumCast>::from(i).unwrap();
                 let temp2 = self.ida_psi[i - 1];
                 self.ida_psi[i - 1] = temp1;
-                self.ida_beta[i] = self.ida_beta[i - 1] * (self.ida_psi[i - 1] / temp2);
+                self.ida_beta[i] = self.ida_beta[i - 1] * self.ida_psi[i - 1] / temp2;
                 temp1 = temp2 + self.ida_hh;
                 self.ida_alpha[i] = self.ida_hh / temp1;
-                self.ida_sigma[i] = self.ida_sigma[i - 1] * self.ida_alpha[i] * scalar_i;
+                self.ida_sigma[i] = scalar_i * self.ida_sigma[i - 1] * self.ida_alpha[i];
                 self.ida_gamma[i] = self.ida_gamma[i - 1] + self.ida_alpha[i - 1] / self.ida_hh;
             }
             self.ida_psi[self.ida_kk] = temp1;
@@ -1317,8 +1307,9 @@ where
         let mut alphas = P::Scalar::zero();
         let mut alpha0 = P::Scalar::zero();
         for i in 0..self.ida_kk {
-            let scalar_i: P::Scalar = NumCast::from(i + 1).unwrap();
-            alphas -= P::Scalar::one() / scalar_i;
+            alphas -= <P::Scalar as NumCast>::from(i + 1).unwrap().recip();
+            //let scalar_i: P::Scalar = NumCast::from(i + 1).unwrap();
+            //alphas -= P::Scalar::one() / scalar_i;
             alpha0 -= self.ida_alpha[i];
         }
 
@@ -1393,8 +1384,6 @@ where
 
         let w = self.nlp.ida_ewt.clone();
 
-        //trace!("\"ewt\":{:.6e}", w);
-
         // solve the nonlinear system
         let retval = self.nls.solve(
             &mut self.nlp,
@@ -1404,8 +1393,6 @@ where
             self.ida_eps_newt,
             call_lsetup,
         );
-
-        //trace!("\"ee\":{:.6e}", self.ida_ee);
 
         // update yy and yp based on the final correction from the nonlinear solve
         self.nlp.ida_yy = &self.nlp.ida_yypredict + &self.ida_ee;
@@ -1466,7 +1453,7 @@ where
             self.nlp.ida_yypredict.assign(
                 &self
                     .ida_phi
-                    .slice_axis(Axis(0), Slice::from(0..self.ida_kk + 1))
+                    .slice_axis(Axis(0), Slice::from(0..=self.ida_kk))
                     .sum_axis(Axis(0)),
             );
         }
@@ -1476,10 +1463,10 @@ where
         {
             let phi = self
                 .ida_phi
-                .slice_axis(Axis(0), Slice::from(1..self.ida_kk + 1));
+                .slice_axis(Axis(0), Slice::from(1..=self.ida_kk));
 
             // We manually broadcast here so we can turn it into a column vec
-            let gamma = self.ida_gamma.slice(s![1..self.ida_kk + 1]);
+            let gamma = self.ida_gamma.slice(s![1..=self.ida_kk]);
             let gamma = gamma
                 .broadcast((phi.len_of(Axis(1)), phi.len_of(Axis(0))))
                 .unwrap()
@@ -1489,13 +1476,6 @@ where
                 .ida_yppredict
                 .assign(&(&phi * &gamma).sum_axis(Axis(0)));
         }
-        /*
-        trace!(
-            "predict() yypredict={:.6e} yppredict={:.6e}",
-            self.nlp.ida_yypredict,
-            self.nlp.ida_yppredict
-        );
-        */
     }
 
     /// IDATestError
@@ -1925,19 +1905,29 @@ where
 
         let mut z_view = self
             .ida_zvecs
-            .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1));
+            .slice_axis_mut(Axis(0), Slice::from(0..=self.ida_kused));
 
         for (i, mut z_row) in z_view.genrows_mut().into_iter().enumerate() {
             // z[i] = ee + phi[kused] + phi[kused-1] + .. + phi[i]
             z_row.assign(&self.ida_ee);
-            z_row += &self
+
+            for row in self
                 .ida_phi
-                .slice_axis(Axis(0), Slice::from(i..self.ida_kused + 1))
-                .sum_axis(Axis(0));
+                .slice_axis(Axis(0), Slice::from(i..=self.ida_kused).step_by(-1))
+                .genrows()
+            {
+                z_row += &row;
+            }
+
+            // The following results in precison errors due to roundoff in the sum
+            //z_row.assign(&self
+            //.ida_phi
+            //.slice_axis(Axis(0), Slice::from(i..=self.ida_kused))
+            //.sum_axis(Axis(0)));
         }
 
         self.ida_phi
-            .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1))
+            .slice_axis_mut(Axis(0), Slice::from(0..=self.ida_kused))
             .assign(&z_view);
     }
 

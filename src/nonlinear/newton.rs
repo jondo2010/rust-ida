@@ -112,7 +112,6 @@ where
                                                 self.curiter += 1;
                                                 if self.curiter >= self.maxiters {
                                                     use log::trace;
-                                                        trace!(">MaxIters");
                                                     Err(failure::Error::from(
                                                         Error::ConvergenceRecover {},
                                                     ))
