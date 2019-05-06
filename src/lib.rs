@@ -21,7 +21,7 @@ pub mod traits;
 use constants::*;
 use error::{IdaError, Recoverable};
 use ida_nls::IdaNLProblem;
-use norm_rms::{NormRms, NormRmsMasked};
+pub use norm_rms::{NormRms, NormRmsMasked};
 use tol_control::TolControl;
 use traits::*;
 

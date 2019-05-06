@@ -77,6 +77,49 @@ impl Jacobian for Roberts {
     }
 }
 
+/// compare the solution at the final time 4e10s to a reference solution computed using a relative
+/// tolerance of 1e-8 and absoltue tolerance of 1e-14
+fn check_ans<S1, S2>(y: ArrayBase<S1, Ix1>, t: f64, rtol: f64, atol: ArrayBase<S2, Ix1>)
+where
+        S1: ndarray::Data<Elem = f64>,
+        S2: ndarray::Data<Elem = f64>,
+{
+  //int      passfail=0;        /* answer pass (0) or fail (1) retval */
+  //N_Vector ref;               /* reference solution vector        */
+  //N_Vector ewt;               /* error weight vector              */
+  //realtype err;               /* wrms error                       */
+
+  // create reference solution and error weight vectors
+
+  // set the reference solution data
+  let reference = array![5.2083474251394888e-08, 2.0833390772616859e-13, 9.9999994791631752e-01];
+
+  // compute the error weight vector, loosen atol
+  // ewt = rtol*ewt + 10.0*atol
+  let mut ewt = rtol * &reference.mapv(f64::abs);
+  ewt.scaled_add(10.0, &atol);
+
+  dbg!(&ewt);
+
+  //if (N_VMin(ewt) <= ZERO) {
+  //  fprintf(stderr, "\nSUNDIALS_ERROR: check_ans failed - ewt <= 0\n\n");
+  //  return(-1);
+  //}
+  //N_VInv(ewt, ewt);
+  let ewt = ewt.mapv(f64::recip);
+
+  // compute the solution error
+  let diff = &y - &reference;
+  let err = diff.norm_wrms(&ewt);
+
+  // is the solution within the tolerances?
+  let passfail = err >= 1.0;
+
+  if passfail {
+    println!("SUNDIALS_WARNING: check_ans error={} \n\n", err);
+  }
+}
+
 use prettytable::{cell, row, table, Table};
 
 fn main() {
@@ -116,8 +159,8 @@ fn main() {
 
     let mut iout = 0;
     let mut tout = 0.4;
+    let mut tret = 0.0;
     let retval = loop {
-        let mut tret = 0.0;
 
         let retval = ida.solve(tout, &mut tret, IdaTask::Normal);
 
@@ -151,7 +194,7 @@ fn main() {
             _ => {}
         }
 
-        if iout == 12 {
+        if iout == 7 {
             break Ok(());
         }
     };
@@ -173,15 +216,23 @@ fn main() {
         [
             "Number of error test failures:",
             ida.get_num_err_test_fails(),
+        ],
+        [
+            "Number of nonlinear conv. failures:",
+            ida.get_num_nonlin_solv_conv_fails(),
+        ],
+        [
+            "Number of root fn. evaluations:",
+            ida.get_num_g_evals(),
         ]
     );
 
     stats.set_format(*prettytable::format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
     stats.set_titles(row![bFgH2->"Final Run Statistics:"]);
-    //"Number of nonlinear conv. failures:", ncfn,
-    //"Number of root fn. evaluations:", nge,
 
     stats.printstd();
+
+    check_ans(ida.get_yy(), tret, RTOL,ndarray::Array1::from_iter(ATOL.iter().cloned()));
 
     profiler::write_profile("profile.json");
 }

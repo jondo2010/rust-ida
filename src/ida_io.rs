@@ -72,4 +72,13 @@ where
     pub fn get_num_lin_res_evals(&self) -> usize {
         self.nlp.lp.nre_dq
     }
+
+    pub fn get_num_nonlin_solv_conv_fails(&self) -> usize {
+        self.counters.ida_ncfn
+    }
+
+    pub fn get_num_g_evals(&self) -> usize {
+        //self.ida_nge
+        0
+    }
 }
