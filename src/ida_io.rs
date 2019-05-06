@@ -78,7 +78,6 @@ where
     }
 
     pub fn get_num_g_evals(&self) -> usize {
-        //self.ida_nge
-        0
+        self.ida_nge
     }
 }

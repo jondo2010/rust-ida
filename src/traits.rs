@@ -70,7 +70,26 @@ pub trait Jacobian: ModelSpec {
         S4: ndarray::DataMut<Elem = Self::Scalar>;
 }
 
-/// Core implementation for explicit schemes
-pub trait IdaProblem: Residual + Jacobian {}
+pub trait Root: ModelSpec {
+    fn num_roots(&self) -> usize {
+        0
+    }
 
-impl<T> IdaProblem for T where T: Residual + Jacobian {}
+    fn root<S1, S2, S3>(
+        &self,
+        t: Self::Scalar,
+        y: ArrayBase<S1, Ix1>,
+        yp: ArrayBase<S2, Ix1>,
+        gout: ArrayBase<S3, Ix1>,
+    ) where
+        S1: ndarray::Data<Elem = Self::Scalar>,
+        S2: ndarray::Data<Elem = Self::Scalar>,
+        S3: ndarray::DataMut<Elem = Self::Scalar>,
+    {
+    }
+}
+
+/// Core implementation for explicit schemes
+pub trait IdaProblem: Residual + Jacobian + Root {}
+
+impl<T> IdaProblem for T where T: Residual + Jacobian + Root {}
