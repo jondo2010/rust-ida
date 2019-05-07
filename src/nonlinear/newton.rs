@@ -208,9 +208,9 @@ mod tests {
     impl TestProblem {
         /// Jacobian of the nonlinear residual function
         ///
-        ///            ( 2x  2y  2z )
-        /// J(x,y,z) = ( 4x  2y  -4 )
-        ///            ( 6x  -4  2z )  
+        ///            (2x  2y  2z)
+        /// J(x,y,z) = (4x  2y  -4)
+        ///            (6x  -4  2z)  
         fn jac<S1, S2, S3>(
             _t: f64,
             y: ArrayBase<S1, Ix1>,

@@ -49,7 +49,7 @@ fn test1() {
         let ida_cjold = 4.3624555101658616e+03;
         let ida_cjratio = 1.0000000000000000e+00;
         let ida_ss = 5.8988157110219739e-03;
-        let ida_epsNewt = 3.3000000000000002e-01;
+        let ida_eps_newt = 3.3000000000000002e-01;
         let ida_nst = 11;
 
         ida.counters.ida_nst = ida_nst;
@@ -60,7 +60,7 @@ fn test1() {
         ida.ida_delta = ida_delta;
         ida.ida_ee = ida_ee;
         ida.nlp.ida_ewt = ida_ewt;
-        ida.ida_eps_newt = ida_epsNewt;
+        ida.ida_eps_newt = ida_eps_newt;
         ida.nlp.ida_yy = ida_yy;
         ida.nlp.ida_yypredict = ida_yypredict;
         ida.nlp.ida_yp = ida_yp;

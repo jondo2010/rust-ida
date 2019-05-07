@@ -1,4 +1,4 @@
-use crate::{Jacobian, ModelSpec, Residual};
+use crate::{Jacobian, ModelSpec, Residual, Root};
 use ndarray::prelude::*;
 use serde::Serialize;
 
@@ -58,5 +58,27 @@ impl Jacobian for Roberts {
         jac[[2, 0]] = 1.0;
         jac[[2, 1]] = 1.0;
         jac[[2, 2]] = 1.0;
+    }
+}
+
+impl Root for Roberts {
+    fn num_roots(&self) -> usize {
+        2
+    }
+
+    /// Root function routine. Compute functions g_i(t,y) for i = 0,1.
+    fn root<S1, S2, S3>(
+        &self,
+        _t: Self::Scalar,
+        y: ArrayBase<S1, Ix1>,
+        _yp: ArrayBase<S2, Ix1>,
+        mut gout: ArrayBase<S3, Ix1>,
+    ) where
+        S1: ndarray::Data<Elem = Self::Scalar>,
+        S2: ndarray::Data<Elem = Self::Scalar>,
+        S3: ndarray::DataMut<Elem = Self::Scalar>,
+    {
+        gout[0] = y[0] - 0.0001;
+        gout[1] = y[2] - 0.01;
     }
 }

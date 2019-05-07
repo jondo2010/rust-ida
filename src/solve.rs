@@ -1,4 +1,5 @@
 use super::*;
+use log::warn;
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
@@ -156,17 +157,12 @@ where
             self.ida_kk = 0;
             self.ida_kused = 0; // set in case of an error return before a step
 
-            /* Check for exact zeros of the root functions at or near t0. */
+            // Check for exact zeros of the root functions at or near t0.
             if self.ida_nrtfn > 0 {
                 self.r_check1()?;
-                //  ier = IDARcheck1(IDA_mem);
-                //  if (ier == IDA_RTFUNC_FAIL) {
-                //    IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck1", MSG_RTFUNC_FAILED, self.nlp.ida_tn);
-                //    return(IDA_RTFUNC_FAIL);
-                //  }
             }
 
-            //N_VScale(self.ida_hh, self.ida_phi[1], self.ida_phi[1]);  /* set phi[1] = hh*y' */
+            // set phi[1] = hh*y'
             let mut phi = self.ida_phi.index_axis_mut(Axis(0), 1);
             phi *= self.ida_hh;
 
@@ -335,37 +331,29 @@ where
             // First check for root in the last step taken.
 
             if self.ida_nrtfn > 0 {
-                /*
-                ier = IDARcheck3(IDA_mem);
+                let ier = self.r_check3()?;
 
-                if (ier == RTFOUND) {  /* A new root was found */
-                self.ida_irfnd = 1;
-                istate = IDA_ROOT_RETURN;
-                self.ida_tretlast = *tret = self.ida_tlo;
-                break;
-                } else if (ier == IDA_RTFUNC_FAIL) { /* g failed */
-                IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
-                istate = IDA_RTFUNC_FAIL;
-                break;
+                if let r_check::RootStatus::RootFound = ier {
+                    // A new root was found
+                    self.ida_irfnd = true;
+                    self.ida_tretlast = self.ida_tlo;
+                    *tret = self.ida_tlo;
+                    return Ok(IdaSolveStatus::Root);
                 }
 
-                /* If we are at the end of the first step and we still have
-                 * some event functions that are inactive, issue a warning
-                 * as this may indicate a user error in the implementation
-                 * of the root function. */
-                if (self.counters.ida_nst==1) {
-                inactive_roots = SUNFALSE;
-                for (ir=0; ir<self.ida_nrtfn; ir++) {
-                if (!self.ida_gactive[ir]) {
-                inactive_roots = SUNTRUE;
-                break;
+                // If we are at the end of the first step and we still have some event functions
+                // that are inactive, issue a warning as this may indicate a user error in the
+                // implementation of the root function.
+                if self.counters.ida_nst == 1 {
+                    let inactive_roots = self
+                        .ida_gactive
+                        .iter()
+                        .fold(false, |inactive_roots, &gactive| inactive_roots | !gactive);
+
+                    if (self.ida_mxgnull > 0) && inactive_roots {
+                        warn!("At the end of the first step, there are still some root functions identically 0. This warning will not be issued again.");
+                    }
                 }
-                }
-                if ((self.ida_mxgnull > 0) && inactive_roots) {
-                IDAProcessError(IDA_mem, IDA_WARNING, "IDA", "IDASolve", MSG_INACTIVE_ROOTS);
-                }
-                }
-                 */
             }
 
             // Now check all other stop conditions.

@@ -6,7 +6,6 @@ use serde::Serialize;
 use tol_control::*;
 
 mod complete_step;
-mod example_problems;
 mod get_solution;
 mod nonlinear_solve;
 mod predict;
@@ -57,3 +56,5 @@ impl Jacobian for Dummy {
     {
     }
 }
+
+impl Root for Dummy {}
