@@ -1,5 +1,10 @@
 use super::*;
 
+pub(super) enum RootStatus {
+    RootFound,
+    Continue,
+}
+
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
     P: IdaProblem + Serialize,
@@ -99,5 +104,257 @@ where
         }
 
         Ok(())
+    }
+
+    /// IDARcheck2
+    ///
+    /// This routine checks for exact zeros of g at the last root found, if the last return was a
+    /// root.  It then checks for a close pair of zeros (an error condition), and for a new root
+    /// at a nearby point. The array glo = g(tlo) at the left endpoint of the search interval is
+    /// adjusted if necessary to assure that all g_i are nonzero there, before returning to do a
+    /// root search in the interval.
+    ///
+    /// On entry, tlo = tretlast is the last value of tret returned by IDASolve.  This may be the
+    /// previous tn, the previous tout value, or the last root location.
+    ///
+    /// This routine returns an int equal to:
+    ///     IDA_RTFUNC_FAIL < 0 if the g function failed, or
+    ///     CLOSERT         = 3 if a close pair of zeros was found, or
+    ///     RTFOUND         = 1 if a new zero of g was found near tlo, or
+    ///     IDA_SUCCESS     = 0 otherwise.
+    pub(super) fn r_check2(&mut self) -> Result<RootStatus, failure::Error> {
+        if !self.ida_irfnd {
+            return Ok(RootStatus::Continue);
+        }
+
+        self.get_solution(self.ida_tlo);
+
+        //retval = self.ida_gfun(self.ida_tlo, self.ida_yy, self.ida_yp, self.ida_glo, self.ida_user_data);
+        self.nlp.lp.problem.root(
+            self.ida_tlo,
+            self.nlp.ida_yy.view(),
+            self.nlp.ida_yp.view(),
+            self.ida_glo.view_mut(),
+        );
+        self.ida_nge += 1;
+        //if (retval != 0) return(IDA_RTFUNC_FAIL);
+
+        self.ida_iroots.fill(0);
+        let zroot = ndarray::Zip::from(self.ida_iroots.view_mut())
+            .and(self.ida_gactive.view())
+            .and(self.ida_glo.view())
+            .fold_while(false, |mut zroot, iroots, &gactive, glo| {
+                if gactive && (glo.abs() == P::Scalar::zero()) {
+                    zroot = true;
+                    *iroots = 1;
+                }
+
+                ndarray::FoldWhile::Continue(zroot)
+            });
+
+        if zroot.into_inner() {
+            // One or more g_i has a zero at tlo.  Check g at tlo+smallh.
+            self.ida_ttol = ((self.nlp.ida_tn).abs() + (self.ida_hh).abs())
+                * P::Scalar::epsilon()
+                * P::Scalar::hundred();
+            let smallh = self.ida_ttol * self.ida_hh.signum();
+            let tplus = self.ida_tlo + smallh;
+            if (tplus - self.nlp.ida_tn) * self.ida_hh >= P::Scalar::zero() {
+                let hratio = smallh / self.ida_hh;
+
+                //N_VLinearSum( ONE, self.ida_yy, hratio, self.ida_phi[1], self.ida_yy);
+                self.nlp
+                    .ida_yy
+                    .scaled_add(hratio, &self.ida_phi.index_axis(Axis(0), 1));
+            } else {
+                self.get_solution(tplus);
+            }
+
+            self.nlp.lp.problem.root(
+                tplus,
+                self.nlp.ida_yy.view(),
+                self.nlp.ida_yp.view(),
+                self.ida_ghi.view_mut(),
+            );
+            self.ida_nge += 1;
+            //if (retval != 0) return(IDA_RTFUNC_FAIL);
+
+            // Check for close roots (error return), for a new zero at tlo+smallh, and for a g_i
+            // that changed from zero to nonzero.
+            let zroot = ndarray::Zip::from(self.ida_iroots.view_mut())
+                .and(self.ida_gactive.view())
+                .and(self.ida_glo.view_mut())
+                .and(self.ida_ghi.view())
+                .fold_while(false, |mut zroot, iroots, &gactive, glo, ghi| {
+                    if gactive {
+                        if ghi.abs() == P::Scalar::zero() {
+                            if *iroots == 1 {
+                                return ndarray::FoldWhile::Done(false);
+                            }
+                            zroot = true;
+                            *iroots = 1;
+                        } else {
+                            if *iroots == 1 {
+                                *glo = *ghi;
+                            }
+                        }
+                    }
+                    return ndarray::FoldWhile::Continue(zroot);
+                });
+
+            if zroot.is_done() {
+                Err(IdaError::CloseRoots {
+                    t: self.ida_tlo.to_f64().unwrap(),
+                })?;
+            }
+
+            if zroot.into_inner() {
+                return Ok(RootStatus::RootFound);
+            }
+        }
+
+        Ok(RootStatus::Continue)
+    }
+
+    /// IDARcheck3
+    ///
+    /// This routine interfaces to IDARootfind to look for a root of g between tlo and either tn or
+    /// tout, whichever comes first. Only roots beyond tlo in the direction of integration are
+    /// sought.
+    ///
+    /// This routine returns an int equal to:
+    ///    IDA_RTFUNC_FAIL < 0 if the g function failed, or
+    ///    RTFOUND         = 1 if a root of g was found, or
+    ///    IDA_SUCCESS     = 0 otherwise.
+    pub(super) fn r_check3(&mut self) -> Result<RootStatus, failure::Error> {
+        // Set thi = tn or tout, whichever comes first.
+        match self.ida_taskc {
+            IdaTask::OneStep => self.ida_thi = self.nlp.ida_tn,
+            IdaTask::Normal => {
+                self.ida_thi =
+                    if (self.ida_toutc - self.nlp.ida_tn) * self.ida_hh >= P::Scalar::zero() {
+                        self.nlp.ida_tn
+                    } else {
+                        self.ida_toutc
+                    };
+            }
+        }
+
+        // Get y and y' at thi.
+        self.get_solution(self.ida_thi);
+
+        // Set ghi = g(thi) and call IDARootfind to search (tlo,thi) for roots.
+        self.nlp.lp.problem.root(
+            self.ida_thi,
+            self.nlp.ida_yy.view(),
+            self.nlp.ida_yp.view(),
+            self.ida_ghi.view_mut(),
+        );
+        self.ida_nge += 1;
+        //if (retval != 0) return(IDA_RTFUNC_FAIL);
+
+        self.ida_ttol = (self.nlp.ida_tn.abs() + self.ida_hh.abs())
+            * P::Scalar::epsilon()
+            * P::Scalar::hundred();
+
+        let ier = self.root_find()?;
+
+        ndarray::Zip::from(self.ida_gactive.view_mut())
+            .and(self.ida_grout.view())
+            .apply(|gactive, &grout| {
+                if !*gactive && (grout != P::Scalar::zero()) {
+                    *gactive = true;
+                }
+            });
+
+        self.ida_tlo = self.ida_trout;
+        ndarray::Zip::from(self.ida_glo.view_mut())
+            .and(self.ida_grout.view())
+            .apply(|glo, &grout| {
+                *glo = grout;
+            });
+
+        // If a root was found, interpolate to get y(trout) and return.
+        if let RootStatus::RootFound = ier {
+            self.get_solution(self.ida_trout);
+        }
+
+        Ok(ier)
+    }
+
+    /// IDARootfind
+    ///
+    /// This routine solves for a root of g(t) between tlo and thi, if one exists.  Only roots of
+    /// odd multiplicity (i.e. with a change of sign in one of the g_i), or exact zeros, are found.
+    /// Here the sign of tlo - thi is arbitrary, but if multiple roots are found, the one closest
+    /// to tlo is returned.
+    ///
+    /// The method used is the Illinois algorithm, a modified secant method. Reference: Kathie L.
+    /// Hiebert and Lawrence F. Shampine, Implicitly Defined Output Points for Solutions of ODEs,
+    /// Sandia National Laboratory Report SAND80-0180, February 1980.
+    ///
+    /// This routine uses the following parameters for communication:
+    ///
+    /// nrtfn    = number of functions g_i, or number of components of
+    ///            the vector-valued function g(t).  Input only.
+    ///
+    /// gfun     = user-defined function for g(t).  Its form is
+    ///            (void) gfun(t, y, yp, gt, user_data)
+    ///
+    /// rootdir  = in array specifying the direction of zero-crossings.
+    ///            If rootdir[i] > 0, search for roots of g_i only if
+    ///            g_i is increasing; if rootdir[i] < 0, search for
+    ///            roots of g_i only if g_i is decreasing; otherwise
+    ///            always search for roots of g_i.
+    ///
+    /// gactive  = array specifying whether a component of g should
+    ///            or should not be monitored. gactive[i] is initially
+    ///            set to SUNTRUE for all i=0,...,nrtfn-1, but it may be
+    ///            reset to SUNFALSE if at the first step g[i] is 0.0
+    ///            both at the I.C. and at a small perturbation of them.
+    ///            gactive[i] is then set back on SUNTRUE only after the
+    ///            corresponding g function moves away from 0.0.
+    ///
+    /// nge      = cumulative counter for gfun calls.
+    ///
+    /// ttol     = a convergence tolerance for trout.  Input only.
+    ///            When a root at trout is found, it is located only to
+    ///            within a tolerance of ttol.  Typically, ttol should
+    ///            be set to a value on the order of
+    ///               100 * UROUND * max (SUNRabs(tlo), SUNRabs(thi))
+    ///            where UROUND is the unit roundoff of the machine.
+    ///
+    /// tlo, thi = endpoints of the interval in which roots are sought.
+    ///            On input, these must be distinct, but tlo - thi may
+    ///            be of either sign.  The direction of integration is
+    ///            assumed to be from tlo to thi.  On return, tlo and thi
+    ///            are the endpoints of the final relevant interval.
+    ///
+    /// glo, ghi = arrays of length nrtfn containing the vectors g(tlo)
+    ///            and g(thi) respectively.  Input and output.  On input,
+    ///            none of the glo[i] should be zero.
+    ///
+    /// trout    = root location, if a root was found, or thi if not.
+    ///            Output only.  If a root was found other than an exact
+    ///            zero of g, trout is the endpoint thi of the final
+    ///            interval bracketing the root, with size at most ttol.
+    ///
+    /// grout    = array of length nrtfn containing g(trout) on return.
+    ///
+    /// iroots   = int array of length nrtfn with root information.
+    ///            Output only.  If a root was found, iroots indicates
+    ///            which components g_i have a root at trout.  For
+    ///            i = 0, ..., nrtfn-1, iroots[i] = 1 if g_i has a root
+    ///            and g_i is increasing, iroots[i] = -1 if g_i has a
+    ///            root and g_i is decreasing, and iroots[i] = 0 if g_i
+    ///            has no roots or g_i varies in the direction opposite
+    ///            to that indicated by rootdir[i].
+    ///
+    /// This routine returns an int equal to:
+    ///      IDA_RTFUNC_FAIL < 0 if the g function failed, or
+    ///      RTFOUND         = 1 if a root of g was found, or
+    ///      IDA_SUCCESS     = 0 otherwise.
+    fn root_find(&self) -> Result<RootStatus, failure::Error> {
+        Ok(RootStatus::Continue)
     }
 }

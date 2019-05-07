@@ -40,7 +40,7 @@ use num_traits::{
 
 use serde::Serialize;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub enum IdaTask {
     Normal,
     OneStep,
@@ -209,27 +209,29 @@ where
     ida_nrtfn: usize,
     /// array for root information
     ida_iroots: Array1<i64>,
-    //int *ida_iroots;
     //int *ida_rootdir;         /* array specifying direction of zero-crossing     */
     /// nearest endpoint of interval in root search
     ida_tlo: P::Scalar,
 
     /// farthest endpoint of interval in root search
-    //ida_thi: P::Scalar,
+    ida_thi: P::Scalar,
     /// t return value from rootfinder routine
-    //ida_trout: P::Scalar,
+    ida_trout: P::Scalar,
 
     /// saved array of g values at t = tlo
     ida_glo: Array1<P::Scalar>,
     /// saved array of g values at t = thi
     ida_ghi: Array1<P::Scalar>,
-    //realtype *ida_grout;      /* array of g values at t = trout                  */
-    //realtype ida_toutc;       /* copy of tout (if NORMAL mode)                   */
+    /// array of g values at t = trout
+    ida_grout: Array1<P::Scalar>,
+    /// copy of tout (if NORMAL mode)
+    ida_toutc: P::Scalar,
     /// tolerance on root location
     ida_ttol: P::Scalar,
-
-    //int ida_taskc;            /* copy of parameter itask                         */
-    //int ida_irfnd;            /* flag showing whether last step had a root       */
+    /// copy of parameter itask
+    ida_taskc: IdaTask,
+    /// flag showing whether last step had a root
+    ida_irfnd: bool,
     /// counter for g evaluations
     ida_nge: usize,
 
@@ -359,6 +361,7 @@ where
             ida_kused: 0,
             ida_hused: P::Scalar::zero(),
             ida_tolsf: P::Scalar::one(),
+            ida_irfnd: false,
             ida_nge: 0,
 
             //ida_irfnd = 0;
@@ -366,7 +369,7 @@ where
             // Initialize root-finding variables
             ida_glo: Array::zeros(problem.num_roots()),
             ida_ghi: Array::zeros(problem.num_roots()),
-            //ida_grout   = NULL;
+            ida_grout: Array::zeros(problem.num_roots()),
             ida_iroots: Array::zeros(problem.num_roots()),
             //ida_rootdir = NULL;
             //ida_gfun    = NULL;
@@ -376,6 +379,10 @@ where
             ida_tlo: P::Scalar::zero(),
             ida_ttol: P::Scalar::zero(),
             ida_gactive: Array::from_elem(problem.num_roots(), false),
+            ida_taskc: IdaTask::Normal,
+            ida_toutc: P::Scalar::zero(),
+            ida_thi: P::Scalar::zero(),
+            ida_trout: P::Scalar::zero(),
 
             // Not from ida.c...
             ida_ee: Array::zeros(problem.model_size()),

@@ -119,4 +119,8 @@ pub enum IdaError {
     ///MSG_TOO_MUCH_ACC
     #[fail(display = "At t = {} too much accuracy requested.", t)]
     TooMuchAccuracy { t: f64 },
+
+    ///MSG_CLOSE_ROOTS
+    #[fail(display = "Root found at and very near {}.", t)]
+    CloseRoots { t: f64 },
 }

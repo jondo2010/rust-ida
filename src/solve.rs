@@ -73,6 +73,12 @@ where
     ) -> Result<IdaSolveStatus, failure::Error> {
         profile_scope!(format!("solve(tout={:?})", tout));
 
+        if let IdaTask::Normal = itask {
+            self.ida_toutc = tout;
+        }
+
+        self.ida_taskc = itask;
+
         if self.counters.ida_nst == 0 {
             // This is the first call
 
@@ -181,46 +187,46 @@ where
             // root, return y(tn) now.
 
             if self.ida_nrtfn > 0 {
-                /*
+                let irfndp = self.ida_irfnd;
 
-                irfndp = self.ida_irfnd;
+                let ier = self.r_check2()?;
 
-                ier = IDARcheck2(IDA_mem);
-
-                if (ier == CLOSERT) {
-                  IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDARcheck2", MSG_CLOSE_ROOTS, self.ida_tlo);
-                  return(IDA_ILL_INPUT);
-                } else if (ier == IDA_RTFUNC_FAIL) {
-                  IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck2", MSG_RTFUNC_FAILED, self.ida_tlo);
-                  return(IDA_RTFUNC_FAIL);
-                } else if (ier == RTFOUND) {
-                  self.ida_tretlast = *tret = self.ida_tlo;
-                  return(IDA_ROOT_RETURN);
+                if let r_check::RootStatus::RootFound = ier {
+                    self.ida_tretlast = self.ida_tlo;
+                    *tret = self.ida_tlo;
+                    return Ok(IdaSolveStatus::Root);
                 }
 
-                /* If tn is distinct from tretlast (within roundoff),
-                   check remaining interval for roots */
-                troundoff = HUNDRED * self.ida_uround * (SUNRabs(self.nlp.ida_tn) + SUNRabs(self.ida_hh));
-                if ( SUNRabs(self.nlp.ida_tn - self.ida_tretlast) > troundoff ) {
-                ier = IDARcheck3(IDA_mem);
-                if (ier == IDA_SUCCESS) {     /* no root found */
-                self.ida_irfnd = 0;
-                if ((irfndp == 1) && (itask == IDA_ONE_STEP)) {
-                self.ida_tretlast = *tret = self.nlp.ida_tn;
-                ier = IDAGetSolution(IDA_mem, self.nlp.ida_tn, yret, ypret);
-                return(IDA_SUCCESS);
-                }
-                } else if (ier == RTFOUND) {  /* a new root was found */
-                self.ida_irfnd = 1;
-                self.ida_tretlast = *tret = self.ida_tlo;
-                return(IDA_ROOT_RETURN);
-                } else if (ier == IDA_RTFUNC_FAIL) {  /* g failed */
-                IDAProcessError(IDA_mem, IDA_RTFUNC_FAIL, "IDA", "IDARcheck3", MSG_RTFUNC_FAILED, self.ida_tlo);
-                return(IDA_RTFUNC_FAIL);
-                }
-                }
+                // If tn is distinct from tretlast (within roundoff), check remaining interval for roots
+                let troundoff = ((self.nlp.ida_tn).abs() + (self.ida_hh).abs())
+                    * P::Scalar::epsilon()
+                    * P::Scalar::hundred();
 
-                */
+                if (self.nlp.ida_tn - self.ida_tretlast).abs() > troundoff {
+                    let ier = self.r_check3()?;
+                    match ier {
+                        // no root found
+                        r_check::RootStatus::Continue => {
+                            self.ida_irfnd = false;
+                            match itask {
+                                IdaTask::OneStep if irfndp => {
+                                    self.ida_tretlast = self.nlp.ida_tn;
+                                    *tret = self.nlp.ida_tn;
+                                    let _ier = self.get_solution(self.nlp.ida_tn);
+                                    return Ok(IdaSolveStatus::Success);
+                                }
+                                _ => {}
+                            }
+                        }
+                        // a new root was found
+                        r_check::RootStatus::RootFound => {
+                            self.ida_irfnd = true;
+                            self.ida_tretlast = self.ida_tlo;
+                            *tret = self.ida_tlo;
+                            return Ok(IdaSolveStatus::Root);
+                        }
+                    }
+                }
             } // end of root stop check
 
             // Now test for all other stop conditions.
@@ -287,15 +293,6 @@ where
                 &self.nlp.ida_ewt,
                 self.ida_suppressalg,
             );
-
-            /*
-            trace!(
-                "At t = {:.5e}, nstloc={}; nrm = {:.5e}",
-                self.nlp.ida_tn,
-                nstloc,
-                nrm
-            );
-            */
 
             self.ida_tolsf = P::Scalar::epsilon() * nrm;
             if self.ida_tolsf > P::Scalar::one() {
