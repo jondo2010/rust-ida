@@ -34,7 +34,7 @@ where
         //realtype smallh, hratio, tplus;
         //booleantype zroot;
 
-        self.ida_iroots.fill(0);
+        self.ida_iroots.fill(P::Scalar::zero());
         self.ida_tlo = self.nlp.ida_tn;
         self.ida_ttol = ((self.nlp.ida_tn).abs() + (self.ida_hh).abs())
             * P::Scalar::epsilon()
@@ -139,14 +139,14 @@ where
         self.ida_nge += 1;
         //if (retval != 0) return(IDA_RTFUNC_FAIL);
 
-        self.ida_iroots.fill(0);
+        self.ida_iroots.fill(P::Scalar::zero());
         let zroot = ndarray::Zip::from(self.ida_iroots.view_mut())
             .and(self.ida_gactive.view())
             .and(self.ida_glo.view())
             .fold_while(false, |mut zroot, iroots, &gactive, glo| {
                 if gactive && (glo.abs() == P::Scalar::zero()) {
                     zroot = true;
-                    *iroots = 1;
+                    *iroots = P::Scalar::one();
                 }
 
                 ndarray::FoldWhile::Continue(zroot)
@@ -188,13 +188,13 @@ where
                 .fold_while(false, |mut zroot, iroots, &gactive, glo, ghi| {
                     if gactive {
                         if ghi.abs() == P::Scalar::zero() {
-                            if *iroots == 1 {
+                            if *iroots > P::Scalar::zero() {
                                 return ndarray::FoldWhile::Done(false);
                             }
                             zroot = true;
-                            *iroots = 1;
+                            *iroots = P::Scalar::one();
                         } else {
-                            if *iroots == 1 {
+                            if *iroots > P::Scalar::zero() {
                                 *glo = *ghi;
                             }
                         }
@@ -268,11 +268,7 @@ where
             });
 
         self.ida_tlo = self.ida_trout;
-        ndarray::Zip::from(self.ida_glo.view_mut())
-            .and(self.ida_grout.view())
-            .apply(|glo, &grout| {
-                *glo = grout;
-            });
+        self.ida_glo.assign(&self.ida_grout);
 
         // If a root was found, interpolate to get y(trout) and return.
         if let RootStatus::RootFound = ier {
@@ -341,20 +337,85 @@ where
     ///
     /// grout    = array of length nrtfn containing g(trout) on return.
     ///
-    /// iroots   = int array of length nrtfn with root information.
-    ///            Output only.  If a root was found, iroots indicates
-    ///            which components g_i have a root at trout.  For
-    ///            i = 0, ..., nrtfn-1, iroots[i] = 1 if g_i has a root
-    ///            and g_i is increasing, iroots[i] = -1 if g_i has a
-    ///            root and g_i is decreasing, and iroots[i] = 0 if g_i
-    ///            has no roots or g_i varies in the direction opposite
-    ///            to that indicated by rootdir[i].
+    /// iroots   = int array of length nrtfn with root information. Output only. If a root was
+    ///            found, iroots indicates which components g_i have a root at trout.
+    ///            For i = 0, ..., nrtfn-1, iroots[i] = 1 if g_i has a root and g_i is increasing,
+    ///            iroots[i] = -1 if g_i has a root and g_i is decreasing, and iroots[i] = 0 if g_i
+    ///            has no roots or g_i varies in the direction opposite to that indicated by
+    ///            rootdir[i].
     ///
     /// This routine returns an int equal to:
     ///      IDA_RTFUNC_FAIL < 0 if the g function failed, or
     ///      RTFOUND         = 1 if a root of g was found, or
     ///      IDA_SUCCESS     = 0 otherwise.
-    fn root_find(&self) -> Result<RootStatus, failure::Error> {
+    fn root_find(&mut self) -> Result<RootStatus, failure::Error> {
+        let imax = 0;
+
+        // First check for change in sign in ghi or for a zero in ghi.
+        let (zroot, sgnchg, maxfrac, imax) = ndarray::Zip::indexed(self.ida_gactive.view())
+            .and(self.ida_ghi.view())
+            .and(self.ida_rootdir.view())
+            .and(self.ida_glo.view())
+            .fold_while(
+                (false, false, P::Scalar::zero(), 0),
+                |(mut zroot, mut sgnchg, mut maxfrac, mut imax),
+                 i,
+                 &gactive,
+                 &ghi,
+                 &rootdir,
+                 &glo| {
+                    if gactive {
+                        let rootdir_glo_neg = <P::Scalar as NumCast>::from(rootdir).unwrap() * glo
+                            <= P::Scalar::zero();
+
+                        if ghi.abs() == P::Scalar::zero() {
+                            if rootdir_glo_neg {
+                                zroot = true;
+                            }
+                        } else {
+                            if (glo * ghi < P::Scalar::zero()) && rootdir_glo_neg {
+                                let gfrac = (ghi / (ghi - glo)).abs();
+                                if gfrac > maxfrac {
+                                    sgnchg = true;
+                                    maxfrac = gfrac;
+                                    imax = i;
+                                }
+                            }
+                        }
+                    }
+                    ndarray::FoldWhile::Continue((zroot, sgnchg, maxfrac, imax))
+                },
+            )
+            .into_inner();
+
+        // If no sign change was found, reset trout and grout.  Then return IDA_SUCCESS if no zero
+        // was found, or set iroots and return RTFOUND.
+        if !sgnchg {
+            self.ida_trout = self.ida_thi;
+            self.ida_grout.assign(&self.ida_ghi);
+            if !zroot {
+                return Ok(RootStatus::Continue);
+            }
+
+            ndarray::Zip::from(self.ida_iroots.view_mut())
+                .and(self.ida_gactive.view())
+                .and(self.ida_rootdir.view())
+                .and(self.ida_glo.view())
+                .and(self.ida_ghi.view())
+                .apply(|iroots, &gactive, &rootdir, &glo, &ghi| {
+                    *iroots = P::Scalar::zero();
+                    if gactive {
+                        let rootdir_glo_neg = <P::Scalar as NumCast>::from(rootdir).unwrap() * glo
+                            <= P::Scalar::zero();
+                        if (ghi.abs() == P::Scalar::zero()) && rootdir_glo_neg {
+                            *iroots = glo.signum();
+                        }
+                    }
+                });
+
+            return Ok(RootStatus::RootFound);
+        }
+
         Ok(RootStatus::Continue)
     }
 }

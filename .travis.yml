@@ -2,7 +2,7 @@ language: rust
 sudo: required
 
 rust:
-  - nightly
+  - stable
 
 matrix:
     fast_finish: true

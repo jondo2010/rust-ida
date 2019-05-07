@@ -210,8 +210,9 @@ where
     /// number of components of g
     ida_nrtfn: usize,
     /// array for root information
-    ida_iroots: Array1<i64>,
-    //int *ida_rootdir;         /* array specifying direction of zero-crossing     */
+    ida_iroots: Array1<P::Scalar>,
+    /// array specifying direction of zero-crossing
+    ida_rootdir: Array1<u8>,
     /// nearest endpoint of interval in root search
     ida_tlo: P::Scalar,
 
@@ -373,7 +374,7 @@ where
             ida_ghi: Array::zeros(problem.num_roots()),
             ida_grout: Array::zeros(problem.num_roots()),
             ida_iroots: Array::zeros(problem.num_roots()),
-            //ida_rootdir = NULL;
+            ida_rootdir: Array::zeros(problem.num_roots()),
             ida_nrtfn: problem.num_roots(),
             ida_mxgnull: 1,
             ida_tlo: P::Scalar::zero(),

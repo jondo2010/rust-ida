@@ -128,7 +128,9 @@ fn main() {
             Err(_) => {
                 break retval.map(|_| ());
             }
-            Ok(IdaSolveStatus::Root) => {}
+            Ok(IdaSolveStatus::Root) => {
+                println!("Roots found");
+            }
             Ok(IdaSolveStatus::Success) => {
                 iout += 1;
                 tout *= 10.0;
