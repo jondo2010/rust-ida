@@ -86,7 +86,7 @@ where
 
             /*
             for (i = 0; i < self.ida_nrtfn; i++) {
-                if (!self.ida_gactive[i] && SUNRabs(self.ida_ghi[i]) != ZERO) {
+                if (!self.ida_gactive[i] && SUNRabs(self.ida_ghi[i]) != P::Scalar::zero()) {
                     self.ida_gactive[i] = SUNTRUE;
                     self.ida_glo[i] = self.ida_ghi[i];
                 }
@@ -306,7 +306,7 @@ where
     /// gactive  = array specifying whether a component of g should
     ///            or should not be monitored. gactive[i] is initially
     ///            set to SUNTRUE for all i=0,...,nrtfn-1, but it may be
-    ///            reset to SUNFALSE if at the first step g[i] is 0.0
+    ///            reset to false if at the first step g[i] is 0.0
     ///            both at the I.C. and at a small perturbation of them.
     ///            gactive[i] is then set back on SUNTRUE only after the
     ///            corresponding g function moves away from 0.0.
@@ -352,7 +352,7 @@ where
         let imax = 0;
 
         // First check for change in sign in ghi or for a zero in ghi.
-        let (zroot, sgnchg, maxfrac, imax) = ndarray::Zip::indexed(self.ida_gactive.view())
+        let (zroot, sgnchg, _maxfrac, imax) = ndarray::Zip::indexed(self.ida_gactive.view())
             .and(self.ida_ghi.view())
             .and(self.ida_rootdir.view())
             .and(self.ida_glo.view())
@@ -416,6 +416,181 @@ where
             return Ok(RootStatus::RootFound);
         }
 
-        Ok(RootStatus::Continue)
+        // Initialize alph to avoid compiler warning
+        let mut alph = P::Scalar::one();
+
+        // A sign change was found.  Loop to locate nearest root.
+
+        let mut side = 0;
+        let mut sideprev = -1;
+
+        // Looping point
+        loop {
+            // If interval size is already less than tolerance ttol, break.
+            if (self.ida_thi - self.ida_tlo).abs() <= self.ida_ttol {
+                break;
+            }
+
+            // Set weight alph.
+            // On the first two passes, set alph = 1.  Thereafter, reset alph according to the side
+            // (low vs high) of the subinterval in which the sign change was found in the previous
+            // two passes.
+
+            // If the sides were opposite, set alph = 1.
+            // If the sides were the same, then double alph (if high side), or halve alph (if low
+            // side). The next guess tmid is the secant method value if alph = 1, but is closer to
+            // tlo if alph < 1, and closer to thi if alph > 1.
+
+            let alph = if sideprev == side {
+                if side == 2 {
+                    alph * P::Scalar::two()
+                } else {
+                    alph * P::Scalar::half()
+                }
+            } else {
+                P::Scalar::one()
+            };
+
+            // Set next root approximation tmid and get g(tmid). If tmid is too close to tlo or thi,
+            // adjust it inward, by a fractional distance that is between 0.1 and 0.5.
+            let mut tmid = self.ida_thi
+                - (self.ida_thi - self.ida_tlo) * self.ida_ghi[imax]
+                    / (self.ida_ghi[imax] - alph * self.ida_glo[imax]);
+
+            if (tmid - self.ida_tlo).abs() < P::Scalar::half() * self.ida_ttol {
+                let fracint = (self.ida_thi - self.ida_tlo).abs() / self.ida_ttol;
+                let fracsub = if fracint > P::Scalar::five() {
+                    P::Scalar::pt1()
+                } else {
+                    P::Scalar::half() / fracint
+                };
+                tmid = self.ida_tlo + fracsub * (self.ida_thi - self.ida_tlo);
+            }
+            if (self.ida_thi - tmid).abs() < P::Scalar::half() * self.ida_ttol {
+                let fracint = (self.ida_thi - self.ida_tlo).abs() / self.ida_ttol;
+                let fracsub = if fracint > P::Scalar::five() {
+                    P::Scalar::pt1()
+                } else {
+                    P::Scalar::half() / fracint
+                };
+                tmid = self.ida_thi - fracsub * (self.ida_thi - self.ida_tlo);
+            }
+
+            self.get_solution(tmid);
+            self.nlp.lp.problem.root(
+                tmid,
+                self.nlp.ida_yy.view(),
+                self.nlp.ida_yp.view(),
+                self.ida_grout.view_mut(),
+            );
+            self.ida_nge += 1;
+            //if (retval != 0) return(IDA_RTFUNC_FAIL);
+
+            // Check to see in which subinterval g changes sign, and reset imax.
+            // Set side = 1 if sign change is on low side, or 2 if on high side.
+            //maxfrac = P::Scalar::zero();
+            //zroot = false;
+            //sgnchg = false;
+            sideprev = side;
+
+            let (zroot, sgnchg, _maxfrac, imax) = ndarray::Zip::indexed(self.ida_gactive.view())
+                .and(self.ida_grout.view())
+                .and(self.ida_rootdir.view())
+                .and(self.ida_glo.view())
+                .fold_while(
+                    (false, false, P::Scalar::zero(), 0),
+                    |(mut zroot, mut sgnchg, mut maxfrac, mut imax),
+                     i,
+                     &gactive,
+                     &grout,
+                     &rootdir,
+                     &glo| {
+                        if gactive {
+                            let rootdir_glo_neg = <P::Scalar as NumCast>::from(rootdir).unwrap()
+                                * glo
+                                <= P::Scalar::zero();
+
+                            if grout.abs() == P::Scalar::zero() {
+                                if rootdir_glo_neg {
+                                    zroot = true;
+                                }
+                            } else {
+                                if (glo * grout < P::Scalar::zero()) && rootdir_glo_neg {
+                                    let gfrac = (grout / (grout - glo)).abs();
+                                    if gfrac > maxfrac {
+                                        sgnchg = true;
+                                        maxfrac = gfrac;
+                                        imax = i;
+                                    }
+                                }
+                            }
+                        }
+                        ndarray::FoldWhile::Continue((zroot, sgnchg, maxfrac, imax))
+                    },
+                )
+                .into_inner();
+
+            /*
+            for (i = 0;  i < self.ida_nrtfn; i++) {
+              if(!self.ida_gactive[i]) continue;
+
+            }
+            */
+            if sgnchg {
+                // Sign change found in (tlo,tmid); replace thi with tmid.
+                self.ida_thi = tmid;
+                self.ida_ghi.assign(&self.ida_grout);
+                side = 1;
+                // Stop at root thi if converged; otherwise loop.
+                if (self.ida_thi - self.ida_tlo).abs() <= self.ida_ttol {
+                    break;
+                }
+                // Return to looping point.
+                continue;
+            }
+
+            if zroot {
+                // No sign change in (tlo,tmid), but g = 0 at tmid; return root tmid.
+                self.ida_thi = tmid;
+                self.ida_ghi.assign(&self.ida_grout);
+                break;
+            }
+
+            // No sign change in (tlo,tmid), and no zero at tmid.
+            // Sign change must be in (tmid,thi).  Replace tlo with tmid.
+            self.ida_tlo = tmid;
+            self.ida_glo.assign(&self.ida_grout);
+            side = 2;
+            /* Stop at root thi if converged; otherwise loop back. */
+            if (self.ida_thi - self.ida_tlo).abs() <= self.ida_ttol {
+                break;
+            }
+        } /* End of root-search loop */
+
+        // Reset trout and grout, set iroots, and return RTFOUND.
+        self.ida_trout = self.ida_thi;
+        ndarray::Zip::from(self.ida_grout.view_mut())
+            .and(self.ida_iroots.view_mut())
+            .and(self.ida_ghi.view())
+            .and(self.ida_glo.view())
+            .and(self.ida_gactive.view())
+            .and(self.ida_rootdir.view())
+            .apply(|grout, iroots, &ghi, &glo, &gactive, &rootdir| {
+                *grout = ghi;
+                *iroots = P::Scalar::zero();
+
+                if gactive {
+                    let rootdir_glo_neg =
+                        <P::Scalar as NumCast>::from(rootdir).unwrap() * glo <= P::Scalar::zero();
+                    if (ghi.abs() == P::Scalar::zero()) && rootdir_glo_neg {
+                        *iroots = glo.signum();
+                    }
+                    if (glo * ghi < P::Scalar::zero()) && rootdir_glo_neg {
+                        *iroots = glo.signum();
+                    }
+                }
+            });
+
+        Ok(RootStatus::RootFound)
     }
 }
