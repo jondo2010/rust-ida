@@ -80,4 +80,8 @@ where
     pub fn get_num_g_evals(&self) -> usize {
         self.ida_nge
     }
+
+    pub fn get_root_info(&self) -> ndarray::ArrayView1<P::Scalar> {
+        self.ida_iroots.view()
+    }
 }
