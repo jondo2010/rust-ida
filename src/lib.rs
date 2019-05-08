@@ -682,9 +682,9 @@ where
                 .nonlinear_solve()
                 .map_err(|err| (P::Scalar::zero(), P::Scalar::zero(), err))
                 .and_then(|_| {
-                    serde_json::to_writer(&self.data_trace, self).unwrap();
-                    use std::io::Write;
-                    self.data_trace.write_all(b",\n").unwrap();
+                    //serde_json::to_writer(&self.data_trace, self).unwrap();
+                    //use std::io::Write;
+                    //self.data_trace.write_all(b",\n").unwrap();
 
                     // If NLS was successful, perform error test
                     self.test_error(ck)

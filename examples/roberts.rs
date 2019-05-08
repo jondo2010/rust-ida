@@ -129,7 +129,7 @@ fn main() {
                 break retval.map(|_| ());
             }
             Ok(IdaSolveStatus::Root) => {
-                println!("Roots found: {}", ida.get_root_info());
+                println!("Roots found: at t={:.6e}: {}", tret, ida.get_root_info());
             }
             Ok(IdaSolveStatus::Success) => {
                 iout += 1;

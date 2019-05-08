@@ -72,8 +72,6 @@ where
                 .ida_yy
                 .scaled_add(smallh, &self.ida_phi.index_axis(Axis(0), 1));
 
-            //retval = self.ida_gfun(tplus, self.ida_yy, self.ida_phi[1], self.ida_ghi, self.ida_user_data);
-
             self.nlp.lp.problem.root(
                 tplus,
                 self.nlp.ida_yy.view(),
@@ -84,22 +82,16 @@ where
             self.ida_nge += 1;
             //if (retval != 0) return(IDA_RTFUNC_FAIL);
 
-            /*
-            for (i = 0; i < self.ida_nrtfn; i++) {
-                if (!self.ida_gactive[i] && SUNRabs(self.ida_ghi[i]) != P::Scalar::zero()) {
-                    self.ida_gactive[i] = SUNTRUE;
-                    self.ida_glo[i] = self.ida_ghi[i];
-                }
-            }
-            */
-
-            // We check now only the components of g which were exactly 0.0 at t0 to see if we can 'activate' them.
+            // We check now only the components of g which were exactly 0.0 at t0 to see if we can
+            // 'activate' them.
             ndarray::Zip::from(self.ida_gactive.view_mut())
                 .and(self.ida_glo.view_mut())
                 .and(self.ida_ghi.view())
-                .apply(|gactive, glo, ghi| {
-                    *gactive = true;
-                    *glo = *ghi;
+                .apply(|gactive, glo, &ghi| {
+                    if !*gactive && ghi.abs() != P::Scalar::zero() {
+                        *gactive = true;
+                        *glo = ghi;
+                    }
                 });
         }
 
@@ -389,7 +381,7 @@ where
             .into_inner();
         imax_loop = imax;
 
-        // If no sign change was found, reset trout and grout.  Then return IDA_SUCCESS if no zero
+        // If no sign change was found, reset trout and grout. Then return IDA_SUCCESS if no zero
         // was found, or set iroots and return RTFOUND.
         if !sgnchg {
             self.ida_trout = self.ida_thi;
