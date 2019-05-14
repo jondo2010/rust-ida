@@ -41,6 +41,7 @@ use num_traits::{
 };
 
 use serde::Serialize;
+use std::io::Write;
 
 #[derive(Copy, Clone, Debug, Serialize)]
 pub enum IdaTask {
@@ -84,13 +85,6 @@ where
     NLS: nonlinear::NLSolver<P> + Serialize,
     TolC: TolControl<P::Scalar> + Serialize,
 {
-    //ida_itol: ToleranceType,
-    /// relative tolerance
-    //ida_rtol: P::Scalar,
-    /// scalar absolute tolerance
-    //ida_Satol: P::Scalar,
-    /// vector absolute tolerance
-    //ida_Vatol: Array1<P::Scalar>,
     ida_setup_done: bool,
     tol_control: TolC,
 
@@ -114,8 +108,6 @@ where
     ida_gamma: Array1<P::Scalar>,
 
     // Vectors
-    /// error weight vector
-    //ida_ewt: Array<P::Scalar, Ix1>,
     /// residual vector
     ida_delta: Array<P::Scalar, Ix1>,
     /// bit vector for diff./algebraic components
@@ -254,6 +246,20 @@ where
 
     #[serde(skip_serializing)]
     data_trace: std::fs::File,
+    n_trace: usize,
+}
+
+impl<P, LS, NLS, TolC> Drop for Ida<P, LS, NLS, TolC>
+where
+    P: IdaProblem + Serialize,
+    LS: linear::LSolver<P::Scalar> + Serialize,
+    NLS: nonlinear::NLSolver<P> + Serialize,
+    TolC: TolControl<P::Scalar> + Serialize,
+{
+    fn drop(&mut self) {
+        use std::io::Write;
+        self.data_trace.write_all(b"]}\n").unwrap();
+    }
 }
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
@@ -301,15 +307,9 @@ where
         Self {
             ida_setup_done: false,
 
-            // Set unit roundoff in IDA_mem
-            // NOTE: Use P::Scalar::epsilon() instead!
-            //ida_uround: UNIT_ROUNDOFF,
             tol_control,
 
             // Set default values for integrator optional inputs
-            //ida_ehfun       = IDAErrHandler;
-            //ida_eh_data     = IDA_mem;
-            //ida_errfp       = stderr;
             ida_maxord: MAXORD_DEFAULT as usize,
             ida_mxstep: MXSTEP_DEFAULT as u64,
             ida_hmax_inv: NumCast::from(HMAX_INV_DEFAULT).unwrap(),
@@ -336,10 +336,6 @@ where
             //ida_maxbacks  = MAXBACKS;
             //ida_lsoff   = SUNFALSE;
             //ida_steptol = SUNRpowerR(self.ida_uround, TWOTHIRDS);
-
-            /* Initialize lrw and liw */
-            //ida_lrw = 25 + 5*MXORDP1;
-            //ida_liw = 38;
             ida_phi,
 
             ida_psi: Array::zeros(MXORDP1),
@@ -364,12 +360,10 @@ where
             ida_kused: 0,
             ida_hused: P::Scalar::zero(),
             ida_tolsf: P::Scalar::one(),
-            ida_irfnd: false,
             ida_nge: 0,
 
-            //ida_irfnd = 0;
-
             // Initialize root-finding variables
+            ida_irfnd: false,
             ida_glo: Array::zeros(problem.num_roots()),
             ida_ghi: Array::zeros(problem.num_roots()),
             ida_grout: Array::zeros(problem.num_roots()),
@@ -399,21 +393,17 @@ where
             ida_tretlast: P::Scalar::zero(),
             ida_h0u: P::Scalar::zero(),
             ida_hh: P::Scalar::zero(),
-            //ida_hused: <P::Scalar as AssociatedReal>::Real::from_f64(0.0),
             ida_cvals: Array::zeros(MXORDP1),
             ida_dvals: Array::zeros(MAXORD_DEFAULT),
 
             ida_zvecs: Array::zeros((MXORDP1, yy0.shape()[0])),
 
-            //ida_rtol: P::Scalar::zero(),
-            //ida_Satol: P::Scalar::zero(),
-            //ida_Vatol: Array::zeros(MXORDP1),
-
             // Initialize nonlinear solver
             nls: NLS::new(yy0.len(), MAXNLSIT),
-            nlp: IdaNLProblem::new(problem),
+            nlp: IdaNLProblem::new(problem, yy0.view(), yp0.view()),
 
             data_trace,
+            n_trace: 0,
         }
     }
 
@@ -638,7 +628,7 @@ where
         if self.counters.ida_nst == 0 {
             self.ida_kk = 1;
             self.ida_kused = 0;
-            self.ida_hused = P::Scalar::one();
+            self.ida_hused = P::Scalar::zero();
             self.ida_psi[0] = self.ida_hh;
             self.nlp.lp.ida_cj = self.ida_hh.recip();
             self.ida_phase = 0;
@@ -682,10 +672,6 @@ where
                 .nonlinear_solve()
                 .map_err(|err| (P::Scalar::zero(), P::Scalar::zero(), err))
                 .and_then(|_| {
-                    //serde_json::to_writer(&self.data_trace, self).unwrap();
-                    //use std::io::Write;
-                    //self.data_trace.write_all(b",\n").unwrap();
-
                     // If NLS was successful, perform error test
                     self.test_error(ck)
                 })
@@ -915,7 +901,7 @@ where
             self.nlp.ida_yypredict.assign(
                 &self
                     .ida_phi
-                    .slice_axis(Axis(0), Slice::from(0..self.ida_kk + 1))
+                    .slice_axis(Axis(0), Slice::from(0..=self.ida_kk))
                     .sum_axis(Axis(0)),
             );
         }
@@ -938,13 +924,7 @@ where
                 .ida_yppredict
                 .assign(&(&phi * &gamma).sum_axis(Axis(0)));
         }
-        /*
-        trace!(
-            "predict() yypredict={:.6e} yppredict={:.6e}",
-            self.nlp.ida_yypredict,
-            self.nlp.ida_yppredict
-        );
-        */
+
     }
 
     /// IDATestError
@@ -1247,13 +1227,9 @@ where
     /// array.
     fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
         profile_scope!(format!("complete_step()"));
-        trace!(
-            "complete_step(err_k={:.5e}, err_km1={:.5e}), nst={}, phase={}",
-            err_k,
-            err_km1,
-            self.counters.ida_nst,
-            self.ida_phase
-        );
+        
+        serde_json::to_writer(&self.data_trace, self).unwrap();
+        self.data_trace.write_all(b",\n").unwrap();
 
         self.counters.ida_nst += 1;
         let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);
@@ -1411,6 +1387,9 @@ where
         self.ida_phi
             .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1))
             .assign(&z_view);
+        
+        serde_json::to_writer(&self.data_trace, self).unwrap();
+        self.data_trace.write_all(b",\n").unwrap();
     }
 
     /// This routine evaluates `y(t)` and `y'(t)` as the value and derivative of the interpolating

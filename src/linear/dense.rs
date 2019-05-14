@@ -102,17 +102,19 @@ where
 
     // k-th elimination step number
     for k in 0..n {
+        let col_k = mat_a.column(k);
+
         // find l = pivot row number
         let mut l = k;
         for i in (k + 1)..m {
-            if mat_a[[i, k]].abs() > mat_a[[i, l]].abs() {
+            if col_k[i].abs() > col_k[l].abs() {
                 l = i;
             }
         }
         p[k] = l;
 
         // check for zero pivot element
-        if mat_a[[l, k]] == Scalar::zero() {
+        if col_k[l] == Scalar::zero() {
             return k + 1;
         }
 
@@ -179,18 +181,20 @@ where
 
     // Solve Ly = b, store solution y in b
     for k in 0..(n - 1) {
+        let col_k = mat_a.column(k);
         let bk = b[k];
         for i in (k + 1)..n {
-            b[i] -= mat_a[[i, k]] * bk;
+            b[i] -= col_k[i] * bk;
         }
     }
 
     // Solve Ux = y, store solution x in b
     for k in (1..n).rev() {
-        b[k] /= mat_a[[k, k]];
+        let col_k = mat_a.column(k);
+        b[k] /= col_k[k];
         let bk = b[k];
         for i in 0..k {
-            b[i] -= mat_a[[i, k]] * bk;
+            b[i] -= col_k[i] * bk;
         }
     }
     b[0] /= mat_a[[0, 0]];
@@ -203,72 +207,111 @@ mod tests {
     use nearly_eq::assert_nearly_eq;
 
     #[test]
-    fn test_get_rs() {
-        // 2nd test
-        let mat_a_decomp = array![
-            [-46190.4, 0.0, 0.00865982],
-            [-8.65981e-07, -46242.3, -0.00865981],
-            [-2.16495e-05, -2.16252e-05, 1.0]
+    fn test_get_rs1() {
+        let mat_a = array![
+            [1.0, 0.040000000000000001, -0.040655973218655501],
+            [1.0, -9562.0329139608493, -0.99881984364015208],
+            [1.0, -0.041880782326080723, 0.00070539909027303449]
+        ]
+        .reversed_axes();
+        let mut b = array![
+            -0.00000018658722011386564,
+            0.0000001791760359416981,
+            0.000000000000015432100042289676
         ];
-        let mut b = array![-3.4639284579585095e-08, 2.2532389959396826e-05, -0.0];
-        dense_get_rs(mat_a_decomp, &vec![0, 1, 2], b.view_mut());
-        let x_expect = array![
-            7.5001558608301906e-13,
-            -4.8726813621044346e-10,
-            4.8651812062436036e-10
+        dense_get_rs(mat_a, &vec![2, 1, 2], b.view_mut());
+        let expect = array![
+            0.000010806109402745275,
+            0.000000000028591564117644602,
+            -0.000010806137978877292
         ];
-        assert_nearly_eq!(b, x_expect, 1e-15);
+        assert_eq!(b, expect);
+    }
+
+    #[test]
+    fn test_get_rs2() {
+        let mat_a = array![
+            [1.0, 0.040000000000000001, -0.041180751793579905],
+            [1.0, -9376.8756693193609, -0.99825358822328103],
+            [1.0, -0.04272931434962135, 0.0012553747713712066],
+        ]
+        .reversed_axes();
+        let mut b = array![
+            -0.00000092446647014019954,
+            0.0000009098297931611867,
+            0.000000000000010769163338864018
+        ];
+        dense_get_rs(mat_a, &vec![2, 1, 2], b.view_mut());
+        let expect = array![
+            0.000012924954909363613,
+            -0.000000000038131780122501411,
+            -0.000012924916766814327
+        ];
+        assert_eq!(b, expect);
+    }
+
+    #[test]
+    fn test_get_rf1() {
+        let mut mat_a = array![
+            [-0.09593473862037126, 0.040000000000000001, 1.0],
+            [5274.5976183265557, -5485.2758397300222, 1.0],
+            [0.035103714444140913, -0.035103714444140913, 1.0]
+        ]
+        .reversed_axes();
+
+        let mut pivot = vec![0, 0, 0];
+        let ret = dense_get_rf(mat_a.view_mut(), &mut pivot);
+
+        let expect = array![
+            [1.0, 0.040000000000000001, -0.09593473862037126],
+            [1.0, -5485.3158397300222, -0.96160252338811314],
+            [1.0, -0.075103714444140907, 0.058818531739205995]
+        ]
+        .reversed_axes();
+
+        assert_eq!(mat_a, expect);
+        assert_eq!(pivot, vec![2, 1, 2]);
+        assert_eq!(ret, 0);
+    }
+
+    #[test]
+    fn test_get_rf2() {
+        let mut mat_a = array![
+            [-0.042361503587159809, 0.040000000000000001, 1.0],
+            [9313.8399601148321, -9331.507477848012, 1.0],
+            [0.0029441927049318833, -0.0029441927049318833, 1.0],
+        ]
+        .reversed_axes();
+
+        let mut pivot = vec![0, 0, 0];
+        let ret = dense_get_rf(mat_a.view_mut(), &mut pivot);
+
+        let expect = array![
+            [1.0, 0.040000000000000001, -0.042361503587159809],
+            [1.0, -9331.5474778480129, -0.99810694246891751],
+            [1.0, -0.042944192704931883, 0.0024427994145761397]
+        ]
+        .reversed_axes();
+
+        assert_eq!(mat_a, expect);
+        assert_eq!(pivot, vec![2, 1, 2]);
+        assert_eq!(ret, 0);
     }
 
     #[test]
     fn test_dense1() {
         let mut mat_a = array![
-            [-46190.370416726822, 0.0, 0.0086598211441923072,],
-            [0.04, -46242.289343591976, -0.0086598211441923072],
-            [1.0, 1.0, 1.0]
+            [5.0, 0.0, 0.0, 1.0],
+            [2.0, 2.0, 2.0, 1.0],
+            [4.0, 5.0, 5.0, 5.0],
+            [1.0, 6.0, 4.0, 5.0]
         ];
-
-        let mat_a_decomp = array![
-            [-46190.370416726822, 0.0, 0.0086598211441923072],
-            [
-                -8.6598136449485772e-7,
-                -46242.289343591976,
-                -0.008659813644948576
-            ],
-            [
-                -0.000021649534112371443,
-                -0.000021625226912312786,
-                1.00000000e+00
-            ]
-        ];
-
-        let mut pivot = vec![0, 0, 0];
-        let ret = dense_get_rf(mat_a.view_mut(), &mut pivot);
-
-        assert_nearly_eq!(mat_a, mat_a_decomp, 1e-6);
-        assert_eq!(pivot, vec![0, 1, 2]);
-        assert_eq!(ret, 0);
-
-        let mut b = array![-0.000000034639284579585095, 0.000022532389959396826, -0.0];
-        let b_exp = array![
-            7.5001558608301906e-13,
-            -4.8726813621044346e-10,
-            4.8651812062436036e-10,
-        ];
-        dense_get_rs(mat_a, &pivot, b.view_mut());
-        assert_nearly_eq!(b, b_exp, 1e-9);
-
-        // Now test using the LSolver interface
-        let mut mat_a = array![[1., 1., 1.], [2., 1., -4.], [3., -4., 1.]];
-        let mut dense = Dense::new(3);
+        let b = array![9.0, 16.0, 49.0, 45.0];
+        let expected = array![1.0, 2.0, 3.0, 4.0];
+        let mut dense = Dense::new(4);
+        let mut x = Array1::zeros(4);
         dense.setup(mat_a.view_mut()).unwrap();
-        let mut x = Array::zeros(3);
-        //dbg!(&mat_a);
-        //dbg!(&dense);
-        dense
-            .solve(mat_a, x.view_mut(), array![0.25, 1.25, 1.0], 0.0)
-            .unwrap();
-        assert_eq!(x, array![0.375, 0., -0.125]);
+        dense.solve(mat_a, x.view_mut(), b, 0.0).unwrap();
+        assert_nearly_eq!(x, expected);
     }
-
 }

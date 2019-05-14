@@ -56,7 +56,7 @@ where
     let err = diff.norm_wrms(&ewt);
 
     // is the solution within the tolerances?
-    let passfail = err >= 1.0;
+    let passfail = dbg!(err >= 1.0);
 
     if passfail {
         println!("SUNDIALS_WARNING: check_ans error={} \n\n", err);
@@ -170,7 +170,6 @@ fn main() {
 
     stats.set_format(*prettytable::format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
     stats.set_titles(row![bFgH2->"Final Run Statistics:"]);
-
     stats.printstd();
 
     check_ans(

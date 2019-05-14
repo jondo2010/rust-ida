@@ -70,11 +70,15 @@ where
     LS: LSolver<P::Scalar>,
 {
     /// * `size` - The problem size
-    pub fn new(problem: P) -> Self {
+    pub fn new<S1, S2>(problem: P, yy0: ArrayBase<S1, Ix1>, yp0: ArrayBase<S2, Ix1>) -> Self
+    where
+        S1: ndarray::Data<Elem = P::Scalar>,
+        S2: ndarray::Data<Elem = P::Scalar>,
+    {
         use num_traits::identities::Zero;
         IdaNLProblem {
-            ida_yp: Array::zeros(problem.model_size()),
-            ida_yy: Array::zeros(problem.model_size()),
+            ida_yy: yy0.to_owned(),
+            ida_yp: yp0.to_owned(),
             ida_yypredict: Array::zeros(problem.model_size()),
             ida_yppredict: Array::zeros(problem.model_size()),
 
@@ -246,7 +250,6 @@ where
                 base.powf(arg)
             };
             if rate > <P::Scalar as NumCast>::from(RATEMAX).unwrap() {
-                use log::trace;
                 return Err(failure::Error::from(Error::ConvergenceRecover {}));
             }
             self.ida_ss = rate / (P::Scalar::one() - rate);
