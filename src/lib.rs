@@ -9,9 +9,9 @@ mod error;
 mod ida_io;
 mod ida_ls;
 mod ida_nls;
+mod impl_complete_step;
 mod impl_r_check;
 mod impl_solve;
-mod impl_complete_step;
 mod impl_stop_test;
 mod norm_rms;
 
@@ -28,9 +28,9 @@ pub use norm_rms::{NormRms, NormRmsMasked};
 use constants::*;
 use error::{IdaError, Recoverable};
 use ida_nls::IdaNLProblem;
+use impl_r_check::RootStatus;
 use tol_control::TolControl;
 use traits::*;
-use impl_r_check::RootStatus;
 
 use profiler::profile_scope;
 
@@ -900,16 +900,28 @@ where
         // yypredict = cvals * phi[0..kk+1]
         //(void) N_VLinearCombination(self.ida_kk+1, self.ida_cvals, self.ida_phi, self.ida_yypredict);
         {
+            /*
             self.nlp.ida_yypredict.assign(
                 &self
                     .ida_phi
                     .slice_axis(Axis(0), Slice::from(0..=self.ida_kk))
                     .sum_axis(Axis(0)),
             );
+            */
+
+            self.nlp.ida_yypredict.fill(P::Scalar::zero());
+            for phi in self
+                .ida_phi
+                .slice_axis(Axis(0), Slice::from(0..=self.ida_kk))
+                .genrows()
+            {
+                self.nlp.ida_yypredict += &phi;
+            }
         }
 
         // yppredict = gamma[1..kk+1] * phi[1..kk+1]
         //(void) N_VLinearCombination(self.ida_kk, self.ida_gamma+1, self.ida_phi+1, self.ida_yppredict);
+        /*
         {
             let phi = self
                 .ida_phi
@@ -926,7 +938,26 @@ where
                 .ida_yppredict
                 .assign(&(&phi * &gamma).sum_axis(Axis(0)));
         }
+        */
 
+        let &mut Ida {
+            ida_kk,
+            ref ida_phi,
+            ref ida_gamma,
+            ref mut nlp,
+            ..
+        } = self;
+
+        nlp.ida_yppredict.fill(P::Scalar::zero());
+        ndarray::Zip::from(&ida_gamma.slice(s![1..=ida_kk]))
+            .and(
+                ida_phi
+                    .slice_axis(Axis(0), Slice::from(1..=ida_kk))
+                    .genrows(),
+            )
+            .apply(|gamma, phi| {
+                nlp.ida_yppredict.scaled_add(*gamma, &phi);
+            });
     }
 
     /// IDATestError
@@ -1223,7 +1254,6 @@ where
         self.ida_phi *= self.ida_rr;
     }
 
-    
     /// This routine evaluates `y(t)` and `y'(t)` as the value and derivative of the interpolating
     /// polynomial at the independent variable t, and stores the results in the vectors yret and ypret.
     /// It uses the current independent variable value, tn, and the method order last used, kused.

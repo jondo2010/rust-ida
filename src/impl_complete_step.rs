@@ -1,5 +1,4 @@
 use super::*;
-use log::warn;
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
@@ -170,21 +169,16 @@ where
 
         // Note: this is a recurrence relation, and needs to be performed as below
 
-        let mut z_view = self
-            .ida_zvecs
-            .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1));
+        let mut tmp = self.ida_zvecs.index_axis_mut(Axis(0), 0);
+        tmp.assign(&self.ida_ee);
 
-        for (i, mut z_row) in z_view.genrows_mut().into_iter().enumerate() {
-            // z[i] = ee + phi[kused] + phi[kused-1] + .. + phi[i]
-            z_row.assign(&self.ida_ee);
-            z_row += &self
-                .ida_phi
-                .slice_axis(Axis(0), Slice::from(i..self.ida_kused + 1))
-                .sum_axis(Axis(0));
+        for mut phi in self
+            .ida_phi
+            .slice_axis_mut(Axis(0), Slice::from(0..=self.ida_kused).step_by(-1))
+            .genrows_mut()
+        {
+            tmp += &phi;
+            phi.assign(&tmp);
         }
-
-        self.ida_phi
-            .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1))
-            .assign(&z_view);
     }
 }

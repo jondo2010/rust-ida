@@ -196,7 +196,7 @@ fn test2() {
     assert_eq!(ida.ida_phase, phase);
     assert_eq!(ida.ida_hmax_inv, hmax_inv);
     assert_eq!(ida.ida_ee, ida_ee);
-    assert_nearly_eq!(ida.ida_phi, ida_phi);
+    assert_eq!(ida.ida_phi, ida_phi);
     assert_eq!(ida.nlp.ida_ewt, ida_ewt);
 }
 
@@ -302,6 +302,6 @@ fn test3() {
     assert_eq!(ida.ida_phase, phase);
     assert_eq!(ida.ida_hmax_inv, hmax_inv);
     assert_eq!(ida.ida_ee, ida_ee);
-    assert_nearly_eq!(ida.ida_phi, ida_phi);
+    assert_eq!(ida.ida_phi, ida_phi);
     assert_eq!(ida.nlp.ida_ewt, ida_ewt);
 }
