@@ -9,9 +9,11 @@ mod error;
 mod ida_io;
 mod ida_ls;
 mod ida_nls;
-mod r_check;
-mod solve;
-mod stop_test;
+mod impl_r_check;
+mod impl_solve;
+mod impl_complete_step;
+mod impl_stop_test;
+mod norm_rms;
 
 #[cfg(test)]
 mod tests;
@@ -19,16 +21,16 @@ mod tests;
 pub mod example_problems;
 pub mod linear;
 pub mod nonlinear;
-mod norm_rms;
 pub mod tol_control;
 pub mod traits;
+pub use norm_rms::{NormRms, NormRmsMasked};
 
 use constants::*;
 use error::{IdaError, Recoverable};
 use ida_nls::IdaNLProblem;
-pub use norm_rms::{NormRms, NormRmsMasked};
 use tol_control::TolControl;
 use traits::*;
+use impl_r_check::RootStatus;
 
 use profiler::profile_scope;
 
@@ -1221,177 +1223,7 @@ where
         self.ida_phi *= self.ida_rr;
     }
 
-    /// IDACompleteStep
-    /// This routine completes a successful step.  It increments nst, saves the stepsize and order
-    /// used, makes the final selection of stepsize and order for the next step, and updates the phi
-    /// array.
-    fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
-        profile_scope!(format!("complete_step()"));
-        
-        serde_json::to_writer(&self.data_trace, self).unwrap();
-        self.data_trace.write_all(b",\n").unwrap();
-
-        self.counters.ida_nst += 1;
-        let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);
-        self.ida_kused = self.ida_kk;
-        self.ida_hused = self.ida_hh;
-
-        if (self.ida_knew == self.ida_kk - 1) || (self.ida_kk == self.ida_maxord) {
-            self.ida_phase = 1;
-        }
-
-        // For the first few steps, until either a step fails, or the order is reduced, or the
-        // order reaches its maximum, we raise the order and double the stepsize. During these
-        // steps, phase = 0. Thereafter, phase = 1, and stepsize and order are set by the usual
-        // local error algorithm.
-        //
-        // Note that, after the first step, the order is not increased, as not all of the
-        // neccessary information is available yet.
-
-        if self.ida_phase == 0 {
-            if self.counters.ida_nst > 1 {
-                self.ida_kk += 1;
-                let mut hnew = P::Scalar::two() * self.ida_hh;
-                let tmp = hnew.abs() * self.ida_hmax_inv;
-                if tmp > P::Scalar::one() {
-                    hnew /= tmp;
-                }
-                self.ida_hh = hnew;
-            }
-        } else {
-            #[derive(Debug)]
-            enum Action {
-                Lower,
-                Maintain,
-                Raise,
-            }
-
-            // Set action = LOWER/MAINTAIN/RAISE to specify order decision
-
-            let (action, err_kp1) = if self.ida_knew == (self.ida_kk - 1) {
-                (Action::Lower, P::Scalar::zero())
-            } else if self.ida_kk == self.ida_maxord {
-                (Action::Maintain, P::Scalar::zero())
-            } else if (self.ida_kk + 1) >= self.ida_ns || (kdiff == 1) {
-                (Action::Maintain, P::Scalar::zero())
-            } else {
-                // Estimate the error at order k+1, unless already decided to reduce order, or already using
-                // maximum order, or stepsize has not been constant, or order was just raised.
-
-                // tempv1 = ee - phi[kk+1]
-                let enorm = {
-                    let temp = &self.ida_ee - &self.ida_phi.index_axis(Axis(0), self.ida_kk + 1);
-                    self.wrms_norm(&temp, &self.nlp.ida_ewt, self.ida_suppressalg)
-                };
-                let err_kp1 = enorm / <P::Scalar as NumCast>::from(self.ida_kk + 2).unwrap();
-
-                // Choose among orders k-1, k, k+1 using local truncation error norms.
-
-                let terr_k = <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap() * err_k;
-                let terr_kp1 = <P::Scalar as NumCast>::from(self.ida_kk + 2).unwrap() * err_kp1;
-
-                if self.ida_kk == 1 {
-                    if terr_kp1 >= (P::Scalar::half() * terr_k) {
-                        (Action::Maintain, err_kp1)
-                    } else {
-                        (Action::Raise, err_kp1)
-                    }
-                } else {
-                    let terr_km1 = <P::Scalar as NumCast>::from(self.ida_kk).unwrap() * err_km1;
-                    if terr_km1 <= terr_k.min(terr_kp1) {
-                        (Action::Lower, err_kp1)
-                    } else if terr_kp1 >= terr_k {
-                        (Action::Maintain, err_kp1)
-                    } else {
-                        (Action::Raise, err_kp1)
-                    }
-                }
-            };
-
-            // Set the estimated error norm and, on change of order, reset kk.
-            let err_knew = match action {
-                Action::Raise => {
-                    self.ida_kk += 1;
-                    err_kp1
-                }
-                Action::Lower => {
-                    self.ida_kk -= 1;
-                    err_km1
-                }
-                _ => err_k,
-            };
-            trace!(
-                "    {:#?}, kk={}, err_knew={:.5e}",
-                action,
-                self.ida_kk,
-                err_knew
-            );
-
-            // Compute rr = tentative ratio hnew/hh from error norm estimate.
-            // Reduce hh if rr <= 1, double hh if rr >= 2, else leave hh as is.
-            // If hh is reduced, hnew/hh is restricted to be between .5 and .9.
-
-            let mut hnew = self.ida_hh;
-            //ida_rr = SUNRpowerR( TWO * err_knew + PT0001, -ONE/(self.ida_kk + 1) );
-            self.ida_rr = {
-                let base = P::Scalar::two() * err_knew + P::Scalar::pt0001();
-                let arg = -(<P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap()).recip();
-                base.powf(arg)
-            };
-
-            if self.ida_rr >= P::Scalar::two() {
-                hnew = P::Scalar::two() * self.ida_hh;
-                let tmp = hnew.abs() * self.ida_hmax_inv;
-                if tmp > P::Scalar::one() {
-                    hnew /= tmp;
-                }
-            } else if self.ida_rr <= P::Scalar::one() {
-                //ida_rr = SUNMAX(HALF, SUNMIN(PT9,self.ida_rr));
-                self.ida_rr = P::Scalar::half().max(self.ida_rr.min(P::Scalar::pt9()));
-                hnew = self.ida_hh * self.ida_rr;
-            }
-
-            self.ida_hh = hnew;
-        }
-        trace!("    next hh={:.5e}", self.ida_hh);
-        // end of phase if block
-
-        // Save ee for possible order increase on next step
-        if self.ida_kused < self.ida_maxord {
-            self.ida_phi
-                .index_axis_mut(Axis(0), self.ida_kused + 1)
-                .assign(&self.ida_ee);
-        }
-
-        // Update phi arrays
-
-        // To update phi arrays compute X += Z where
-        // X = [ phi[kused], phi[kused-1], phi[kused-2], ... phi[1] ]
-        // Z = [ ee,         phi[kused],   phi[kused-1], ... phi[0] ]
-
-        // Note: this is a recurrence relation, and needs to be performed as below
-
-        let mut z_view = self
-            .ida_zvecs
-            .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1));
-
-        for (i, mut z_row) in z_view.genrows_mut().into_iter().enumerate() {
-            // z[i] = ee + phi[kused] + phi[kused-1] + .. + phi[i]
-            z_row.assign(&self.ida_ee);
-            z_row += &self
-                .ida_phi
-                .slice_axis(Axis(0), Slice::from(i..self.ida_kused + 1))
-                .sum_axis(Axis(0));
-        }
-
-        self.ida_phi
-            .slice_axis_mut(Axis(0), Slice::from(0..self.ida_kused + 1))
-            .assign(&z_view);
-        
-        serde_json::to_writer(&self.data_trace, self).unwrap();
-        self.data_trace.write_all(b",\n").unwrap();
-    }
-
+    
     /// This routine evaluates `y(t)` and `y'(t)` as the value and derivative of the interpolating
     /// polynomial at the independent variable t, and stores the results in the vectors yret and ypret.
     /// It uses the current independent variable value, tn, and the method order last used, kused.

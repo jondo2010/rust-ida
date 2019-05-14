@@ -1,3 +1,7 @@
+//-----------------------------------------------------------------
+// Main solver function
+//-----------------------------------------------------------------
+
 use super::*;
 use log::warn;
 
@@ -16,10 +20,6 @@ where
         + std::fmt::LowerExp
         + IdaConst<Scalar = P::Scalar>,
 {
-    //-----------------------------------------------------------------
-    // Main solver function
-    //-----------------------------------------------------------------
-
     /// This routine is the main driver of the IDA package.
     ///
     /// This is the central step in the solution process, the call to perform the integration of
@@ -187,7 +187,7 @@ where
 
                 let ier = self.r_check2()?;
 
-                if let r_check::RootStatus::RootFound = ier {
+                if let RootStatus::RootFound = ier {
                     self.ida_tretlast = self.ida_tlo;
                     *tret = self.ida_tlo;
                     return Ok(IdaSolveStatus::Root);
@@ -202,7 +202,7 @@ where
                     let ier = self.r_check3()?;
                     match ier {
                         // no root found
-                        r_check::RootStatus::Continue => {
+                        RootStatus::Continue => {
                             self.ida_irfnd = false;
                             match itask {
                                 IdaTask::OneStep if irfndp => {
@@ -215,7 +215,7 @@ where
                             }
                         }
                         // a new root was found
-                        r_check::RootStatus::RootFound => {
+                        RootStatus::RootFound => {
                             self.ida_irfnd = true;
                             self.ida_tretlast = self.ida_tlo;
                             *tret = self.ida_tlo;
@@ -333,7 +333,7 @@ where
             if self.ida_nrtfn > 0 {
                 let ier = self.r_check3()?;
 
-                if let r_check::RootStatus::RootFound = ier {
+                if let RootStatus::RootFound = ier {
                     // A new root was found
                     self.ida_irfnd = true;
                     self.ida_tretlast = self.ida_tlo;
