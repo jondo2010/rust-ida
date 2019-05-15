@@ -18,7 +18,7 @@ mod norm_rms;
 #[cfg(test)]
 mod tests;
 
-pub mod example_problems;
+pub mod sample_problems;
 pub mod linear;
 pub mod nonlinear;
 pub mod tol_control;

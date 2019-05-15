@@ -3,7 +3,7 @@ use super::*;
 #[ignore]
 #[test]
 fn test1() {
-    let problem = example_problems::Roberts {};
+    let problem = sample_problems::Roberts {};
     let mut ida: Ida<_, linear::Dense<_>, nonlinear::Newton<_>, _> = Ida::new(
         problem,
         array![0., 0., 0.],

@@ -1,21 +1,8 @@
-//! This simple example problem for IDA, due to Robertson, is from chemical kinetics, and consists
-//! of the following three equations:
-//!
-//!      dy1/dt = -.04*y1 + 1.e4*y2*y3
-//!      dy2/dt = .04*y1 - 1.e4*y2*y3 - 3.e7*y2**2
-//!         0   = y1 + y2 + y3 - 1
-//!
-//! on the interval from t = 0.0 to t = 4.e10, with initial conditions: y1 = 1, y2 = y3 = 0.
-//!
-//! While integrating the system, we also use the rootfinding feature to find the points at which
-//! y1 = 1e-4 or at which y3 = 0.01.
-//!
-//! The problem is solved with IDA using the DENSE linear solver, with a user-supplied Jacobian.
-//! Output is printed at t = .4, 4, 40, ..., 4e10.
-
 use ida::{linear::*, nonlinear::*, tol_control::*, *};
 
 use ndarray::{array, prelude::*};
+
+use prettytable::{cell, row, table, Table};
 
 /// compare the solution at the final time 4e10s to a reference solution computed using a relative
 /// tolerance of 1e-8 and absoltue tolerance of 1e-14
@@ -63,8 +50,6 @@ where
     }
 }
 
-use prettytable::{cell, row, table, Table};
-
 fn main() {
     pretty_env_logger::init();
     profiler::register_thread_with_profiler();
@@ -72,7 +57,7 @@ fn main() {
     const RTOL: f64 = 1.0e-4;
     const ATOL: [f64; 3] = [1.0e-8, 1.0e-6, 1.0e-6];
 
-    let problem = ida::example_problems::Roberts {};
+    let problem = ida::sample_problems::Roberts {};
 
     let yy0 = array![1.0, 0.0, 0.0];
     let yp0 = array![-0.04, 0.04, 0.0];
