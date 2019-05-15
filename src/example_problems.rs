@@ -63,7 +63,7 @@ impl Jacobian for Roberts {
 
 impl Root for Roberts {
     fn num_roots(&self) -> usize {
-        2
+        0
     }
 
     /// Root function routine. Compute functions g_i(t,y) for i = 0,1.

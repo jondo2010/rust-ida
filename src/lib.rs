@@ -643,6 +643,9 @@ where
         // Looping point for attempts to take a step
 
         let (ck, err_k, err_km1) = loop {
+            serde_json::to_writer(&self.data_trace, self).unwrap();
+            self.data_trace.write_all(b",\n").unwrap();
+
             //-----------------------
             // Set method coefficients
             //-----------------------
@@ -738,14 +741,14 @@ where
             let mut temp1 = self.ida_hh;
             self.ida_gamma[0] = P::Scalar::zero();
             self.ida_sigma[0] = P::Scalar::one();
-            for i in 1..self.ida_kk + 1 {
+            for i in 1..=self.ida_kk {
                 let scalar_i: P::Scalar = NumCast::from(i).unwrap();
                 let temp2 = self.ida_psi[i - 1];
                 self.ida_psi[i - 1] = temp1;
-                self.ida_beta[i] = self.ida_beta[i - 1] * (self.ida_psi[i - 1] / temp2);
+                self.ida_beta[i] = self.ida_beta[i - 1] * self.ida_psi[i - 1] / temp2;
                 temp1 = temp2 + self.ida_hh;
                 self.ida_alpha[i] = self.ida_hh / temp1;
-                self.ida_sigma[i] = self.ida_sigma[i - 1] * self.ida_alpha[i] * scalar_i;
+                self.ida_sigma[i] = scalar_i * self.ida_sigma[i - 1] * self.ida_alpha[i];
                 self.ida_gamma[i] = self.ida_gamma[i - 1] + self.ida_alpha[i - 1] / self.ida_hh;
             }
             self.ida_psi[self.ida_kk] = temp1;
@@ -979,35 +982,34 @@ where
     > {
         //trace!("test_error phi={:.5e}", self.ida_phi);
         //trace!("test_error ee={:.5e}", self.ida_ee);
+        let scalar_kk = <P::Scalar as NumCast>::from(self.ida_kk).unwrap();
 
         // Compute error for order k.
         let enorm_k = self.wrms_norm(&self.ida_ee, &self.nlp.ida_ewt, self.ida_suppressalg);
         let err_k = self.ida_sigma[self.ida_kk] * enorm_k; // error norms
 
         // local truncation error norm
-        let terr_k = err_k * <P::Scalar as NumCast>::from(self.ida_kk + 1).unwrap();
+        let terr_k = err_k * (scalar_kk + P::Scalar::one());
 
         let (err_km1, knew) = if self.ida_kk > 1 {
             // Compute error at order k-1
+            // delta = phi[ida_kk - 1] + ee
             self.ida_delta = &self.ida_phi.index_axis(Axis(0), self.ida_kk) + &self.ida_ee;
             let enorm_km1 =
                 self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
             // estimated error at k-1
             let err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
-            let terr_km1 = err_km1 * <P::Scalar as NumCast>::from(self.ida_kk).unwrap();
+            let terr_km1 = scalar_kk * err_km1;
 
             let knew = if self.ida_kk > 2 {
                 // Compute error at order k-2
-                // ida_delta = ida_phi[ida_kk - 1] + ida_delta
-                self.ida_delta
-                    .assign(&self.ida_phi.index_axis(Axis(0), self.ida_kk - 1));
-                self.ida_delta.scaled_add(P::Scalar::one(), &self.ida_ee);
-
+                // delta += phi[ida_kk - 1]
+                self.ida_delta += &self.ida_phi.index_axis(Axis(0), self.ida_kk - 1);
                 let enorm_km2 =
                     self.wrms_norm(&self.ida_delta, &self.nlp.ida_ewt, self.ida_suppressalg);
                 // estimated error at k-2
                 let err_km2 = self.ida_sigma[self.ida_kk - 2] * enorm_km2;
-                let terr_km2 = err_km2 * <P::Scalar as NumCast>::from(self.ida_kk - 1).unwrap();
+                let terr_km2 = (scalar_kk - P::Scalar::one()) * err_km2;
 
                 // Decrease order if errors are reduced
                 if terr_km1.max(terr_km2) <= terr_k {
