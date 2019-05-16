@@ -18,9 +18,9 @@ mod norm_rms;
 #[cfg(test)]
 mod tests;
 
-pub mod sample_problems;
 pub mod linear;
 pub mod nonlinear;
+pub mod sample_problems;
 pub mod tol_control;
 pub mod traits;
 pub use norm_rms::{NormRms, NormRmsMasked};
@@ -1309,7 +1309,7 @@ where
         let mut gam = delt / self.ida_psi[0];
 
         self.ida_cvals[0] = c;
-        for j in 1..kord {
+        for j in 1..=kord {
             d = d * gam + c / self.ida_psi[j - 1];
             c = c * gam;
             gam = (delt + self.ida_psi[j - 1]) / self.ida_psi[j];
@@ -1319,27 +1319,27 @@ where
         }
 
         //retval = N_VLinearCombination(kord+1, self.ida_cvals, self.ida_phi,  yret);
-        let cvals = self.ida_cvals.slice(s![0..kord + 1]);
-        ndarray::Zip::from(self.nlp.ida_yy.view_mut())
+        let ida_yy = &mut self.nlp.ida_yy;
+        ida_yy.fill(P::Scalar::zero());
+        ndarray::Zip::from(self.ida_cvals.slice(s![0..=kord]))
             .and(
                 self.ida_phi
-                    .slice_axis(Axis(0), Slice::from(0..kord + 1))
-                    .lanes(Axis(0)),
+                    .slice_axis(Axis(0), Slice::from(0..=kord))
+                    .genrows(),
             )
-            .apply(|z, row| {
-                *z = (&row * &cvals).sum();
+            .apply(|&c, phi| {
+                ida_yy.scaled_add(c, &phi);
             });
 
         //retval = N_VLinearCombination(kord, self.ida_dvals, self.ida_phi+1, ypret);
-        let dvals = self.ida_dvals.slice(s![0..kord]);
-        ndarray::Zip::from(&mut self.nlp.ida_yp)
+        let ida_yp = &mut self.nlp.ida_yp;
+        ida_yp.fill(P::Scalar::zero());
+        ndarray::Zip::from(self.ida_dvals.slice(s![0..kord]))
             .and(
-                self.ida_phi
-                    .slice_axis(Axis(0), Slice::from(1..kord + 1))
-                    .lanes(Axis(0)),
+                self.ida_phi.slice_axis(Axis(0), Slice::from(1..=kord)).genrows()
             )
-            .apply(|z, row| {
-                *z = (&row * &dvals).sum();
+            .apply(|&d, phi| {
+                ida_yp.scaled_add(d, &phi);
             });
 
         Ok(())
