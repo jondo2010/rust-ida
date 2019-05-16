@@ -7,10 +7,10 @@ use log::warn;
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem + Serialize,
-    LS: linear::LSolver<P::Scalar> + Serialize,
-    NLS: nonlinear::NLSolver<P> + Serialize,
-    TolC: TolControl<P::Scalar> + Serialize,
+    P: IdaProblem,
+    LS: linear::LSolver<P::Scalar>,
+    NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
@@ -72,6 +72,7 @@ where
         tret: &mut P::Scalar,
         itask: IdaTask,
     ) -> Result<IdaSolveStatus, failure::Error> {
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("solve(tout={:?})", tout));
 
         if let IdaTask::Normal = itask {
@@ -240,6 +241,7 @@ where
         }
 
         // Looping point for internal steps.
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("solve loop"));
         loop {
             // Check for too many steps taken.

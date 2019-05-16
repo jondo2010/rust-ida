@@ -1,3 +1,5 @@
+//! Example problems for testing, benchmarks and demonstration
+
 mod roberts;
 mod slider_crank;
 

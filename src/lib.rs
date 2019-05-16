@@ -32,6 +32,7 @@ use impl_r_check::RootStatus;
 use tol_control::TolControl;
 use traits::*;
 
+#[cfg(feature = "profiler")]
 use profiler::profile_scope;
 
 use log::{error, trace};
@@ -42,10 +43,12 @@ use num_traits::{
     Float,
 };
 
+#[cfg(feature = "data_trace")]
 use serde::Serialize;
 use std::io::Write;
 
-#[derive(Copy, Clone, Debug, Serialize)]
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub enum IdaTask {
     Normal,
     OneStep,
@@ -64,7 +67,8 @@ enum IdaConverged {
 }
 
 /// Counters
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct IdaCounters {
     /// number of internal steps taken
     ida_nst: usize,
@@ -79,13 +83,14 @@ pub struct IdaCounters {
 }
 
 /// This structure contains fields to keep track of problem state.
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem + Serialize,
-    LS: linear::LSolver<P::Scalar> + Serialize,
-    NLS: nonlinear::NLSolver<P> + Serialize,
-    TolC: TolControl<P::Scalar> + Serialize,
+    P: IdaProblem,
+    LS: linear::LSolver<P::Scalar>,
+    NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
 {
     ida_setup_done: bool,
     tol_control: TolC,
@@ -156,8 +161,6 @@ where
 
     /// value of tret previously returned by IDASolve
     ida_tretlast: P::Scalar,
-    /// current value of scalar (-alphas/hh) in Jacobian
-    //pub(super) ida_cj: P::Scalar,
     /// cj value saved from last successful step
     ida_cjlast: P::Scalar,
 
@@ -174,8 +177,6 @@ where
     ida_maxnef: u64,
     /// max value of method order k:
     ida_maxord: usize,
-    /// value of maxord used when allocating memory
-    //ida_maxord_alloc: u64,
     /// max number of internal steps for one user call
     ida_mxstep: u64,
     /// inverse of max. step size hmax (default = 0.0)
@@ -183,15 +184,6 @@ where
 
     //// Counters
     counters: IdaCounters,
-
-    /// number of function (res) calls
-    //pub(super) ida_nre: u64,
-    /// number of corrector convergence failures
-    //ida_ncfn: u64,
-    /// number of error test failures
-    //ida_netf: u64,
-    /// number of Newton iterations performed
-    //ida_nni: u64,
 
     // Arrays for Fused Vector Operations
     ida_cvals: Array1<P::Scalar>,
@@ -246,17 +238,17 @@ where
     /// Nonlinear problem
     nlp: IdaNLProblem<P, LS>,
 
-    #[serde(skip_serializing)]
+    #[cfg(feature = "data_trace")]
     data_trace: std::fs::File,
-    n_trace: usize,
 }
 
+#[cfg(feature = "data_trace")]
 impl<P, LS, NLS, TolC> Drop for Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem + Serialize,
-    LS: linear::LSolver<P::Scalar> + Serialize,
-    NLS: nonlinear::NLSolver<P> + Serialize,
-    TolC: TolControl<P::Scalar> + Serialize,
+    P: IdaProblem,
+    LS: linear::LSolver<P::Scalar>,
+    NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
 {
     fn drop(&mut self) {
         use std::io::Write;
@@ -266,10 +258,10 @@ where
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem + Serialize,
-    LS: linear::LSolver<P::Scalar> + Serialize,
-    NLS: nonlinear::NLSolver<P> + Serialize,
-    TolC: TolControl<P::Scalar> + Serialize,
+    P: IdaProblem,
+    LS: linear::LSolver<P::Scalar>,
+    NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
@@ -301,9 +293,11 @@ where
         ida_phi.index_axis_mut(Axis(0), 0).assign(&yy0);
         ida_phi.index_axis_mut(Axis(0), 1).assign(&yp0);
 
-        use std::io::Write;
-        let mut data_trace = std::fs::File::create("roberts_rs.json").unwrap();
-        data_trace.write_all(b"{\"data\":[\n").unwrap();
+        #[cfg(feature = "data_trace")]
+        {
+            let mut data_trace = std::fs::File::create("roberts_rs.json").unwrap();
+            data_trace.write_all(b"{\"data\":[\n").unwrap();
+        }
 
         //IDAResFn res, realtype t0, N_Vector yy0, N_Vector yp0
         Self {
@@ -404,8 +398,8 @@ where
             nls: NLS::new(yy0.len(), MAXNLSIT),
             nlp: IdaNLProblem::new(problem, yy0.view(), yp0.view()),
 
+            #[cfg(feature = "data_trace")]
             data_trace,
-            n_trace: 0,
         }
     }
 
@@ -616,14 +610,8 @@ where
     ///                     IDA_CONSTR_FAIL   IDA_CONV_FAIL
     ///                     IDA_REP_RES_ERR
     fn step(&mut self) -> Result<(), failure::Error> {
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("step(), nst={}", self.counters.ida_nst));
-        /*
-        trace!(
-            "/* step() */ {{ \"nst\":{}, \"tn\":{:.6e}",
-            self.counters.ida_nst,
-            self.nlp.ida_tn
-        );
-        */
 
         let saved_t = self.nlp.ida_tn;
 
@@ -643,8 +631,11 @@ where
         // Looping point for attempts to take a step
 
         let (ck, err_k, err_km1) = loop {
-            serde_json::to_writer(&self.data_trace, self).unwrap();
-            self.data_trace.write_all(b",\n").unwrap();
+            #[cfg(feature = "data_trace")]
+            {
+                serde_json::to_writer(&self.data_trace, self).unwrap();
+                self.data_trace.write_all(b",\n").unwrap();
+            }
 
             //-----------------------
             // Set method coefficients
@@ -728,6 +719,7 @@ where
     ///
     /// Returns the 'variable stepsize error coefficient ck'
     fn set_coeffs(&mut self) -> P::Scalar {
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("set_coeffs()"));
 
         // Set coefficients for the current stepsize h
@@ -792,6 +784,7 @@ where
     /// This routine attempts to solve the nonlinear system using the linear solver specified.
     /// NOTE: this routine uses N_Vector ee as the scratch vector tempv3 passed to lsetup.
     fn nonlinear_solve(&mut self) -> Result<(), failure::Error> {
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("nonlinear_solve()"));
 
         // Initialize if the first time called
@@ -898,6 +891,7 @@ where
     /// IDAPredict
     /// This routine predicts the new values for vectors yy and yp.
     fn predict(&mut self) {
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("predict()"));
 
         // yypredict = cvals * phi[0..kk+1]
@@ -1267,17 +1261,17 @@ where
     /// # Arguments
     ///
     /// * `t` - requested independent variable (time)
-    /// * `yret` - return value of `y(t)`
-    /// * `ypret` - return value of `y'(t)`
     ///
     /// # Returns
     ///
-    /// * () if `t` was legal. Outputs placed into `yret` and `ypret`
+    /// * () if `t` was legal. Outputs placed into `yy` and `yp`, and can be accessed using
+    ///     `get_yy()` and `get_yp()`.
     ///
     /// # Errors
     ///
     /// * `IdaError::BadTimeValue` if `t` is not within the interval of the last step taken.
     pub fn get_solution(&mut self, t: P::Scalar) -> Result<(), failure::Error> {
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("get_solution(t={:.5e})", t));
         // Check t for legality.  Here tn - hused is t_{n-1}.
 
@@ -1336,7 +1330,9 @@ where
         ida_yp.fill(P::Scalar::zero());
         ndarray::Zip::from(self.ida_dvals.slice(s![0..kord]))
             .and(
-                self.ida_phi.slice_axis(Axis(0), Slice::from(1..=kord)).genrows()
+                self.ida_phi
+                    .slice_axis(Axis(0), Slice::from(1..=kord))
+                    .genrows(),
             )
             .apply(|&d, phi| {
                 ida_yp.scaled_add(d, &phi);
@@ -1363,6 +1359,7 @@ where
         S1: ndarray::Data<Elem = P::Scalar>,
         S2: ndarray::Data<Elem = P::Scalar>,
     {
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("wrms_norm()"));
         if mask {
             x.norm_wrms_masked(w, &self.ida_id)

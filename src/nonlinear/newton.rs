@@ -1,10 +1,13 @@
 use ndarray::prelude::*;
-use serde::Serialize;
 
 use crate::nonlinear::traits::*;
 use crate::traits::ModelSpec;
 
-#[derive(Debug, Clone, Serialize)]
+#[cfg(feature = "data_trace")]
+use serde::Serialize;
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct Newton<M: ModelSpec> {
     /// Newton update vector
     delta: Array1<M::Scalar>,
@@ -111,7 +114,6 @@ where
                                             } else {
                                                 self.curiter += 1;
                                                 if self.curiter >= self.maxiters {
-                                                    use log::trace;
                                                     Err(failure::Error::from(
                                                         Error::ConvergenceRecover {},
                                                     ))

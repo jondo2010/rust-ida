@@ -1,28 +1,29 @@
-//! Simulation of a slider-crank mechanism modelled with 3 generalized coordinates: crank angle,
-//! connecting bar angle, and slider location. The mechanism moves under the action of a constant
-//! horizontal force applied to the connecting rod and a spring-damper connecting the crank and
-//! connecting rod.
-//!
-//! The equations of motion are formulated as a system of stabilized index-2 DAEs
-//! (Gear-Gupta-Leimkuhler formulation).
-//!
-//! Original Author: Radu Serban @ LLNL
-//! -----------------------------------------------------------------
-//! SUNDIALS Copyright Start
-//! Copyright (c) 2002-2019, Lawrence Livermore National Security
-//! and Southern Methodist University.
-//! All rights reserved.
-//!
-//! See the top-level LICENSE and NOTICE files for details.
-//!
-//! SPDX-License-Identifier: BSD-3-Clause
-//! SUNDIALS Copyright End
+/// SUNDIALS Copyright Start
+/// Copyright (c) 2002-2019, Lawrence Livermore National Security
+/// and Southern Methodist University.
+/// All rights reserved.
+///
+/// See the top-level LICENSE and NOTICE files for details.
+///
+/// SPDX-License-Identifier: BSD-3-Clause
+/// SUNDIALS Copyright End
 
 use crate::{ModelSpec, Residual};
 use ndarray::prelude::*;
+
+#[cfg(feature = "data_trace")]
 use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, Serialize)]
+/// Simulation of a slider-crank mechanism modelled with 3 generalized coordinates: crank angle,
+/// connecting bar angle, and slider location. The mechanism moves under the action of a constant
+/// horizontal force applied to the connecting rod and a spring-damper connecting the crank and
+/// connecting rod.
+///
+/// The equations of motion are formulated as a system of stabilized index-2 DAEs
+/// (Gear-Gupta-Leimkuhler formulation).
+///
+/// Original Author: Radu Serban @ LLNL
+#[derive(Clone, Copy, Debug)]
 pub struct SlCrank {
     /// half-length of crank
     a: f64,
@@ -114,9 +115,41 @@ impl Residual for SlCrank {
         S2: ndarray::Data<Elem = Self::Scalar>,
         S3: ndarray::DataMut<Elem = Self::Scalar>,
     {
-        resval[0] = -0.04 * yy[0] + 1.0e4 * yy[1] * yy[2];
-        resval[1] = -resval[0] - 3.0e7 * yy[1] * yy[1] - yp[1];
-        resval[0] -= yp[0];
-        resval[2] = yy[0] + yy[1] + yy[2] - 1.0;
+        let q = yy[0];
+        let x = yy[1];
+        let p = yy[2];
+
+        let qd = yy[3];
+        let xd = yy[4];
+        let pd = yy[5];
+
+        let lam1 = yy[6];
+        let lam2 = yy[7];
+
+        let mu1 = yy[8];
+        let mu2 = yy[9];
+
+        let s1 = q.sin();
+        let c1 = q.cos();
+        let s2 = p.sin();
+        let c2 = p.cos();
+
+        let mut Q = Array1::zeros(3);
+
+        self.force(yy.view(), Q.view_mut());
+
+        resval[0] = yp[0] - qd + self.a * s1 * mu1 - self.a * c1 * mu2;
+        resval[1] = yp[1] - xd + mu1;
+        resval[2] = yp[2] - pd + s2 * mu1 - c2 * mu2;
+
+        resval[3] = self.J1 * yp[3] - Q[0] + self.a * s1 * lam1 - self.a * c1 * lam2;
+        resval[4] = self.m2 * yp[4] - Q[1] + lam1;
+        resval[5] = self.J2 * yp[5] - Q[2] + s2 * lam1 - c2 * lam2;
+
+        resval[6] = x - c2 - self.a * c1;
+        resval[7] = -s2 - self.a * s1;
+
+        resval[8] = self.a * s1 * qd + xd + s2 * pd;
+        resval[9] = -self.a * c1 * qd - c2 * pd;
     }
 }

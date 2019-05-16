@@ -6,10 +6,10 @@ use super::*;
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem + Serialize,
-    LS: linear::LSolver<P::Scalar> + Serialize,
-    NLS: nonlinear::NLSolver<P> + Serialize,
-    TolC: TolControl<P::Scalar> + Serialize,
+    P: IdaProblem,
+    LS: linear::LSolver<P::Scalar>,
+    NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef

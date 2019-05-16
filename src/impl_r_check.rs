@@ -7,10 +7,10 @@ pub(super) enum RootStatus {
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem + Serialize,
-    LS: linear::LSolver<P::Scalar> + Serialize,
-    NLS: nonlinear::NLSolver<P> + Serialize,
-    TolC: TolControl<P::Scalar> + Serialize,
+    P: IdaProblem,
+    LS: linear::LSolver<P::Scalar>,
+    NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
@@ -488,7 +488,7 @@ where
                 .and(self.ida_rootdir.view())
                 .and(self.ida_glo.view())
                 .fold_while(
-                    (false, false, P::Scalar::zero(), 0),
+                    (false, false, P::Scalar::zero(), imax_loop),
                     |(mut zroot, mut sgnchg, mut maxfrac, mut imax),
                      i,
                      &gactive,
@@ -500,12 +500,10 @@ where
                                 * glo
                                 <= P::Scalar::zero();
 
-                            if grout.abs() == P::Scalar::zero() {
-                                if rootdir_glo_neg {
-                                    zroot = true;
-                                }
+                            if grout.abs() == P::Scalar::zero() && rootdir_glo_neg {
+                                zroot = true;
                             } else {
-                                if (glo * grout < P::Scalar::zero()) && rootdir_glo_neg {
+                                if (glo * grout) < P::Scalar::zero() && rootdir_glo_neg {
                                     let gfrac = (grout / (grout - glo)).abs();
                                     if gfrac > maxfrac {
                                         sgnchg = true;

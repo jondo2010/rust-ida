@@ -7,6 +7,7 @@ use super::linear::LSolver;
 use super::nonlinear::{Error, NLProblem, NLSolver};
 use super::traits::IdaProblem;
 
+#[cfg(feature = "data_trace")]
 use serde::Serialize;
 
 // nonlinear solver parameters
@@ -14,7 +15,8 @@ use serde::Serialize;
 const RATEMAX: f64 = 0.9;
 
 /// State variables involved in the Non-linear problem
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct IdaNLProblem<P, LS>
 where
     P: IdaProblem,

@@ -2,10 +2,10 @@ use super::*;
 
 impl<P, LS, NLS, TolC> Ida<P, LS, NLS, TolC>
 where
-    P: IdaProblem + Serialize,
-    LS: linear::LSolver<P::Scalar> + Serialize,
-    NLS: nonlinear::NLSolver<P> + Serialize,
-    TolC: TolControl<P::Scalar> + Serialize,
+    P: IdaProblem,
+    LS: linear::LSolver<P::Scalar>,
+    NLS: nonlinear::NLSolver<P>,
+    TolC: TolControl<P::Scalar>,
     <P as ModelSpec>::Scalar: num_traits::Float
         + num_traits::float::FloatConst
         + num_traits::NumRef
@@ -20,14 +20,8 @@ where
     /// used, makes the final selection of stepsize and order for the next step, and updates the phi
     /// array.
     pub(super) fn complete_step(&mut self, err_k: P::Scalar, err_km1: P::Scalar) -> () {
+        #[cfg(feature = "profiler")]
         profile_scope!(format!("complete_step()"));
-        trace!(
-            "complete_step(err_k={:.5e}, err_km1={:.5e}), nst={}, phase={}",
-            err_k,
-            err_km1,
-            self.counters.ida_nst,
-            self.ida_phase
-        );
 
         self.counters.ida_nst += 1;
         let kdiff = (self.ida_kk as isize) - (self.ida_kused as isize);

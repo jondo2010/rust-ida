@@ -6,10 +6,12 @@ use super::linear::{LSolver, LSolverType};
 use super::traits::IdaProblem;
 use super::IdaCounters;
 
+#[cfg(feature = "data_trace")]
 use serde::Serialize;
 
 /// State variables involved in the linear problem
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct IdaLProblem<P, LS>
 where
     P: IdaProblem,

@@ -1,7 +1,10 @@
 use super::*;
+
+#[cfg(feature = "data_trace")]
 use serde::Serialize;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct Dense<Scalar> {
     x: Scalar,
 

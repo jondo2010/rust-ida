@@ -1,4 +1,6 @@
 use ndarray::prelude::*;
+
+#[cfg(feature = "data_trace")]
 use serde::Serialize;
 
 pub trait TolControl<Scalar> {
@@ -9,7 +11,8 @@ pub trait TolControl<Scalar> {
 }
 
 /// specifies scalar relative and absolute tolerances.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct TolControlSS<Scalar> {
     /// relative tolerance
     ida_rtol: Scalar,
@@ -43,7 +46,8 @@ where
 
 /// specifies scalar relative tolerance and a vector absolute tolerance (a potentially different
 /// absolute tolerance for each vector component).
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct TolControlSV<Scalar> {
     /// relative tolerance
     ida_rtol: Scalar,

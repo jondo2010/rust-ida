@@ -2,8 +2,10 @@ use super::*;
 
 use ndarray::array;
 use nearly_eq::*;
-use serde::Serialize;
 use tol_control::*;
+
+#[cfg(feature = "data_trace")]
+use serde::Serialize;
 
 mod complete_step;
 mod get_solution;
@@ -13,7 +15,8 @@ mod restore;
 mod set_coeffs;
 mod test_error;
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "data_trace", derive(Serialize))]
 struct Dummy {}
 
 impl ModelSpec for Dummy {

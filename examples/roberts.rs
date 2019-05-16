@@ -43,15 +43,17 @@ where
     let err = diff.norm_wrms(&ewt);
 
     // is the solution within the tolerances?
-    let passfail = dbg!(err >= 1.0);
+    let fail = dbg!(err) >= 1.0;
 
-    if passfail {
+    if fail {
         println!("SUNDIALS_WARNING: check_ans error={} \n\n", err);
     }
 }
 
 fn main() {
     pretty_env_logger::init();
+
+    #[cfg(feature = "profiler")]
     profiler::register_thread_with_profiler();
 
     const RTOL: f64 = 1.0e-4;
@@ -164,5 +166,6 @@ fn main() {
         ndarray::Array1::from_iter(ATOL.iter().cloned()),
     );
 
+    #[cfg(feature = "profiler")]
     profiler::write_profile("profile.json");
 }

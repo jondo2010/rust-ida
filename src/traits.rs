@@ -1,11 +1,10 @@
 //! Basic traits for problem specification
 
 use ndarray::prelude::*;
-use serde::Serialize;
 
 /// Model specification
 pub trait ModelSpec: Clone {
-    type Scalar: num_traits::Float + Serialize;
+    type Scalar: num_traits::Float;
     type Dim: Dimension;
     fn model_size(&self) -> <Ix1 as Dimension>::Pattern;
 }
