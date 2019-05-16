@@ -51,7 +51,7 @@ test:stable:cargo:
   <<: *cargo_test
   after_script:
     - |
-      for file in target/debug/fmi-*[^\.d]; do mkdir -p "target/cov/$(basename $file)"; kcov --exclude-pattern=/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file"; done &&
+      for file in target/debug/ida-*[^\.d]; do mkdir -p "target/cov/$(basename $file)"; kcov --exclude-pattern=/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file"; done &&
       bash <(curl -s https://codecov.io/bash) -t $CODECOV_TOKEN &&
       echo "Uploaded code coverage"
 
