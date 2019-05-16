@@ -1,13 +1,13 @@
 [package]
 name = "ida"
 edition = "2018"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["John Hughes <jondo2010@gmail.com>"]
 license = "BSD-3-Clause"
 readme = "README.md"
-repository = "https://github.com/jondo2010/ida-rs"
+repository = "https://gitlab.com/jondo2010/rust-ida"
 documentation = "https://docs.rs/ida"
-homepage = "https://github.com/jondo2010/ida-rs"
+homepage = "https://gitlab.com/jondo2010/rust-ida"
 description = """
 A pure Rust port of the Implicit Differential-Algebraic solver from the Sundials suite.
 """
@@ -15,7 +15,7 @@ categories = ["science", "simulation"]
 keywords = ["math", "differential"]
 
 [badges]
-travis-ci = { repository = "jondo2010/ida-rs", branch = "master" }
+gitlab = { repository = "jondo2010/ida-rs", branch = "master" }
 
 [features]
 # Required for testing using the profile_scope!() macro
@@ -29,9 +29,8 @@ ndarray             = { version = "0.12.1", default-features = true, features = 
 num-traits          = { version = "0.2.6" }
 
 profiler            = { package = "thread_profiler", version = "0.3.0", optional = true }
-
-serde = { version = "1.0.90", features = ["derive"], optional = true }
-serde_json = {version = "1.0.39", optional = true}
+serde               = { version = "1.0.90", features = ["derive"], optional = true }
+serde_json          = { version = "1.0.39", optional = true}
 
 [dev-dependencies]
 criterion           = { version = "0.2.11" }

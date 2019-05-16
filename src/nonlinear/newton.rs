@@ -209,10 +209,12 @@ mod tests {
 
     impl TestProblem {
         /// Jacobian of the nonlinear residual function
-        ///
+        /// 
+        /// ```math
         ///            (2x  2y  2z)
         /// J(x,y,z) = (4x  2y  -4)
         ///            (6x  -4  2z)  
+        /// ```
         fn jac<S1, S2, S3>(
             _t: f64,
             y: ArrayBase<S1, Ix1>,
@@ -236,9 +238,11 @@ mod tests {
     impl NLProblem<TestProblem> for TestProblem {
         /// Nonlinear residual function
         ///
+        /// ```math
         /// f1(x,y,z) = x^2 + y^2 + z^2 - 1 = 0
         /// f2(x,y,z) = 2x^2 + y^2 - 4z     = 0
         /// f3(x,y,z) = 3x^2 - 4y + z^2     = 0
+        /// ```
         fn sys<S1, S2>(
             &mut self,
             ycor: ArrayBase<S1, Ix1>,
