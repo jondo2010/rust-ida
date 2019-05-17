@@ -15,7 +15,7 @@ categories = ["science", "simulation"]
 keywords = ["math", "differential"]
 
 [badges]
-gitlab = { repository = "jondo2010/ida-rs", branch = "master" }
+gitlab = { repository = "jondo2010/rust-ida", branch = "master" }
 
 [features]
 # Required for testing using the profile_scope!() macro
