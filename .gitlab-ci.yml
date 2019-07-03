@@ -6,6 +6,7 @@ variables:
   stage: build
   script:
     - cargo build --release --all
+    - cargo bench --no-run
   artifacts:
     paths:
       - target/release
@@ -16,9 +17,9 @@ variables:
     - cargo test --verbose --jobs 1 --all
 
 before_script:
-  #- echo "deb http://ftp.debian.org/debian stretch-backports main" >> /etc/apt/sources.list
-  #- apt-get update -yq
-  #- apt-get install -o dir::cache::archives="$APT_CACHE_DIR" -yqq --no-install-recommends libgfortran3
+  - echo "deb http://ftp.debian.org/debian stretch-backports main" >> /etc/apt/sources.list
+  - apt-get update -yq
+  - apt-get install -o dir::cache::archives="$APT_CACHE_DIR" -yqq --no-install-recommends cmake llvm-3.9-dev libclang-3.9-dev clang-3.9
 
 cache:
   untracked: true

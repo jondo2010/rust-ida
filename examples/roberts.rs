@@ -50,6 +50,11 @@ where
     }
 }
 
+type MyIda = ida::Ida<
+    ida::sample_problems::Roberts,
+    ida::linear::Dense<f64>,
+    ida::nonlinear::newton::Newton<ida::sample_problems::Roberts>, ida::tol_control::TolControlSV<f64>>;
+
 fn main() {
     pretty_env_logger::init();
 

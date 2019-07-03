@@ -54,6 +54,7 @@ pub enum IdaTask {
     OneStep,
 }
 
+#[derive(PartialEq, Debug)]
 pub enum IdaSolveStatus {
     ContinueSteps,
     Success,
