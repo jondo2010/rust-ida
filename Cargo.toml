@@ -1,6 +1,9 @@
-[package]
+[workspace]
+members = [ "crates/linear", "crates/nonlinear" ]
+
+[workspace.package]
 name = "ida"
-edition = "2018"
+edition = "2021"
 version = "0.1.1"
 authors = ["John Hughes <jondo2010@gmail.com>"]
 license = "BSD-3-Clause"
@@ -8,46 +11,55 @@ readme = "README.md"
 repository = "https://gitlab.com/jondo2010/rust-ida"
 documentation = "https://docs.rs/ida"
 homepage = "https://gitlab.com/jondo2010/rust-ida"
-description = """
-A pure Rust port of the Implicit Differential-Algebraic solver from the Sundials suite.
-"""
+description = "A pure Rust port of the Implicit Differential-Algebraic solver from the Sundials suite."
 categories = ["science", "simulation"]
 keywords = ["math", "differential"]
 
-[badges]
-gitlab = { repository = "jondo2010/rust-ida", branch = "master" }
+#[badges]
+#gitlab = { repository = "jondo2010/rust-ida", branch = "master" }
+#
+#[features]
+## Required for testing using the profile_scope!() macro
+#thread_profiler = ["profiler"]
+#data_trace = ["serde", "serde_json"]
 
-[features]
-# Required for testing using the profile_scope!() macro
-thread_profiler = ["profiler"]
-data_trace = ["serde", "serde_json"]
+[workspace.dependencies]
+approx              = { version = "0.5" }
+log                 = { version = "0.4", features = ["std"] }
+nalgebra            = { version = "0.32" }
+num-traits          = { version = "0.2" }
+thiserror           = { version = "1.0" }
 
-[dependencies]
-log                 = { version = "0.4.6", features = ["std"] }
-failure             = { version = "0.1.5" }
-ndarray             = { version = "0.12.1", default-features = true, features = ["serde-1"] }
-num-traits          = { version = "0.2.6" }
+#failure             = { version = "0.1.5" }
+#ndarray             = { version = "0.12.1", default-features = true, features = ["serde-1"] }
+#
+#profiler            = { package = "thread_profiler", version = "0.3.0", optional = true }
+#serde               = { version = "1.0.90", features = ["derive"], optional = true }
+#serde_json          = { version = "1.0.39", optional = true}
+#
+#[dev-dependencies]
+#criterion           = { version = "0.2.11" }
+#pretty_env_logger   = { version = "0.3" }
+#prettytable-rs      = { version = "0.8.0" }
+#nearly_eq           = { version = "0.2.4", features = ["ndarray"] }
+##approx              = { version = "0.3.2" }
+#ndarray-rand        = { version = "0.9.0" }
+#rand                = { version = "0.6.5" }
+#sundials-sys        = { version = "0.2" }
+#
+#[[bench]]
+#name = "dense"
+#harness = false
 
-profiler            = { package = "thread_profiler", version = "0.3.0", optional = true }
-serde               = { version = "1.0.90", features = ["derive"], optional = true }
-serde_json          = { version = "1.0.39", optional = true}
-
-[dev-dependencies]
-criterion           = { version = "0.2.11" }
-pretty_env_logger   = { version = "0.3" }
-prettytable-rs      = { version = "0.8.0" }
-nearly_eq           = { version = "0.2.4", features = ["ndarray"] }
-approx              = { version = "0.3.2" }
-ndarray-rand        = { version = "0.9.0" }
-rand                = { version = "0.6.5" }
-sundials-sys        = { version = "0.1.1" }
-
-[[bench]]
-name = "dense"
-harness = false
+[profile.dev]
+# Disabling debug info speeds up builds a bunch,
+# and we don't rely on it for debugging that much.
+debug = 2
 
 [profile.release]
-debug = true
+incremental = true
+# Set this to 1 or 2 to get more useful backtraces in debugger.
+debug = 0
 
 [profile.bench]
 debug = false

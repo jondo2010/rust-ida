@@ -1,33 +1,11 @@
-use failure::Fail;
-use ndarray::*;
+use nalgebra::{Dim, Matrix, Scalar, Storage, StorageMut, U1};
 
-use crate::traits::ModelSpec;
+use crate::Error;
 
-#[derive(Debug, Fail)]
-pub enum Error {
-    // Recoverable
-    /// SUN_NLS_CONTINUE
-    /// not converged, keep iterating
-    #[fail(display = "")]
-    Continue {},
-
-    /// convergece failure, try to recover
-    /// SUN_NLS_CONV_RECVR
-    #[fail(display = "")]
-    ConvergenceRecover {},
-
-    // Unrecoverable
-    /// illegal function input
-    ///SUN_NLS_ILL_INPUT
-    #[fail(display = "")]
-    IllegalInput {},
-    // failed NVector operation
-    //SUN_NLS_VECTOROP_ERR
-}
-
-pub trait NLProblem<M>
+pub trait NLProblem<T, D>
 where
-    M: ModelSpec,
+    T: Scalar,
+    D: Dim,
 {
     /// `sys` evaluates the nonlinear system `F(y)` for ROOTFIND type modules or `G(y)` for
     /// FIXEDPOINT type modules.
@@ -42,14 +20,14 @@ where
     /// * `Ok(bool)` indicates whether the routine has updated the Jacobian A (`true`) or not (`false`).
     /// * `Err()` for a recoverable error,
     /// * `Err(_) for an unrecoverable error
-    fn sys<S1, S2>(
+    fn sys<SB1, SB2>(
         &mut self,
-        y: ArrayBase<S1, Ix1>,
-        f: ArrayBase<S2, Ix1>,
-    ) -> Result<(), failure::Error>
+        y: &Matrix<T, D, U1, SB1>,
+        f: &mut Matrix<T, D, U1, SB2>,
+    ) -> Result<(), Error>
     where
-        S1: Data<Elem = M::Scalar>,
-        S2: DataMut<Elem = M::Scalar>;
+        SB1: Storage<T, D, U1>,
+        SB2: StorageMut<T, D, U1>;
 
     /// `lsetup` is called by integrators to provide the nonlinear solver with access to its linear
     /// solver setup function.
@@ -74,18 +52,15 @@ where
     /// linear solvers). `lsetup` implementations that do not require solving this system, do not
     /// utilize linear solvers, or use linear solvers that do not require setup may ignore these
     /// functions.
-    fn setup<S1, S2>(
+    fn setup<SA, SB>(
         &mut self,
-        _y: ArrayBase<S1, Ix1>,
-        _f: ArrayBase<S2, Ix1>,
-        _jbad: bool,
-    ) -> Result<bool, failure::Error>
+        y: &Matrix<T, D, U1, SA>,
+        f: &Matrix<T, D, U1, SB>,
+        jbad: bool,
+    ) -> Result<bool, Error>
     where
-        S1: Data<Elem = M::Scalar>,
-        S2: Data<Elem = M::Scalar>,
-    {
-        Ok(false)
-    }
+        SA: Storage<T, D, U1>,
+        SB: Storage<T, D, U1>;
 
     /// `lsolve` is called by integrators to provide the nonlinear solver with access to its linear
     /// solver solve function.
@@ -104,14 +79,14 @@ where
     /// The `lsove` function solves the linear system `Ax = b` where `A = ∂F/∂y` is the linearization
     /// of the nonlinear residual function F(y) = 0. Implementations that do not require solving
     /// this system or do not use sunlinsol linear solvers may ignore these functions.
-    fn solve<S1, S2>(
+    fn solve<SA, SB>(
         &mut self,
-        y: ArrayBase<S1, Ix1>,
-        b: ArrayBase<S2, Ix1>,
-    ) -> Result<(), failure::Error>
+        y: &Matrix<T, D, U1, SA>,
+        b: &mut Matrix<T, D, U1, SB>,
+    ) -> Result<(), Error>
     where
-        S1: Data<Elem = M::Scalar>,
-        S2: DataMut<Elem = M::Scalar>;
+        SA: Storage<T, D, U1>,
+        SB: StorageMut<T, D, U1>;
 
     /// `ctest` is an integrator-specific convergence test for nonlinear solvers and are typically
     /// supplied by each integrator, but users may supply custom problem-specific versions as desired.
@@ -136,29 +111,29 @@ where
     /// The tolerance passed to this routine by integrators is the tolerance in a weighted
     /// root-mean-squared norm with error weight vector `ewt`. Modules utilizing their own
     /// convergence criteria may ignore these functions.
-    fn ctest<S1, S2, S3, NLS>(
+    fn ctest<NLS, SA, SB, SC>(
         &mut self,
         solver: &NLS,
-        y: ArrayBase<S1, Ix1>,
-        del: ArrayBase<S2, Ix1>,
-        tol: M::Scalar,
-        ewt: ArrayBase<S3, Ix1>,
-    ) -> Result<bool, failure::Error>
+        y: &Matrix<T, D, U1, SA>,
+        del: &Matrix<T, D, U1, SB>,
+        tol: T,
+        ewt: &Matrix<T, D, U1, SC>,
+    ) -> Result<bool, Error>
     where
-        S1: Data<Elem = M::Scalar>,
-        S2: Data<Elem = M::Scalar>,
-        S3: Data<Elem = M::Scalar>,
-        NLS: NLSolver<M>;
+        NLS: NLSolver<T, D>,
+        SA: Storage<T, D, U1>,
+        SB: Storage<T, D, U1>,
+        SC: Storage<T, D, U1>;
 }
 
-pub trait NLSolver<M: ModelSpec> {
+pub trait NLSolver<T: Scalar, D: Dim> {
     /// Create a new NLSolver
     ///
     /// # Arguments
     ///
     /// * `size` - The problem size
     /// * `maxiters` - The maximum number of iterations per solve attempt
-    fn new(size: usize, maxiters: usize) -> Self;
+    fn new(maxiters: usize) -> Self;
 
     /// Description
     /// The optional function SUNNonlinSolSetup performs any solver setup needed for a nonlinear solve.
@@ -171,9 +146,9 @@ pub trait NLSolver<M: ModelSpec> {
     ///
     /// The return value retval (of type int) is zero for a successful call and a negative value for a failure.
     /// Notes sundials integrators call SUNonlinSolSetup before each step attempt. sunnonlinsol implementations that do not require setup may set this operation to NULL.
-    fn setup<S1>(&self, _y: &mut ArrayBase<S1, Ix1>) -> Result<(), failure::Error>
+    fn setup<S>(&self, _y: &mut Matrix<T, D, U1, S>) -> Result<(), Error>
     where
-        S1: DataMut<Elem = M::Scalar>,
+        S: StorageMut<T, D, U1>,
     {
         Ok(())
     }
@@ -204,21 +179,21 @@ pub trait NLSolver<M: ModelSpec> {
     ///
     /// * `Err(Error::ConvergenceRecover)` - the iteration appears to be diverging, try to recover.
     /// * `Err(_)` - an unrecoverable error occurred.
-    fn solve<NLP, S1, S2, S3>(
+    fn solve<NLP, SA, SB, SC>(
         &mut self,
         problem: &mut NLP,
-        y0: ArrayBase<S1, Ix1>,
-        y: ArrayBase<S2, Ix1>,
-        w: ArrayBase<S3, Ix1>,
-        tol: M::Scalar,
+        y0: &Matrix<T, D, U1, SA>,
+        y: &mut Matrix<T, D, U1, SB>,
+        w: &Matrix<T, D, U1, SC>,
+        tol: T,
         call_lsetup: bool,
-    ) -> Result<(), failure::Error>
+    ) -> Result<(), Error>
     where
-        Self: std::marker::Sized,
-        NLP: NLProblem<M>,
-        S1: Data<Elem = M::Scalar>,
-        S2: DataMut<Elem = M::Scalar>,
-        S3: Data<Elem = M::Scalar>;
+        NLP: NLProblem<T, D>,
+        SA: Storage<T, D, U1>,
+        SB: StorageMut<T, D, U1>,
+        SC: Storage<T, D, U1>,
+        Self: std::marker::Sized;
 
     /// get the total number on nonlinear iterations (optional)
     fn get_num_iters(&self) -> usize {
