@@ -18,6 +18,78 @@ where
     DefaultAllocator:
         Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D> + Allocator<u8, D>,
 {
+    /// This routine computes the coefficients relevant to the current step.
+    ///
+    /// The counter ns counts the number of consecutive steps taken at constant stepsize h and order k, up to a maximum
+    /// of k + 2.
+    ///
+    /// Then the first ns components of beta will be one, and on a step with ns = k + 2, the
+    /// coefficients alpha, etc. need not be reset here.
+    /// Also, complete_step() prohibits an order increase until ns = k + 2.
+    ///
+    /// Returns the 'variable stepsize error coefficient ck'
+    pub fn set_coeffs(&mut self) -> T {
+        #[cfg(feature = "profiler")]
+        profile_scope!(format!("set_coeffs()"));
+
+        // Set coefficients for the current stepsize h
+        if (self.ida_hh != self.ida_hused) || (self.ida_kk != self.ida_kused) {
+            self.ida_ns = 0;
+        }
+
+        self.ida_ns = std::cmp::min(self.ida_ns + 1, self.ida_kused + 2);
+        if self.ida_kk + 1 >= self.ida_ns {
+            self.ida_beta[0] = T::one();
+            self.ida_alpha[0] = T::one();
+            self.ida_gamma[0] = T::zero();
+            self.ida_sigma[0] = T::one();
+
+            let mut temp1 = self.ida_hh;
+            for i in 1..=self.ida_kk {
+                let scalar_i = T::from(i).unwrap();
+                let temp2 = self.ida_psi[i - 1];
+                self.ida_psi[i - 1] = temp1;
+                self.ida_beta[i] = self.ida_beta[i - 1] * self.ida_psi[i - 1] / temp2;
+                temp1 = temp2 + self.ida_hh;
+                self.ida_alpha[i] = self.ida_hh / temp1;
+                self.ida_sigma[i] = scalar_i * self.ida_sigma[i - 1] * self.ida_alpha[i];
+                self.ida_gamma[i] = self.ida_gamma[i - 1] + self.ida_alpha[i - 1] / self.ida_hh;
+            }
+            self.ida_psi[self.ida_kk] = temp1;
+        }
+
+        // compute alphas, alpha0
+        let mut alphas = T::zero();
+        let mut alpha0 = T::zero();
+        for i in 0..self.ida_kk {
+            let scalar_i = T::from(i + 1).unwrap();
+            alphas -= T::one() / scalar_i;
+            alpha0 -= self.ida_alpha[i];
+        }
+
+        // compute leading coefficient cj
+        self.ida_cjlast = self.nlp.lp.ida_cj;
+        self.nlp.lp.ida_cj = -alphas / self.ida_hh;
+
+        // compute variable stepsize error coefficient ck
+        let mut ck = (self.ida_alpha[self.ida_kk] + alphas - alpha0).abs();
+        ck = ck.max(self.ida_alpha[self.ida_kk]);
+
+        // change phi to phi-star
+        // Scale i=self.ida_ns to i<=self.ida_kk
+        if self.ida_ns <= self.ida_kk {
+            //N_VScaleVectorArray( self.ida_kk - self.ida_ns + 1, self.ida_beta + self.ida_ns, self.ida_phi + self.ida_ns, self.ida_phi + self.ida_ns,);
+            let beta = self.ida_beta.rows_range(self.ida_ns..=self.ida_kk);
+
+            let mut phi = self.ida_phi.columns_range_mut(self.ida_ns..=self.ida_kk);
+            phi.column_iter_mut()
+                .zip(beta.iter())
+                .for_each(|(mut phi, beta)| phi *= *beta);
+        }
+
+        return ck;
+    }
+
     /// This routine evaluates `y(t)` and `y'(t)` as the value and derivative of the interpolating polynomial at the
     /// independent variable `t`, and stores the results in the vectors `yret` and `ypret`.
     /// It uses the current independent variable value, `tn`, and the method order last used, `kused`.

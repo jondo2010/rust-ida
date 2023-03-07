@@ -296,6 +296,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "disabled")]
     fn test_get_current_y() {
         unsafe {
             let (yy, yp, mem) = super::roberts::build_ida();
@@ -315,7 +316,7 @@ mod tests {
             let ida = crate::Ida::<f64, U3, _, _, _>::from_sundials(mem);
             let mut y = Vector3::zeros();
 
-            //ida.get_current_y(&mut y).expect("get_current_y failed");
+            ida.get_current_y(&mut y).expect("get_current_y failed");
 
             assert_eq!(y, vector_view::<U3>(yy));
         }

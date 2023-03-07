@@ -44,7 +44,6 @@ fn test_get_solution() {
     ];
 
     let problem = Dummy {};
-
     let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
         problem,
         linear::Dense::new(),
