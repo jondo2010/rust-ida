@@ -1,3 +1,6 @@
+use std::fmt::LowerExp;
+
+use log::trace;
 use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Dim};
 
 use crate::{
@@ -10,7 +13,7 @@ mod complete_step;
 
 impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
 where
-    T: IdaReal,
+    T: IdaReal + LowerExp,
     D: Dim,
     P: IdaProblem<T, D>,
     LS: linear::LSolver<T, D>,
@@ -88,6 +91,37 @@ where
         }
 
         return ck;
+    }
+
+    /// IDARestore
+    /// This routine restores tn, psi, and phi in the event of a failure.
+    /// It changes back `phi-star` to `phi` (changed in `set_coeffs()`)
+    pub fn restore(&mut self, saved_t: T) -> () {
+        trace!("restore(saved_t={:.6e})", saved_t);
+        self.nlp.ida_tn = saved_t;
+
+        // Restore psi[0 .. kk] = psi[1 .. kk + 1] - hh
+        for j in 1..self.ida_kk + 1 {
+            self.ida_psi[j - 1] = self.ida_psi[j] - self.ida_hh;
+        }
+
+        if self.ida_ns <= self.ida_kk {
+            // cvals[0 .. kk-ns+1] = 1 / beta[ns .. kk+1]
+            self.ida_cvals
+                .rows_mut(0, self.ida_kk - self.ida_ns + 1)
+                .copy_from(
+                    &self
+                        .ida_beta
+                        .rows_range(self.ida_ns..=self.ida_kk)
+                        .map(|x| x.recip()),
+                );
+
+            // phi[ns .. (kk + 1)] *= cvals[ns .. (kk + 1)]
+            let mut phi = self.ida_phi.columns_range_mut(self.ida_ns..=self.ida_kk);
+            phi.column_iter_mut()
+                .zip(self.ida_cvals.rows(0, self.ida_kk - self.ida_ns + 1).iter())
+                .for_each(|(mut phi, cval)| phi *= *cval);
+        }
     }
 
     /// This routine evaluates `y(t)` and `y'(t)` as the value and derivative of the interpolating polynomial at the
