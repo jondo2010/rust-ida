@@ -15,6 +15,9 @@ use crate::{
     Ida, IdaCounters, IdaTask,
 };
 
+mod adapter;
+mod roberts;
+
 /// Implements `IdaProblem` for a solver initialized by the `sundials-sys` crate.
 #[derive(Debug)]
 struct SundialsProblem {}
@@ -79,7 +82,7 @@ where
     DefaultAllocator: Allocator<f64, D, D>
         + Allocator<f64, D, Const<MXORDP1>>
         + Allocator<f64, D>
-        + Allocator<bool, D>
+        + Allocator<u8, D>
         + Allocator<usize, D>,
 {
     pub fn from_sundials(mem: sundials_sys::IDAMem) -> Self {
@@ -256,190 +259,65 @@ where
     }
 }
 
-mod adapter {
-    use nalgebra::{
-        allocator::Allocator, DefaultAllocator, DimName, Matrix, VectorViewMut, ViewStorageMut, U1,
-    };
+#[cfg(test)]
+mod tests {
+    use nalgebra::{Vector3, U3};
 
-    /// Create an nalgebra mutable view of a SUNDIALS dense matrix
-    pub unsafe fn dense_matrix_view<'a, R: DimName, C: DimName>(
-        m: sundials_sys::SUNMatrix,
-    ) -> Matrix<f64, R, C, ViewStorageMut<'a, f64, R, C, U1, C>>
-    where
-        DefaultAllocator: Allocator<f64, R, C>,
-    {
-        let rows = sundials_sys::SUNDenseMatrix_Rows(m) as usize;
-        let cols = sundials_sys::SUNDenseMatrix_Columns(m) as usize;
-
-        assert_eq!(R::dim(), rows, "Matrix row count mismatch");
-        assert_eq!(C::dim(), cols, "Matrix column count mismatch");
-
-        Matrix::from_data(ViewStorageMut::from_raw_parts(
-            sundials_sys::SUNDenseMatrix_Data(m),
-            (R::name(), C::name()),
-            (U1, C::name()),
-        ))
-    }
-
-    /// Create an nalgebra mutable view of a SUNDIALS vector
-    pub unsafe fn vector_view<'a, D: DimName>(
-        v: sundials_sys::N_Vector,
-    ) -> VectorViewMut<'a, f64, D> {
-        assert_eq!(
-            D::dim(),
-            sundials_sys::N_VGetLength(v) as usize,
-            "Vector length mismatch"
-        );
-
-        let data = sundials_sys::N_VGetArrayPointer(v);
-        Matrix::from_data(ViewStorageMut::from_raw_parts(
-            data,
-            (D::name(), U1),
-            (U1, D::name()),
-        ))
-    }
+    use crate::sundials::adapter::vector_view;
 
     #[test]
-    fn test_mat() {
-        use nalgebra::*;
-
-        let a = unsafe {
-            let a = sundials_sys::SUNDenseMatrix(3, 3);
-            sundials_sys::SUNMatZero(a);
-            sundials_sys::SUNMatScaleAddI(1.0, a);
-            a
-        };
-
-        let mut m = unsafe { dense_matrix_view::<U3, U3>(a) };
-
-        m[(2, 0)] = 2.0;
-
+    fn test_get_dky() {
         unsafe {
-            //sundials_sys::SUNDenseMatrix_Print(a, libc_stdhandle::stdout() as *mut _);
+            let (yy, yp, mem) = super::roberts::build_ida();
+
+            // Call IDASolve
+            let tout1 = 0.4;
+            let mut tret = 0.0;
+            let ret = sundials_sys::IDASolve(
+                mem as _,
+                tout1,
+                &mut tret,
+                yy,
+                yp,
+                sundials_sys::IDA_NORMAL,
+            );
+
+            let ida = crate::Ida::<f64, U3, _, _, _>::from_sundials(mem);
+            let dky_expect = sundials_sys::N_VNew_Serial(3);
+            let mut dky = Vector3::zeros();
+
+            for k in 0..=ida.ida_kused {
+                sundials_sys::IDAGetDky(mem as _, tret, k as _, dky_expect);
+                ida.get_dky(tret, k, &mut dky).expect("get_dky failed");
+
+                assert_eq!(dky, vector_view::<U3>(dky_expect));
+            }
         }
-
-        println!("{m}");
-    }
-}
-
-mod roberts {
-
-    use std::ffi::{c_int, c_void};
-
-    use super::adapter::{dense_matrix_view, vector_view};
-    use nalgebra::*;
-
-    unsafe extern "C" fn res(
-        _t: f64,
-        _yy: sundials_sys::N_Vector,
-        _yp: sundials_sys::N_Vector,
-        _resval: sundials_sys::N_Vector,
-        _user_data: *mut c_void,
-    ) -> c_int {
-        0
-    }
-
-    unsafe extern "C" fn g(
-        _t: f64,
-        yy: sundials_sys::N_Vector,
-        _yp: sundials_sys::N_Vector,
-        gout: *mut f64,
-        _user_data: *mut c_void,
-    ) -> c_int {
-        let yval = std::slice::from_raw_parts(
-            sundials_sys::N_VGetArrayPointer(yy),
-            sundials_sys::N_VGetLength(yy) as usize,
-        );
-        let gout = std::slice::from_raw_parts_mut(gout, 3);
-        gout[0] = yval[0] - 0.0001;
-        gout[1] = yval[2] - 0.01;
-        0
-    }
-
-    unsafe extern "C" fn jac(
-        _tt: f64,
-        cj: f64,
-        yy: sundials_sys::N_Vector,
-        _yp: sundials_sys::N_Vector,
-        _respect: sundials_sys::N_Vector,
-        JJ: sundials_sys::SUNMatrix,
-        _user_data: *mut c_void,
-        _tempv1: sundials_sys::N_Vector,
-        _tempv2: sundials_sys::N_Vector,
-        _tempv3: sundials_sys::N_Vector,
-    ) -> c_int {
-        let yval = vector_view::<U3>(yy);
-        let mut jj = dense_matrix_view::<U3, U3>(JJ);
-        jj.copy_from(&matrix![
-            -0.04 - cj, 0.04, 1.0;
-            1.0e4 * yval[2], -1.0e4 * yval[2] - 6.0e7 * yval[1] - cj, 1.0;
-            1.0e4 * yval[1], -1.0e4 * yval[1], 1.0;
-        ]);
-        0
-    }
-
-    pub unsafe fn build() -> sundials_sys::IDAMem {
-        let yy = sundials_sys::N_VNew_Serial(3);
-        let mut yval = vector_view::<U3>(yy);
-        yval.copy_from(&(vector![1.0, 0.0, 0.0]));
-
-        let yp = sundials_sys::N_VNew_Serial(3);
-        let mut ypval = vector_view::<U3>(yp);
-        ypval.copy_from(&(vector![-0.04, 0.04, 0.0]));
-
-        let rtol = 1.0e-4;
-
-        let avtol = sundials_sys::N_VNew_Serial(3);
-        let mut atval = vector_view::<U3>(avtol);
-        atval.copy_from(&vector![1.0e-8, 1.0e-6, 1.0e-6]);
-
-        let t0 = 0.0;
-        let tout1 = 0.4;
-        let mut tret = 0.0;
-
-        let mem = sundials_sys::IDACreate();
-        assert_eq!(sundials_sys::IDAInit(mem, Some(res), t0, yy, yp), 0);
-
-        // Set tolerances
-        assert_eq!(sundials_sys::IDASVtolerances(mem, rtol, avtol), 0);
-
-        // Call IDARootInit to specify the root function g with 2 components
-        assert_eq!(sundials_sys::IDARootInit(mem, 2, Some(g)), 0);
-
-        // Create dense SUNMatrix for use in linear solves
-        let A = sundials_sys::SUNDenseMatrix(3, 3);
-
-        // Create dense SUNLinearSolver object
-        let LS = sundials_sys::SUNDenseLinearSolver(yy, A);
-
-        // Attach the matrix and linear solver
-        assert_eq!(sundials_sys::IDASetLinearSolver(mem, LS, A), 0);
-
-        // Set the user-supplied Jacobian routine
-        assert_eq!(sundials_sys::IDASetJacFn(mem, Some(jac)), 0);
-
-        // Create Newton SUNNonlinearSolver object. IDA uses a Newton SUNNonlinearSolver by default, so it is unecessary to create it and attach it. It is done in this example code solely for demonstration purposes.
-        let NLS = sundials_sys::SUNNonlinSol_Newton(yy);
-
-        // Attach the nonlinear solver
-        assert_eq!(sundials_sys::IDASetNonlinearSolver(mem, NLS), 0);
-
-        // Call IDASolve
-        let ret = sundials_sys::IDASolve(mem, tout1, &mut tret, yy, yp, sundials_sys::IDA_NORMAL);
-        println!("tret: {tret}");
-
-        //dbg!(sundials_sys::idaNlsInit(mem as sundials_sys::IDAMem));
-        let mem = mem as sundials_sys::IDAMem;
-
-        mem
     }
 
     #[test]
-    fn test() {
+    fn test_get_current_y() {
         unsafe {
-            let mem = build();
+            let (yy, yp, mem) = super::roberts::build_ida();
 
-            crate::Ida::<f64, U3, _, _, _>::from_sundials(mem);
+            // Call IDASolve
+            let tout1 = 0.4;
+            let mut tret = 0.0;
+            let ret = sundials_sys::IDASolve(
+                mem as _,
+                tout1,
+                &mut tret,
+                yy,
+                yp,
+                sundials_sys::IDA_NORMAL,
+            );
+
+            let ida = crate::Ida::<f64, U3, _, _, _>::from_sundials(mem);
+            let mut y = Vector3::zeros();
+
+            //ida.get_current_y(&mut y).expect("get_current_y failed");
+
+            assert_eq!(y, vector_view::<U3>(yy));
         }
     }
 }

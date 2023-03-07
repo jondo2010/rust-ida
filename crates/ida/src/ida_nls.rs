@@ -1,6 +1,6 @@
 use linear::LSolver;
 use nalgebra::{
-    allocator::Allocator, DefaultAllocator, DimName, Matrix, OVector, Storage, StorageMut, U1,
+    allocator::Allocator, DefaultAllocator, Dim, DimName, Matrix, OVector, Storage, StorageMut, U1,
 };
 use nonlinear::{norm_wrms::NormWRMS, NLProblem, NLSolver};
 
@@ -34,7 +34,7 @@ const RATEMAX: f64 = 0.9;
 pub struct IdaNLProblem<T, D, P, LS>
 where
     T: IdaReal,
-    D: DimName,
+    D: Dim,
     P: IdaProblem<T, D>,
     LS: LSolver<T, D>,
     DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
@@ -117,7 +117,7 @@ where
 impl<T, D, P, LS> NLProblem<T, D> for IdaNLProblem<T, D, P, LS>
 where
     T: IdaReal,
-    D: DimName,
+    D: Dim,
     P: IdaProblem<T, D>,
     LS: LSolver<T, D>,
     DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,

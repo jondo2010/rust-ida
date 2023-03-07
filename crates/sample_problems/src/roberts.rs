@@ -1,4 +1,4 @@
-use ida::traits::{Jacobian, Residual, Root};
+use ida::{Jacobian, Residual, Root};
 use nalgebra::{Matrix, Storage, StorageMut, U1, U3};
 
 #[cfg(feature = "data_trace")]

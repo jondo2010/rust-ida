@@ -1,23 +1,29 @@
-use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Dim, DimName, OMatrix, OVector};
+use nalgebra::{
+    allocator::Allocator, Const, DefaultAllocator, Dim, DimName, Matrix, OMatrix, OVector, Storage,
+    StorageMut, Vector, U1,
+};
 
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod constants;
-use constants::*;
 mod error;
-pub use error::Error;
+mod ida_io;
 pub mod ida_ls;
 pub mod ida_nls;
 mod impl_new;
+pub(crate) mod private;
 pub mod sundials;
-pub use impl_new::*;
-pub mod tol_control;
-pub mod traits;
-use tol_control::TolControl;
-use traits::{IdaProblem, IdaReal};
 #[cfg(test)]
 mod tests;
+mod tol_control;
+mod traits;
+
+use constants::*;
+pub use error::Error;
+pub use impl_new::*;
+use tol_control::TolControl;
+pub use traits::{IdaProblem, IdaReal, Jacobian, Residual, Root};
 
 /// Counters
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
@@ -60,25 +66,24 @@ enum IdaConverged {
 #[cfg_attr(
     feature = "serde-serialize",
     serde(bound(
-        serialize = "T: Serialize, OVector<T, D>: Serialize, OMatrix<T, D, Const<MXORDP1>>: Serialize, OVector<bool, D>: Serialize, ida_nls::IdaNLProblem<T, D, P, LS>: Serialize, NLS: Serialize, LS: Serialize, P: Serialize"
+        serialize = "T: Serialize, OVector<T, D>: Serialize, OMatrix<T, D, Const<MXORDP1>>: Serialize, ida_nls::IdaNLProblem<T, D, P, LS>: Serialize, NLS: Serialize, LS: Serialize, P: Serialize"
     ))
 )]
 #[cfg_attr(
     feature = "serde-serialize",
     serde(bound(
-        deserialize = "T: Deserialize<'de>, OVector<T, D>: Deserialize<'de>, OMatrix<T, D, Const<MXORDP1>>: Deserialize<'de>, OVector<bool, D>: Deserialize<'de>, ida_nls::IdaNLProblem<T, D, P, LS>: Deserialize<'de>, NLS: Deserialize<'de>, LS: Deserialize<'de>, P: Deserialize<'de>"
+        deserialize = "T: Deserialize<'de>, OVector<T, D>: Deserialize<'de>, OMatrix<T, D, Const<MXORDP1>>: Deserialize<'de>, ida_nls::IdaNLProblem<T, D, P, LS>: Deserialize<'de>, NLS: Deserialize<'de>, LS: Deserialize<'de>, P: Deserialize<'de>"
     ))
 )]
 #[derive(Debug)]
 pub struct Ida<T, D, P, LS, NLS>
 where
     T: IdaReal,
-    D: DimName,
+    D: Dim,
     P: IdaProblem<T, D>,
     LS: linear::LSolver<T, D>,
     NLS: nonlinear::NLSolver<T, D>,
-    DefaultAllocator:
-        Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D> + Allocator<bool, D>,
+    DefaultAllocator: Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D>,
 {
     ida_setup_done: bool,
     tol_control: TolControl<T, D>,
@@ -104,7 +109,7 @@ where
     /// residual vector
     ida_delta: OVector<T, D>,
     /// bit vector for diff./algebraic components
-    ida_id: Option<OVector<bool, D>>,
+    ida_id: Option<OVector<T, D>>,
     /// vector of inequality constraint options
     ida_constraints: Option<OVector<T, D>>,
     /// accumulated corrections to y vector, but set equal to estimated local errors upon successful return
@@ -214,8 +219,6 @@ where
     /// number of warning messages about possible g==0
     ida_mxgnull: usize,
 
-    // Arrays for Fused Vector Operations
-    //ida_zvecs: Array<T, Ix2>,
     /// Nonlinear Solver
     nls: NLS,
 
@@ -224,4 +227,144 @@ where
 
     #[cfg(feature = "data_trace")]
     data_trace: std::fs::File,
+}
+
+/// # Interpolated output and extraction functions
+impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
+where
+    T: IdaReal,
+    D: Dim,
+    P: IdaProblem<T, D>,
+    LS: linear::LSolver<T, D>,
+    NLS: nonlinear::NLSolver<T, D>,
+    DefaultAllocator: Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D>,
+{
+    /// IDAGetDky
+    ///
+    /// This routine evaluates the k-th derivative of `y(t)` as the value of the k-th derivative of the interpolating
+    /// polynomial at the independent variable `t`, and stores the results in the vector `dky`. It uses the current
+    /// independent variable value, `tn`, and the method order last used, `kused`.
+    ///
+    /// # Arguments
+    /// * `t` - the independent variable value at which to evaluate the derivative
+    /// * `k` - the order of the derivative to evaluate
+    /// * `dky` - the vector in which to store the result
+    ///
+    /// # Return values
+    /// * `Ok(())` - if successful
+    /// * `Err(Error::BadTimeValue)` - if `t` is not within the interval of the last step taken
+    /// * `Err(Error::BadK)` - if the requested `k` is not in the range `[0,order used]`
+    pub fn get_dky<S>(&self, t: T, k: usize, dky: &mut Vector<T, D, S>) -> Result<(), Error>
+    where
+        S: StorageMut<T, D, U1>,
+    {
+        if k > self.ida_kused {
+            Err(Error::BadK {
+                kused: self.ida_kused,
+            })?
+        }
+
+        self.check_t(t)?;
+
+        // Initialize the c_j^(k) and c_k^(k-1)
+        let mut cjk = OVector::<T, Const<MXORDP1>>::zeros();
+        let mut cjk_1 = OVector::<T, Const<MXORDP1>>::zeros();
+
+        let delt = t - self.nlp.ida_tn;
+        let mut psij_1 = T::zero();
+
+        for i in 0..k + 1 {
+            let scalar_i = T::from(i as f64).unwrap();
+            // The below reccurence is used to compute the k-th derivative of the solution:
+            //    c_j^(k) = ( k * c_{j-1}^(k-1) + c_{j-1}^{k} (Delta+psi_{j-1}) ) / psi_j
+            //
+            //    Translated in indexes notation:
+            //    cjk[j] = ( k*cjk_1[j-1] + cjk[j-1]*(delt+psi[j-2]) ) / psi[j-1]
+            //
+            //    For k=0, j=1: c_1 = c_0^(-1) + (delt+psi[-1]) / psi[0]
+            //
+            //    In order to be able to deal with k=0 in the same way as for k>0, the
+            //    following conventions were adopted:
+            //      - c_0(t) = 1 , c_0^(-1)(t)=0
+            //      - psij_1 stands for psi[-1]=0 when j=1
+            //                      for psi[j-2]  when j>1
+            if i == 0 {
+                cjk[i] = T::one();
+            } else {
+                //                                                i       i-1          1
+                // c_i^(i) can be always updated since c_i^(i) = -----  --------  ... -----
+                //                                               psi_j  psi_{j-1}     psi_1
+                cjk[i] = cjk[i - 1] * scalar_i / self.ida_psi[i - 1];
+                psij_1 = self.ida_psi[i - 1];
+            }
+
+            // update c_j^(i)
+            //j does not need to go till kused
+            for j in i + 1..self.ida_kused - k + 1 + 1 {
+                cjk[j] =
+                    (scalar_i * cjk_1[j - 1] + cjk[j - 1] * (delt + psij_1)) / self.ida_psi[j - 1];
+                psij_1 = self.ida_psi[j - 1];
+            }
+
+            // save existing c_j^(i)'s
+            for j in i + 1..self.ida_kused - k + 1 + 1 {
+                cjk_1[j] = cjk[j];
+            }
+        }
+
+        // Slice phi from k..kused+1
+        let phi = self.ida_phi.columns(k, self.ida_kused + 1);
+
+        // Slice cjk from k..kused+1
+        let cvals = cjk.rows(k, self.ida_kused + 1);
+
+        // Compute sum (c_j(t) * phi(t)) from j=k to j<=kused
+        phi.mul_to(&cvals, dky);
+
+        Ok(())
+    }
+
+    /// Check `t` for legality. Here tn - hused is t_{n-1}.
+    fn check_t(&self, t: T) -> Result<(), Error> {
+        let tfuzz = T::hundred()
+            * T::from(f64::EPSILON).unwrap()
+            * (self.nlp.ida_tn.abs() + self.ida_hh.abs())
+            * self.ida_hh.signum();
+        let tp = self.nlp.ida_tn - self.ida_hused - tfuzz;
+        Ok(if (t - tp) * self.ida_hh < T::zero() {
+            Err(Error::BadTimeValue {
+                t: t.to_f64().unwrap(),
+                tdiff: (self.nlp.ida_tn - self.ida_hused).to_f64().unwrap(),
+                tcurr: self.nlp.ida_tn.to_f64().unwrap(),
+            })?
+        })
+    }
+
+    /// Computes y based on the current prediction and given correction `ycor`.
+    ///
+    /// # Arguments
+    /// * `ycor` - the correction to the predicted value of `y`
+    /// * `y` - the vector in which to store the result
+    pub fn compute_y<SA, SB>(&self, ycor: &Vector<T, D, SA>, y: &mut Vector<T, D, SB>)
+    where
+        SA: Storage<T, D, U1>,
+        SB: StorageMut<T, D, U1>,
+    {
+        y.copy_from(&self.nlp.ida_yypredict);
+        y.axpy(T::one(), ycor, T::one());
+    }
+
+    /// Computes y' based on the current prediction and given correction `ycor`.
+    ///
+    /// # Arguments
+    /// * `ycor` - the correction to the predicted value of `y`
+    /// * `yp` - the vector in which to store the result
+    pub fn compute_yp<SA, SB>(&self, ycor: &Vector<T, D, SA>, yp: &mut Vector<T, D, SB>)
+    where
+        SA: Storage<T, D, U1>,
+        SB: StorageMut<T, D, U1>,
+    {
+        yp.copy_from(&self.nlp.ida_yppredict);
+        yp.axpy(T::one(), ycor, T::one());
+    }
 }

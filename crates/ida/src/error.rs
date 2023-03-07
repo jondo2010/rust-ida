@@ -81,8 +81,8 @@ pub enum Error {
     ConvergenceFail {},
 
     ///MSG_BAD_K
-    #[error("Illegal value for k.")]
-    BadK {},
+    #[error("Illegal value for k, should be 0 <= k <= {kused}.")]
+    BadK { kused: usize },
 
     //MSG_NULL_DKY       "dky = NULL illegal."
     ///MSG_BAD_T

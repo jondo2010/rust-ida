@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::traits::{Jacobian, Residual, Root};
 
+mod complete_step;
 mod get_dky;
 mod get_solution;
 

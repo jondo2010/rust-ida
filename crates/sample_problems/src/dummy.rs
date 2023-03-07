@@ -1,4 +1,4 @@
-use ida::traits::{Jacobian, Residual, Root};
+use ida::{Jacobian, Residual, Root};
 use nalgebra::{Const, Matrix, Storage, StorageMut, U1};
 
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]

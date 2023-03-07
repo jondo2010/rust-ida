@@ -203,7 +203,16 @@ where
             counters: IdaLProblemCounters::default(),
         }
     }
+}
 
+impl<T, D, P, LS> IdaLProblem<T, D, P, LS>
+where
+    T: IdaReal,
+    D: Dim,
+    P: IdaProblem<T, D>,
+    LS: LSolver<T, D>,
+    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
+{
     /// idaLsSetup
     ///
     /// This calls the Jacobian evaluation routine, updates counters, and calls the LS `setup` routine to prepare for subsequent calls to the LS 'solve' routine.

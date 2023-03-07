@@ -1,5 +1,6 @@
 use super::Dummy;
 use crate::{tol_control::TolControl, Ida};
+use approx::assert_relative_eq;
 use nalgebra::{matrix, vector, Const, U3};
 
 #[test]
@@ -61,8 +62,8 @@ fn test_get_solution() {
 
     println!("{}", serde_json::to_string(&ida).unwrap());
 
-    //ida.get_solution(t).unwrap();
+    ida.get_solution(t).unwrap();
 
-    //assert_nearly_eq!(ida.get_yy(), yret_expect);
-    //assert_nearly_eq!(ida.get_yp(), ypret_expect);
+    assert_relative_eq!(ida.get_yy(), &yret_expect, epsilon = 1e-8);
+    assert_relative_eq!(ida.get_yp(), &ypret_expect, epsilon = 1e-8);
 }
