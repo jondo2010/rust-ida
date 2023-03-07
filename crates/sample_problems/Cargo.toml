@@ -1,16 +1,11 @@
 [package]
-name = "linear"
-description = "Linear solvers"
+name = "sample_problems"
 
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 #rust-version.workspace = true
-
-[features]
-default = ["serde-serialize"]
-serde-serialize = ["serde", "nalgebra/serde-serialize"]
 
 [lib]
 
@@ -19,7 +14,7 @@ nalgebra.workspace = true
 thiserror.workspace = true
 num-traits.workspace = true
 
-serde = { version = "1.0", features = ["derive"], optional = true }
+ida.workspace = true
 
 [dev-dependencies]
 approx.workspace = true

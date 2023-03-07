@@ -1,15 +1,14 @@
-use std::iter::Sum;
-
 use nalgebra::{
     allocator::SameShapeAllocator,
     constraint::{SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
-    ClosedMul, DefaultAllocator, Dim, Matrix, RealField, Scalar, Storage, U1,
+    DefaultAllocator, Dim, Matrix, RealField, Scalar, Storage, U1,
 };
+use num_traits::NumCast;
 
 pub trait NormWRMS<T, R1: Dim, C1: Dim, SA> {
     fn norm_wrms<R2, SB>(&self, rhs: &Matrix<T, R2, U1, SB>) -> T
     where
-        T: ClosedMul,
+        T: RealField,
         R2: Dim,
         SB: Storage<T, R2, U1>,
         DefaultAllocator: SameShapeAllocator<T, R1, C1, R2, U1>,
@@ -18,7 +17,7 @@ pub trait NormWRMS<T, R1: Dim, C1: Dim, SA> {
 
 impl<T, R1: Dim, C1: Dim, SA> NormWRMS<T, R1, C1, SA> for Matrix<T, R1, C1, SA>
 where
-    T: Scalar + RealField + Sum + Copy + From<u32>,
+    T: Scalar + RealField + NumCast + Copy,
     SA: Storage<T, R1, C1>,
 {
     fn norm_wrms<R2, SB>(&self, w: &Matrix<T, R2, U1, SB>) -> T
@@ -28,8 +27,14 @@ where
         DefaultAllocator: SameShapeAllocator<T, R1, C1, R2, U1>,
         ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, U1>,
     {
-        let len = T::from(self.nrows() as u32);
-        (self.component_mul(&w).iter().map(|x| x.powi(2)).sum::<T>() / len).sqrt()
+        let len = T::from(self.nrows()).unwrap();
+        (self
+            .component_mul(&w)
+            .iter()
+            .map(|x| x.powi(2))
+            .fold(T::zero(), |acc, x| acc + x)
+            / len)
+            .sqrt()
     }
 }
 

@@ -1,5 +1,4 @@
-use nalgebra::{Dim, Matrix, Scalar, StorageMut, VectorView, U1};
-use num_traits::Zero;
+use nalgebra::{Dim, Matrix, RealField, Scalar, Storage, StorageMut, VectorView, U1};
 
 use crate::{Error, LSolverType};
 
@@ -26,11 +25,9 @@ pub trait LProblem<T: Scalar, D: Dim> {
 
 pub trait LSolver<T, D>
 where
-    T: Scalar + Zero,
+    T: Scalar + RealField,
     D: Dim,
 {
-    fn new() -> Self;
-
     fn get_type(&self) -> LSolverType;
 
     /// provides left/right scaling vectors for the linear system solve. Here, s1 and s2 are
@@ -43,7 +40,15 @@ where
     /// ## Arguments
     /// * `s1` diagonal of the matrix S1
     /// * `s2` diagonal of the matrix S2
-    fn set_scaling_vectors<S1, S2>(&mut self, _s1: VectorView<T, D>, _s2: VectorView<T, D>) {}
+    fn set_scaling_vectors<SA, SB>(
+        &mut self,
+        _s1: &Matrix<T, D, U1, SA>,
+        _s2: &Matrix<T, D, U1, SB>,
+    ) where
+        SA: Storage<T, D>,
+        SB: Storage<T, D>,
+    {
+    }
 
     /// Performs any linear solver setup needed, based on an updated system sunmatrix A. This may
     /// be called frequently (e.g., with a full Newton method) or infrequently (for a modified

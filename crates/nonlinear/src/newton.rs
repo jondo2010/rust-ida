@@ -4,13 +4,23 @@ use nalgebra::{
     allocator::Allocator, DefaultAllocator, Dim, DimName, DimNameAdd, Matrix, OVector, RealField,
     Scalar, Storage, StorageMut, U1,
 };
-#[cfg(feature = "data_trace")]
-use serde::Serialize;
+#[cfg(feature = "serde-serialize")]
+use serde::{Deserialize, Serialize};
 
 use crate::{Error, NLProblem, NLSolver};
 
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde-serialize",
+    serde(bound(serialize = "OVector<T, D>: Serialize"))
+)]
+#[cfg_attr(
+    feature = "serde-serialize",
+    serde(bound(
+        deserialize = "OVector<T, D>: Deserialize<'de>, DefaultAllocator: Allocator<T, D>"
+    ))
+)]
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct Newton<T, D>
 where
     T: Scalar,
@@ -316,7 +326,7 @@ mod tests {
             a: nalgebra::Matrix3::zeros(),
             x: nalgebra::Vector3::zeros(),
 
-            lsolver: <Dense<_> as LSolver<f64, U3>>::new(),
+            lsolver: Dense::new(),
         };
 
         // set initial guess

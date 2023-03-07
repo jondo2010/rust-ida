@@ -1,126 +1,120 @@
 use log::warn;
-use ndarray::prelude::*;
 
-use super::constants::IdaConst;
-use super::linear::{LSolver, LSolverType};
-use super::traits::IdaProblem;
-use super::IdaCounters;
+use linear::{LSolver, LSolverType};
+use nalgebra::{
+    allocator::Allocator, DefaultAllocator, Dim, DimName, Matrix, OMatrix, OVector, Storage,
+    StorageMut, U1,
+};
 
-#[cfg(feature = "data_trace")]
-use serde::Serialize;
+use crate::{
+    traits::{IdaProblem, IdaReal},
+    IdaCounters,
+};
+//use super::IdaCounters;
+
+#[cfg(feature = "serde-serialize")]
+use serde::{Deserialize, Serialize};
+
+/// Statistics and associated parameters for the linear solver
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, Default)]
+pub struct IdaLProblemCounters {
+    /// dqincfac = optional increment factor in Jv
+    //pub dqincfac: T,
+    /// nje = no. of calls to jac
+    pub nje: usize,
+    /// npe = total number of precond calls
+    pub npe: usize,
+    /// nli = total number of linear iterations
+    pub nli: usize,
+    /// nps = total number of psolve calls
+    pub nps: usize,
+    /// ncfl = total number of convergence failures
+    pub ncfl: usize,
+    /// total number of calls to res
+    pub nre_dq: usize,
+    /// njtsetup = total number of calls to jtsetup
+    pub njtsetup: usize,
+    /// njtimes = total number of calls to jtimes
+    pub njtimes: usize,
+    /// nst0 = saved nst (for performance monitor)
+    pub nst0: usize,
+    /// nni0 = saved nni (for performance monitor)
+    pub nni0: usize,
+    /// ncfn0 = saved ncfn (for performance monitor)
+    pub ncfn0: usize,
+    /// ncfl0 = saved ncfl (for performance monitor)
+    pub ncfl0: usize,
+    /// nwarn = no. of warnings (for perf. monitor)
+    pub nwarn: usize,
+}
 
 /// State variables involved in the linear problem
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde-serialize",
+    serde(bound(
+        serialize = "T: Serialize, OVector<T, D>: Serialize, OMatrix<T, D, D>: Serialize, LS: Serialize, P: Serialize"
+    ))
+)]
+#[cfg_attr(
+    feature = "serde-serialize",
+    serde(bound(
+        deserialize = "T: Deserialize<'de>, OVector<T, D>: Deserialize<'de>, OMatrix<T, D, D>: Deserialize<'de>, LS: Deserialize<'de>, P: Deserialize<'de>"
+    ))
+)]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "data_trace", derive(Serialize))]
-pub struct IdaLProblem<P, LS>
+pub struct IdaLProblem<T, D, P, LS>
 where
-    P: IdaProblem,
-    //P::Scalar: IdaConst,
-    LS: LSolver<P::Scalar>,
+    T: IdaReal,
+    D: Dim,
+    P: IdaProblem<T, D>,
+    LS: LSolver<T, D>,
+    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
 {
     // Linear solver, matrix and vector objects/pointers
     /// generic linear solver object
-    ls: LS,
+    pub(crate) ls: LS,
 
     /// J = dF/dy + cj*dF/dy'
-    mat_j: Array<P::Scalar, Ix2>,
+    pub(crate) mat_j: OMatrix<T, D, D>,
 
     //ytemp;       /// temp vector used by IDAAtimesDQ
     //yptemp;      /// temp vector used by IDAAtimesDQ
     /// temp vector used by the solve function        
-    x: Array<P::Scalar, Ix1>,
+    pub(crate) x: OVector<T, D>,
     //ycur;        /// current y vector in Newton iteration
     //ypcur;       /// current yp vector in Newton iteration
     //rcur;        /// rcur = F(tn, ycur, ypcur)
 
     // Iterative solver tolerance
-    /// sqrt(N)                                      
-    sqrt_n: P::Scalar,
     /// eplifac = linear convergence factor          
-    eplifac: P::Scalar,
+    pub eplifac: T,
+    /// integrator -> LS norm conversion factor
+    pub nrmfac: T,
 
-    /// dqincfac = optional increment factor in Jv
-    dqincfac: P::Scalar,
-    /// nje = no. of calls to jac
-    pub(super) nje: usize,
-    /// npe = total number of precond calls
-    npe: usize,
-    /// nli = total number of linear iterations
-    nli: usize,
-    /// nps = total number of psolve calls
-    nps: usize,
-    /// ncfl = total number of convergence failures
-    ncfl: usize,
-    /// total number of calls to res
-    pub(super) nre_dq: usize,
-    /// njtsetup = total number of calls to jtsetup
-    njtsetup: usize,
-    /// njtimes = total number of calls to jtimes
-    njtimes: usize,
-    /// nst0 = saved nst (for performance monitor)
-    nst0: usize,
-    /// nni0 = saved nni (for performance monitor)
-    nni0: usize,
-    /// ncfn0 = saved ncfn (for performance monitor)
-    ncfn0: usize,
-    /// ncfl0 = saved ncfl (for performance monitor)
-    ncfl0: usize,
-    /// nwarn = no. of warnings (for perf. monitor)
-    nwarn: usize,
-    /*
-        long int last_flag; // last error return flag
-
-        // Preconditioner computation
-        // (a) user-provided:
-        //     - pdata == user_data
-        //     - pfree == NULL (the user dealocates memory)
-        // (b) internal preconditioner module
-        //     - pdata == ida_mem
-        //     - pfree == set by the prec. module and called in idaLsFree
-        IDALsPrecSetupFn pset;
-        IDALsPrecSolveFn psolve;
-        int (*pfree)(IDAMem IDA_mem);
-        void *pdata;
-
-        // Jacobian times vector compuation
-        // (a) jtimes function provided by the user:
-        //     - jt_data == user_data
-        //     - jtimesDQ == SUNFALSE
-        // (b) internal jtimes
-        //     - jt_data == ida_mem
-        //     - jtimesDQ == SUNTRUE
-        booleantype jtimesDQ;
-        IDALsJacTimesSetupFn jtsetup;
-        IDALsJacTimesVecFn jtimes;
-        void *jt_data;
-    */
     /// current value of scalar (-alphas/hh) in Jacobian
-    pub(super) ida_cj: P::Scalar,
+    pub(super) ida_cj: T,
     /// cj value saved from last call to lsetup
-    pub(super) ida_cjold: P::Scalar,
+    pub(super) ida_cjold: T,
     /// ratio of cj values: cj/cjold
-    pub(super) ida_cjratio: P::Scalar,
+    pub(super) ida_cjratio: T,
 
     /// IDA problem
     pub(super) problem: P,
+    /// Statistics and associated parameters for the linear solver
+    pub(super) counters: IdaLProblemCounters,
 }
 
-impl<P, LS> IdaLProblem<P, LS>
+impl<T, D, P, LS> IdaLProblem<T, D, P, LS>
 where
-    P: IdaProblem,
-    P::Scalar: num_traits::Float
-        + num_traits::float::FloatConst
-        + num_traits::NumRef
-        + num_traits::NumAssignRef
-        + ndarray::ScalarOperand
-        + std::fmt::Debug
-        + IdaConst<Scalar = P::Scalar>,
-    LS: LSolver<P::Scalar>,
+    T: IdaReal,
+    D: DimName,
+    P: IdaProblem<T, D>,
+    LS: LSolver<T, D>,
+    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
 {
-    pub fn new(problem: P) -> Self {
-        use num_traits::identities::{One, Zero};
-        use num_traits::Float;
-        use num_traits::NumCast;
+    pub fn new(problem: P, ls: LS) -> Self {
         // Retrieve the LS type */
         //LSType = SUNLinSolGetType(LS);
 
@@ -189,58 +183,40 @@ where
         //idals_mem->sqrtN = SUNRsqrt( N_VDotProd(idals_mem->ytemp, idals_mem->ytemp) );
 
         Self {
-            ls: LS::new(problem.model_size()),
-
-            // Initialize counters
-            nje: 0,
-            nre_dq: 0,
-            npe: 0,
-            nli: 0,
-            nps: 0,
-            ncfl: 0,
-            njtsetup: 0,
-            njtimes: 0,
-
-            nst0: 0,
-            ncfl0: 0,
-            ncfn0: 0,
-            nni0: 0,
-            nwarn: 0,
-
+            ls,
             // Set default values for the rest of the Ls parameters
-            eplifac: P::Scalar::pt05(),
-            dqincfac: P::Scalar::one(),
+            eplifac: T::pt05(),
             //last_flag : IDALS_SUCCESS
-            sqrt_n: <P::Scalar as NumCast>::from(problem.model_size())
-                .unwrap()
-                .sqrt(),
+            nrmfac: T::from(D::try_to_usize().unwrap() as u32).unwrap().sqrt(),
 
-            ida_cj: P::Scalar::zero(),
-            ida_cjold: P::Scalar::zero(),
-            ida_cjratio: P::Scalar::zero(),
+            ida_cj: T::zero(),
+            ida_cjold: T::zero(),
+            ida_cjratio: T::zero(),
 
-            mat_j: Array::zeros((problem.model_size(), problem.model_size())),
-            x: Array::zeros(problem.model_size()),
+            mat_j: OMatrix::<T, D, D>::zeros(),
+            x: OVector::<T, D>::zeros(),
 
             problem,
+
+            // Initialize counters
+            //dqincfac: T::one(),
+            counters: IdaLProblemCounters::default(),
         }
     }
 
     /// idaLsSetup
     ///
     /// This calls the Jacobian evaluation routine, updates counters, and calls the LS `setup` routine to prepare for subsequent calls to the LS 'solve' routine.
-    pub fn setup<S1, S2, S3>(
+    pub fn setup<SA, SB, SC>(
         &mut self,
-        y: ArrayBase<S1, Ix1>,
-        yp: ArrayBase<S2, Ix1>,
-        r: ArrayBase<S3, Ix1>,
+        y: &Matrix<T, D, U1, SA>,
+        yp: &Matrix<T, D, U1, SB>,
+        r: &Matrix<T, D, U1, SC>,
     ) where
-        S1: ndarray::Data<Elem = P::Scalar>,
-        S2: ndarray::Data<Elem = P::Scalar>,
-        S3: ndarray::Data<Elem = P::Scalar>,
+        SA: Storage<T, D>,
+        SB: Storage<T, D>,
+        SC: Storage<T, D>,
     {
-        use num_traits::identities::Zero;
-
         // Set IDALs N_Vector pointers to inputs
         //self.ycur  = y;
         //self.ypcur = yp;
@@ -249,22 +225,16 @@ where
         // recompute if J if it is non-NULL
         if !self.mat_j.is_empty() {
             // Increment nje counter.
-            self.nje += 1;
+            self.counters.nje += 1;
 
             // Zero out J; call Jacobian routine jac; return if it failed.
-            self.mat_j.fill(P::Scalar::zero());
+            self.mat_j.fill(T::zero());
 
             // Call Jacobian routine
             //retval = self.jac(IDA_mem->ida_tn, IDA_mem->ida_cj, y, yp, r, idals_mem->J, idals_mem->J_data, vt1, vt2, vt3);
             //TODO fix
-            self.problem.jac(
-                P::Scalar::zero(),
-                self.ida_cj,
-                y.view(),
-                yp.view(),
-                r.view(),
-                self.mat_j.view_mut(),
-            );
+            self.problem
+                .jac(T::zero(), self.ida_cj, &y, &yp, &r, &mut self.mat_j);
 
             /*
             if (retval < 0) {
@@ -284,7 +254,7 @@ where
         }
 
         // Call LS setup routine -- the LS will call idaLsPSetup if applicable
-        self.ls.setup(self.mat_j.view_mut()).unwrap();
+        self.ls.setup(&mut self.mat_j).unwrap();
         //self.last_flag = SUNLinSolSetup(idals_mem->LS, idals_mem->J);
         //return(self.last_flag);
     }
@@ -295,37 +265,33 @@ where
     /// appropriate tolerance and scaling vectors, calling the solver, accumulating statistics from
     /// the solve for use/reporting by IDA, and scaling the result if using a non-NULL Matrix and
     /// cjratio does not equal one.
-    pub fn solve<S1, S2, S3, S4, S5>(
+    pub fn solve<SA, SB, SC, SD, SE>(
         &mut self,
-        mut b: ArrayBase<S1, Ix1>,
-        weight: ArrayBase<S2, Ix1>,
-        _ycur: ArrayBase<S3, Ix1>,
-        _ypcur: ArrayBase<S4, Ix1>,
-        _rescur: ArrayBase<S5, Ix1>,
+        b: &mut Matrix<T, D, U1, SA>,
+        weight: &Matrix<T, D, U1, SB>,
+        _ycur: &Matrix<T, D, U1, SC>,
+        _ypcur: &Matrix<T, D, U1, SD>,
+        _rescur: &Matrix<T, D, U1, SE>,
     ) where
-        S1: ndarray::DataMut<Elem = P::Scalar>,
-        S2: ndarray::Data<Elem = P::Scalar>,
-        S3: ndarray::Data<Elem = P::Scalar>,
-        S4: ndarray::Data<Elem = P::Scalar>,
-        S5: ndarray::Data<Elem = P::Scalar>,
-        ArrayBase<S2, Ix1>: ndarray::linalg::Dot<ArrayBase<S2, Ix1>>,
+        SA: StorageMut<T, D>,
+        SB: Storage<T, D>,
+        SC: Storage<T, D>,
+        SD: Storage<T, D>,
+        SE: Storage<T, D>,
     {
-        use num_traits::identities::{One, Zero};
-
         // Retrieve the LS type
         let ls_type = self.ls.get_type();
 
-        // If the linear solver is iterative: set convergence test constant tol, in terms of the
-        // Newton convergence test constant epsNewt and safety factors. The factor sqrt(Neq)
-        // assures that the convergence test is applied to the WRMS norm of the residual vector,
-        // rather than the weighted L2 norm.
+        // If the linear solver is iterative: set convergence test constant tol, in terms of the Newton convergence test
+        // constant epsNewt and safety factors. The factor nrmlfac assures that the convergence test is applied to the
+        // WRMS norm of the residual vector, rather than the weighted L2 norm.
 
         let tol = match ls_type {
             LSolverType::Iterative | LSolverType::MatrixIterative => {
-                self.sqrt_n * self.eplifac
-                //self.sqrtN * idals_mem->eplifac * IDA_mem->ida_epsNewt
+                //TODO(fix)
+                self.nrmfac * self.eplifac //* self.ida_eps_newt
             }
-            _ => P::Scalar::zero(),
+            _ => T::zero(),
         };
 
         /* Set vectors ycur, ypcur and rcur for use by the Atimes and Psolve interface routines */
@@ -334,10 +300,10 @@ where
         //self.rcur  = rescur;
 
         // Set initial guess x = 0 to LS
-        self.x.fill(P::Scalar::zero());
+        self.x.fill(T::zero());
 
         // Set scaling vectors for LS to use (if applicable)
-        self.ls.set_scaling_vectors(weight.view(), weight.view());
+        self.ls.set_scaling_vectors(weight, weight);
         /*
         retval = SUNLinSolSetScalingVectors(self.gLS, weight, weight);
         if (retval != SUNLS_SUCCESS) {
@@ -379,9 +345,7 @@ where
         */
 
         // Call solver
-        let retval = self
-            .ls
-            .solve(self.mat_j.view(), self.x.view_mut(), b.view(), tol);
+        let retval = self.ls.solve(&self.mat_j, &mut self.x, &b, tol);
 
         // Copy appropriate result to b (depending on solver type)
         if let LSolverType::Iterative | LSolverType::MatrixIterative = ls_type {
@@ -392,26 +356,26 @@ where
             if nli_inc == 0 {
                 //N_VScale(ONE, SUNLinSolResid(self.gLS), b);
             } else {
-                b.assign(&self.x);
+                b.copy_from(&self.x);
             }
 
             // Increment nli counter
-            self.nli += nli_inc;
+            self.counters.nli += nli_inc;
         } else {
             // Copy x to b
-            b.assign(&self.x);
+            b.copy_from(&self.x);
         }
 
         // If using a direct or matrix-iterative solver, scale the correction to account for change in cj
         if let LSolverType::Direct | LSolverType::MatrixIterative = ls_type {
-            if self.ida_cjratio != P::Scalar::one() {
-                b *= P::Scalar::two() / (P::Scalar::one() + self.ida_cjratio);
+            if self.ida_cjratio != T::one() {
+                *b *= T::two() / (T::one() + self.ida_cjratio);
             }
         }
 
         // Increment ncfl counter
         if retval.is_err() {
-            self.ncfl += 1;
+            self.counters.ncfl += 1;
         }
 
         /*
@@ -458,11 +422,11 @@ where
     pub fn ls_perf(&mut self, counters: &IdaCounters, perftask: bool) {
         // when perftask == 0, store current performance statistics
         if !perftask {
-            self.nst0 = counters.ida_nst;
-            self.nni0 = counters.ida_nni;
-            self.ncfn0 = counters.ida_ncfn;
-            self.ncfl0 = self.ncfl;
-            self.nwarn = 0;
+            self.counters.nst0 = counters.ida_nst;
+            self.counters.nni0 = counters.ida_nni;
+            self.counters.ncfn0 = counters.ida_ncfn;
+            self.counters.ncfl0 = self.counters.ncfl;
+            self.counters.nwarn = 0;
             return;
         }
 
@@ -473,21 +437,21 @@ where
         // removed, since the 'maxl' value is no longer owned by the
         // IDALs interface.
 
-        let nstd = counters.ida_nst - self.nst0;
-        let nnid = counters.ida_nni - self.nni0;
+        let nstd = counters.ida_nst - self.counters.nst0;
+        let nnid = counters.ida_nni - self.counters.nni0;
         if nstd == 0 || nnid == 0 {
             return;
         };
 
-        let rcfn = (counters.ida_ncfn - self.ncfn0) as f64 / (nstd as f64);
-        let rcfl = (self.ncfl - self.ncfl0) as f64 / (nnid as f64);
+        let rcfn = (counters.ida_ncfn - self.counters.ncfn0) as f64 / (nstd as f64);
+        let rcfl = (self.counters.ncfl - self.counters.ncfl0) as f64 / (nnid as f64);
         let lcfn = rcfn > 0.9;
         let lcfl = rcfl > 0.9;
         if !(lcfn || lcfl) {
             return;
         }
-        self.nwarn += 1;
-        if self.nwarn > 10 {
+        self.counters.nwarn += 1;
+        if self.counters.nwarn > 10 {
             return;
         }
         if lcfn {

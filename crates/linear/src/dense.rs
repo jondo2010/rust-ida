@@ -5,18 +5,40 @@ use nalgebra::{
     Storage, StorageMut, U1,
 };
 
-#[cfg(feature = "data_trace")]
-use serde::Serialize;
+#[cfg(feature = "serde-serialize")]
+use serde::{Deserialize, Serialize};
 
 use crate::{Error, LSolver, LSolverType};
 
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde-serialize",
+    serde(bound(serialize = "OVector<usize, D>: Serialize"))
+)]
+#[cfg_attr(
+    feature = "serde-serialize",
+    serde(bound(
+        deserialize = "OVector<usize, D>: Deserialize<'de>, DefaultAllocator: Allocator<usize, D>"
+    ))
+)]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct Dense<D: Dim>
 where
     DefaultAllocator: Allocator<usize, D>,
 {
     pivots: OVector<usize, D>,
+}
+
+impl<D: DimName> Dense<D>
+where
+    DefaultAllocator: Allocator<usize, D>,
+{
+    /// Creates a new dense linear solver.
+    pub fn new() -> Self {
+        Dense {
+            pivots: OVector::<usize, D>::zeros(),
+        }
+    }
 }
 
 impl<T, D> LSolver<T, D> for Dense<D>
@@ -25,12 +47,6 @@ where
     D: DimName,
     DefaultAllocator: Allocator<T, D> + Allocator<usize, D>,
 {
-    fn new() -> Self {
-        Dense {
-            pivots: OVector::<usize, D>::zeros(),
-        }
-    }
-
     fn get_type(&self) -> LSolverType {
         LSolverType::Direct
     }
@@ -208,7 +224,7 @@ fn dense_get_rs<T, R, C, SA, SB, SC>(
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use nalgebra::{matrix, vector, Vector4, U4};
+    use nalgebra::{matrix, vector, Vector4};
 
     use super::*;
 
@@ -320,7 +336,7 @@ mod tests {
         ];
         let b = vector![9.0, 16.0, 49.0, 45.0];
         let expected = vector![1.0, 2.0, 3.0, 4.0];
-        let mut dense = <Dense<_> as LSolver<f64, U4>>::new();
+        let mut dense = Dense::new();
         let mut x = Vector4::zeros();
         dense.setup(&mut mat_a).unwrap();
         dense.solve(&mat_a, &mut x, &b, 0.0).unwrap();

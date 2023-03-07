@@ -1,5 +1,10 @@
 [workspace]
-members = [ "crates/linear", "crates/nonlinear" ]
+members = [
+    "crates/ida",
+    "crates/linear",
+    "crates/nonlinear",
+    "crates/sample_problems",
+]
 
 [workspace.package]
 name = "ida"
@@ -18,26 +23,22 @@ keywords = ["math", "differential"]
 #[badges]
 #gitlab = { repository = "jondo2010/rust-ida", branch = "master" }
 #
-#[features]
-## Required for testing using the profile_scope!() macro
-#thread_profiler = ["profiler"]
-#data_trace = ["serde", "serde_json"]
 
 [workspace.dependencies]
-approx              = { version = "0.5" }
-log                 = { version = "0.4", features = ["std"] }
-nalgebra            = { version = "0.32" }
-num-traits          = { version = "0.2" }
-thiserror           = { version = "1.0" }
+approx = { version = "0.5" }
+log = { version = "0.4", features = ["std"] }
+nalgebra = { version = "0.32" }
+num-traits = { version = "0.2" }
+thiserror = { version = "1.0" }
 
-#failure             = { version = "0.1.5" }
-#ndarray             = { version = "0.12.1", default-features = true, features = ["serde-1"] }
-#
+ida = { path = "crates/ida" }
+linear = { path = "crates/linear" }
+nonlinear = { path = "crates/nonlinear" }
+sample_problems = { path = "crates/sample_problems" }
+
 #profiler            = { package = "thread_profiler", version = "0.3.0", optional = true }
-#serde               = { version = "1.0.90", features = ["derive"], optional = true }
-#serde_json          = { version = "1.0.39", optional = true}
-#
-#[dev-dependencies]
+
+#[workspace.dev-dependencies]
 #criterion           = { version = "0.2.11" }
 #pretty_env_logger   = { version = "0.3" }
 #prettytable-rs      = { version = "0.8.0" }
