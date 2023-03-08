@@ -8,8 +8,10 @@ use crate::traits::{Jacobian, Residual, Root};
 mod complete_step;
 mod get_dky;
 mod get_solution;
+mod predict;
 mod restore;
 mod set_coeffs;
+mod test_error;
 
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[derive(Clone, Copy, Debug)]

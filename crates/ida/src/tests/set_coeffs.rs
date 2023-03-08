@@ -64,9 +64,8 @@ fn test1() {
     let cj = 2.2429958724574930e-09;
     let cjlast = 2.4672954597032423e-09;
 
-    let problem = Dummy {};
     let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
-        problem,
+        Dummy {},
         linear::Dense::new(),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],

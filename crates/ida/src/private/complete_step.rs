@@ -5,8 +5,6 @@ use std::{
 
 use log::trace;
 
-use nonlinear::norm_wrms::NormWRMS;
-
 use super::*;
 
 impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
@@ -74,16 +72,7 @@ where
                 // maximum order, or stepsize has not been constant, or order was just raised.
 
                 // tempv1 = ee - phi[kk+1]
-                let enorm = {
-                    let temp = &self.ida_ee - self.ida_phi.column(self.ida_kk + 1);
-                    match self.ida_id {
-                        Some(ref ida_id) if self.ida_suppressalg => {
-                            // Mask out the components of ida_ewt using ida_id.
-                            temp.norm_wrms(&self.nlp.ida_ewt.component_mul(ida_id))
-                        }
-                        _ => temp.norm_wrms(&self.nlp.ida_ewt),
-                    }
-                };
+                let enorm = self.wrms_norm(&(&self.ida_ee - self.ida_phi.column(self.ida_kk + 1)));
                 let err_kp1 = enorm / T::from(self.ida_kk + 2).unwrap();
 
                 // Choose among orders k-1, k, k+1 using local truncation error norms.

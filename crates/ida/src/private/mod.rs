@@ -1,7 +1,8 @@
 use std::fmt::LowerExp;
 
 use log::trace;
-use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Dim};
+use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Dim, Storage, Vector};
+use nonlinear::norm_wrms::NormWRMS;
 
 use crate::{
     constants::MXORDP1,
@@ -18,8 +19,7 @@ where
     P: IdaProblem<T, D>,
     LS: linear::LSolver<T, D>,
     NLS: nonlinear::NLSolver<T, D>,
-    DefaultAllocator:
-        Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D> + Allocator<u8, D>,
+    DefaultAllocator: Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D>,
 {
     /// This routine computes the coefficients relevant to the current step.
     ///
@@ -31,7 +31,7 @@ where
     /// Also, complete_step() prohibits an order increase until ns = k + 2.
     ///
     /// Returns the 'variable stepsize error coefficient ck'
-    pub fn set_coeffs(&mut self) -> T {
+    pub(crate) fn set_coeffs(&mut self) -> T {
         #[cfg(feature = "profiler")]
         profile_scope!(format!("set_coeffs()"));
 
@@ -93,10 +93,107 @@ where
         return ck;
     }
 
+    /// IDAPredict
+    /// This routine predicts the new values for vectors `yy` and `yp`.
+    pub(crate) fn predict(&mut self) {
+        #[cfg(feature = "profiler")]
+        profile_scope!(format!("predict()"));
+
+        // yypredict = cvals * phi[0..kk+1]
+        // N_VLinearCombination(self.ida_kk+1, self.ida_cvals, self.ida_phi, self.ida_yypredict);
+        self.nlp
+            .ida_yypredict
+            .copy_from(&self.ida_phi.columns(0, self.ida_kk + 1).column_sum());
+
+        // yppredict = gamma[1..kk+1] * phi[1..kk+1]
+        // N_VLinearCombination(self.ida_kk, self.ida_gamma+1, self.ida_phi+1, self.ida_yppredict);
+        let g = self.ida_gamma.rows_range(1..self.ida_kk);
+        let phi = self.ida_phi.columns_range(1..self.ida_kk);
+        phi.mul_to(&g, &mut self.nlp.ida_yppredict);
+    }
+
+    /// IDATestError
+    ///
+    /// This routine estimates errors at orders k, k-1, k-2, decides whether or not to suggest an order
+    /// decrease, and performs the local error test.
+    ///
+    /// Returns a tuple of (err_k, err_km1, nflag)
+    pub(crate) fn test_error(
+        &mut self,
+        ck: T,
+    ) -> Result<
+        (
+            T,    // err_k
+            T,    // err_km1
+            bool, // converged
+        ),
+        (T, T, Error),
+    > {
+        //trace!("test_error phi={:.5e}", self.ida_phi);
+        //trace!("test_error ee={:.5e}", self.ida_ee);
+        let scalar_kk = T::from(self.ida_kk).unwrap();
+
+        // Compute error for order k.
+        let enorm_k = self.wrms_norm(&self.ida_ee);
+        let err_k = self.ida_sigma[self.ida_kk] * enorm_k; // error norms
+
+        // local truncation error norm
+        let terr_k = err_k * (scalar_kk + T::one());
+
+        let (err_km1, knew) = if self.ida_kk > 1 {
+            // Compute error at order k-1
+            // delta = phi[ida_kk - 1] + ee
+            self.ida_delta = &self.ida_phi.column(self.ida_kk) + &self.ida_ee;
+            let enorm_km1 = self.wrms_norm(&self.ida_delta);
+            // estimated error at k-1
+            let err_km1 = self.ida_sigma[self.ida_kk - 1] * enorm_km1;
+            let terr_km1 = scalar_kk * err_km1;
+
+            let knew = if self.ida_kk > 2 {
+                // Compute error at order k-2
+                // delta += phi[ida_kk - 1]
+                self.ida_delta += &self.ida_phi.column(self.ida_kk - 1);
+                let enorm_km2 = self.wrms_norm(&self.ida_delta);
+                // estimated error at k-2
+                let err_km2 = self.ida_sigma[self.ida_kk - 2] * enorm_km2;
+                let terr_km2 = (scalar_kk - T::one()) * err_km2;
+
+                // Decrease order if errors are reduced
+                if terr_km1.max(terr_km2) <= terr_k {
+                    self.ida_kk - 1
+                } else {
+                    self.ida_kk
+                }
+            } else {
+                // Decrease order to 1 if errors are reduced by at least 1/2
+                if terr_km1 <= (terr_k * T::half()) {
+                    self.ida_kk - 1
+                } else {
+                    self.ida_kk
+                }
+            };
+
+            (err_km1, knew)
+        } else {
+            (T::zero(), self.ida_kk)
+        };
+
+        self.ida_knew = knew;
+
+        // Perform error test
+        let converged = (ck * enorm_k) <= T::one();
+
+        if converged {
+            Ok((err_k, err_km1, true))
+        } else {
+            Err((err_k, err_km1, Error::TestFail))
+        }
+    }
+
     /// IDARestore
     /// This routine restores tn, psi, and phi in the event of a failure.
     /// It changes back `phi-star` to `phi` (changed in `set_coeffs()`)
-    pub fn restore(&mut self, saved_t: T) -> () {
+    pub(crate) fn restore(&mut self, saved_t: T) -> () {
         trace!("restore(saved_t={:.6e})", saved_t);
         self.nlp.ida_tn = saved_t;
 
@@ -141,7 +238,7 @@ where
     ///
     /// # Errors
     /// * `IdaError::BadTimeValue` if `t` is not within the interval of the last step taken.
-    pub fn get_solution(&mut self, t: T) -> Result<(), Error> {
+    pub(crate) fn get_solution(&mut self, t: T) -> Result<(), Error> {
         #[cfg(feature = "profiler")]
         profile_scope!(format!("get_solution(t={:.5e})", t));
 
@@ -181,5 +278,19 @@ where
         phi.mul_to(&dvals, ida_yp);
 
         Ok(())
+    }
+
+    /// Returns the WRMS norm of vector x with weights w.
+    pub(crate) fn wrms_norm<S>(&self, x: &Vector<T, D, S>) -> T
+    where
+        S: Storage<T, D>,
+    {
+        match self.ida_id {
+            Some(ref ida_id) if self.ida_suppressalg => {
+                // Mask out the components of ida_ewt using ida_id.
+                x.norm_wrms(&self.nlp.ida_ewt.component_mul(ida_id))
+            }
+            _ => x.norm_wrms(&self.nlp.ida_ewt),
+        }
     }
 }
