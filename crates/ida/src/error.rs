@@ -105,4 +105,13 @@ pub enum Error {
     ///MSG_CLOSE_ROOTS
     #[error("Root found at and very near {t}.")]
     CloseRoots { t: f64 },
+
+    #[error("Linear solver setup failed")]
+    LinearSetupFailed {
+        #[from]
+        source: linear::Error,
+    },
+
+    #[error(transparent)]
+    Nonlinear(#[from] nonlinear::Error),
 }

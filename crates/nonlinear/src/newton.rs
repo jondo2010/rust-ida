@@ -73,6 +73,8 @@ where
         SB: StorageMut<T, D, U1>,
         SC: Storage<T, D, U1>,
     {
+        tracing::trace!("Newton::solve");
+
         // assume the Jacobian is good
         let mut jbad = false;
         let mut call_lsetup = call_lsetup;

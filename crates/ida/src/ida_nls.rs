@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use linear::LSolver;
 use nalgebra::{
     allocator::Allocator, DefaultAllocator, Dim, DimName, Matrix, OVector, Storage, StorageMut, U1,
@@ -132,6 +134,7 @@ where
         SA: Storage<T, D, U1>,
         SB: StorageMut<T, D, U1>,
     {
+        tracing::trace!("idaNlsResidual");
         // update yy and yp based on the current correction
         //N_VLinearSum(ONE, self.ida_yypredict, ONE, ycor, self.ida_yy);
         //N_VLinearSum(ONE, self.ida_yppredict, self.ida_cj, ycor, self.ida_yp);
@@ -169,23 +172,17 @@ where
         SA: Storage<T, D, U1>,
         SB: Storage<T, D, U1>,
     {
+        tracing::trace!("idaNlsLSetup");
         self.ida_nsetups += 1;
         // ida_lsetup() aka idaLsSetup()
-        self.lp.setup(&self.ida_yy, &self.ida_yp, res);
-
-        // update Jacobian status
-        //*jcur = SUNTRUE;
+        let retval = self.lp.setup(&self.ida_yy, &self.ida_yp, res);
 
         // update convergence test constants
         self.lp.ida_cjold = self.lp.ida_cj;
         self.lp.ida_cjratio = T::one();
         self.ida_ss = T::twenty();
 
-        //if (retval < 0) return(IDA_LSETUP_FAIL);
-        //if (retval > 0) return(IDA_LSETUP_RECVR);
-
-        //return(IDA_SUCCESS);
-
+        retval?;
         Ok(true)
     }
 

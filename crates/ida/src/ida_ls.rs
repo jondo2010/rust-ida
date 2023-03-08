@@ -1,5 +1,3 @@
-use log::warn;
-
 use linear::{LSolver, LSolverType};
 use nalgebra::{
     allocator::Allocator, DefaultAllocator, Dim, DimName, Matrix, OMatrix, OVector, Storage,
@@ -8,7 +6,7 @@ use nalgebra::{
 
 use crate::{
     traits::{IdaProblem, IdaReal},
-    IdaCounters,
+    Error, IdaCounters,
 };
 //use super::IdaCounters;
 
@@ -221,7 +219,8 @@ where
         y: &Matrix<T, D, U1, SA>,
         yp: &Matrix<T, D, U1, SB>,
         r: &Matrix<T, D, U1, SC>,
-    ) where
+    ) -> Result<(), linear::Error>
+    where
         SA: Storage<T, D>,
         SB: Storage<T, D>,
         SC: Storage<T, D>,
@@ -263,9 +262,7 @@ where
         }
 
         // Call LS setup routine -- the LS will call idaLsPSetup if applicable
-        self.ls.setup(&mut self.mat_j).unwrap();
-        //self.last_flag = SUNLinSolSetup(idals_mem->LS, idals_mem->J);
-        //return(self.last_flag);
+        self.ls.setup(&mut self.mat_j)
     }
 
     /// idaLsSolve
@@ -464,10 +461,10 @@ where
             return;
         }
         if lcfn {
-            warn!("Warning: at t = {}, poor iterative algorithm performance. Nonlinear convergence failure rate is {}.", 0.0, rcfn);
+            tracing::warn!("Warning: at t = {}, poor iterative algorithm performance. Nonlinear convergence failure rate is {}.", 0.0, rcfn);
         }
         if lcfl {
-            warn!("Warning: at t = {}, poor iterative algorithm performance. Linear convergence failure rate is {}.", 0.0, rcfl);
+            tracing::warn!("Warning: at t = {}, poor iterative algorithm performance. Linear convergence failure rate is {}.", 0.0, rcfl);
         }
     }
 }

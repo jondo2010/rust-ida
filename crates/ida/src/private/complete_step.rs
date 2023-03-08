@@ -3,8 +3,6 @@ use std::{
     ops::{Add, AddAssign},
 };
 
-use log::trace;
-
 use super::*;
 
 impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
@@ -110,7 +108,7 @@ where
                 }
                 _ => err_k,
             };
-            trace!(
+            tracing::trace!(
                 "    {:#?}, kk={}, err_knew={:.5e}",
                 action,
                 self.ida_kk,
@@ -143,7 +141,7 @@ where
 
             self.ida_hh = hnew;
         }
-        trace!("    next hh={:.5e}", self.ida_hh);
+        tracing::trace!("    next hh={:.5e}", self.ida_hh);
         // end of phase if block
 
         // Save ee for possible order increase on next step

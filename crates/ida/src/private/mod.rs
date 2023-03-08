@@ -1,16 +1,16 @@
-use std::fmt::LowerExp;
+use std::{fmt::LowerExp, sync::Arc};
 
-use log::trace;
 use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Dim, Storage, Vector};
 use nonlinear::norm_wrms::NormWRMS;
 
 use crate::{
-    constants::MXORDP1,
+    constants::{MXORDP1, XRATE},
     traits::{IdaProblem, IdaReal},
     Error, Ida,
 };
 
 mod complete_step;
+mod stop_test;
 
 impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
 where
@@ -91,6 +91,108 @@ where
         }
 
         return ck;
+    }
+
+    /// IDANls
+    /// This routine attempts to solve the nonlinear system using the linear solver specified.
+    /// NOTE: this routine uses N_Vector ee as the scratch vector tempv3 passed to lsetup.
+    pub(crate) fn nonlinear_solve(&mut self) -> Result<(), Error> {
+        #[cfg(feature = "profiler")]
+        profile_scope!(format!("nonlinear_solve()"));
+
+        let mut call_lsetup = false;
+
+        // Initialize if the first time called
+        if self.counters.ida_nst == 0 {
+            self.nlp.lp.ida_cjold = self.nlp.lp.ida_cj;
+            self.nlp.ida_ss = T::twenty();
+            //if (self.ida_lsetup) { callLSetup = true; }
+            call_lsetup = true;
+        }
+
+        // Decide if lsetup is to be called
+        self.nlp.lp.ida_cjratio = self.nlp.lp.ida_cj / self.nlp.lp.ida_cjold;
+        let temp1 = T::from((1.0 - XRATE) / (1.0 + XRATE)).unwrap();
+        let temp2 = temp1.recip();
+        if self.nlp.lp.ida_cjratio < temp1 || self.nlp.lp.ida_cjratio > temp2 {
+            call_lsetup = true;
+        }
+        if self.nlp.lp.ida_cj != self.ida_cjlast {
+            self.nlp.ida_ss = T::hundred();
+        }
+
+        // initial guess for the correction to the predictor
+        self.ida_delta.fill(T::zero());
+
+        // call nonlinear solver setup if it exists
+        self.nls.setup(&mut self.ida_delta)?;
+
+        //TODO(FIXME)
+        let w = self.nlp.ida_ewt.clone();
+
+        //trace!("\"ewt\":{:.6e}", w);
+
+        // solve the nonlinear system
+        let retval = self.nls.solve(
+            &mut self.nlp,
+            &self.ida_delta,
+            &mut self.ida_ee,
+            &w,
+            self.ida_eps_newt,
+            call_lsetup,
+        );
+
+        // increment counter
+        self.counters.ida_nni += self.nls.get_num_iters();
+
+        // update yy and yp based on the final correction from the nonlinear solve
+        self.nlp.ida_yy = &self.nlp.ida_yypredict + &self.ida_ee;
+        //N_VLinearSum( ONE, self.ida_yppredict, self.ida_cj, self.ida_ee, self.ida_yp,);
+        //self.ida_yp = &self.ida_yppredict + (&self.ida_ee * self.ida_cj);
+        self.nlp.ida_yp.copy_from(&self.nlp.ida_yppredict);
+        self.nlp
+            .ida_yp
+            .axpy(self.nlp.lp.ida_cj, &self.ida_ee, T::one());
+
+        // return if nonlinear solver failed */
+        retval?;
+
+        // If otherwise successful, check and enforce inequality constraints.
+
+        // Check constraints and get mask vector mm, set where constraints failed
+        if let Some(constraints) = &self.ida_constraints {
+            unimplemented!();
+            /*
+            self.ida_mm = self.ida_tempv2;
+            let constraintsPassed = N_VConstrMask(self.ida_constraints, self.ida_yy, self.ida_mm);
+            if (constraintsPassed) {
+                return (IDA_SUCCESS);
+            } else {
+                N_VCompare(ONEPT5, self.ida_constraints, self.ida_tempv1);
+                /* a , where a[i] =1. when |c[i]| = 2 ,  c the vector of constraints */
+            N_VProd(self.ida_tempv1, self.ida_constraints, self.ida_tempv1); /* a * c */
+            N_VDiv(self.ida_tempv1, self.ida_ewt, self.ida_tempv1); /* a * c * wt */
+            N_VLinearSum(ONE, self.ida_yy, -PT1, self.ida_tempv1, self.ida_tempv1); /* y - 0.1 * a * c * wt */
+            N_VProd(self.ida_tempv1, self.ida_mm, self.ida_tempv1); /*  v = mm*(y-.1*a*c*wt) */
+            vnorm = IDAWrmsNorm(IDA_mem, self.ida_tempv1, self.ida_ewt, SUNFALSE); /*  ||v|| */
+
+            // If vector v of constraint corrections is small in norm, correct and accept this step
+            if vnorm <= self.ida_eps_newt {
+            N_VLinearSum(ONE, self.ida_ee, -ONE, self.ida_tempv1, self.ida_ee); /* ee <- ee - v */
+            return (IDA_SUCCESS);
+            } else {
+            /* Constraints not met -- reduce h by computing rr = h'/h */
+            N_VLinearSum(ONE, self.ida_phi[0], -ONE, self.ida_yy, self.ida_tempv1);
+            N_VProd(self.ida_mm, self.ida_tempv1, self.ida_tempv1);
+            self.ida_rr = PT9 * N_VMinQuotient(self.ida_phi[0], self.ida_tempv1);
+            self.ida_rr = SUNMAX(self.ida_rr, PT1);
+            return (IDA_CONSTR_RTolCVR);
+            }
+            }
+             */
+        }
+
+        Ok(())
     }
 
     /// IDAPredict
@@ -194,7 +296,7 @@ where
     /// This routine restores tn, psi, and phi in the event of a failure.
     /// It changes back `phi-star` to `phi` (changed in `set_coeffs()`)
     pub(crate) fn restore(&mut self, saved_t: T) -> () {
-        trace!("restore(saved_t={:.6e})", saved_t);
+        tracing::trace!("restore(saved_t={:.6e})", saved_t);
         self.nlp.ida_tn = saved_t;
 
         // Restore psi[0 .. kk] = psi[1 .. kk + 1] - hh

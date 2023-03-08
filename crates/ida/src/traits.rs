@@ -1,7 +1,7 @@
 //! Basic traits for problem specification
 
 use nalgebra::{Dim, Matrix, RealField, Scalar, Storage, StorageMut, U1};
-use num_traits::{float::FloatCore, real::Real, NumCast};
+use num_traits::NumCast;
 
 pub trait Residual<T, D: Dim> {
     /// This function computes the problem residual for given values of the independent variable `tt`, state vector `yy`, and derivative `yp`.
@@ -98,6 +98,7 @@ pub trait IdaReal: Scalar + RealField + Copy + NumCast {
     fn pt01() -> Self;
     fn pt001() -> Self;
     fn pt0001() -> Self;
+    fn epsilon() -> Self;
 }
 
 impl IdaReal for f64 {
@@ -154,5 +155,8 @@ impl IdaReal for f64 {
     }
     fn pt0001() -> Self {
         0.0001
+    }
+    fn epsilon() -> Self {
+        f64::EPSILON
     }
 }

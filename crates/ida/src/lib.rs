@@ -327,7 +327,7 @@ where
     /// Check `t` for legality. Here tn - hused is t_{n-1}.
     fn check_t(&self, t: T) -> Result<(), Error> {
         let tfuzz = T::hundred()
-            * T::from(f64::EPSILON).unwrap()
+            * T::epsilon()
             * (self.nlp.ida_tn.abs() + self.ida_hh.abs())
             * self.ida_hh.signum();
         let tp = self.nlp.ida_tn - self.ida_hused - tfuzz;

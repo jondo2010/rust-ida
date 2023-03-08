@@ -8,6 +8,7 @@ use crate::traits::{Jacobian, Residual, Root};
 mod complete_step;
 mod get_dky;
 mod get_solution;
+mod nonlinear_solve;
 mod predict;
 mod restore;
 mod set_coeffs;

@@ -1,7 +1,5 @@
 use nalgebra::{Dim, Matrix, Scalar, Storage, StorageMut, U1};
 
-use crate::Error;
-
 pub trait NLProblem<T, D>
 where
     T: Scalar,
@@ -24,7 +22,7 @@ where
         &mut self,
         y: &Matrix<T, D, U1, SB1>,
         f: &mut Matrix<T, D, U1, SB2>,
-    ) -> Result<(), Error>
+    ) -> Result<(), crate::Error>
     where
         SB1: Storage<T, D, U1>,
         SB2: StorageMut<T, D, U1>;
@@ -57,7 +55,7 @@ where
         y: &Matrix<T, D, U1, SA>,
         f: &Matrix<T, D, U1, SB>,
         jbad: bool,
-    ) -> Result<bool, Error>
+    ) -> Result<bool, crate::Error>
     where
         SA: Storage<T, D, U1>,
         SB: Storage<T, D, U1>;
@@ -83,7 +81,7 @@ where
         &mut self,
         y: &Matrix<T, D, U1, SA>,
         b: &mut Matrix<T, D, U1, SB>,
-    ) -> Result<(), Error>
+    ) -> Result<(), crate::Error>
     where
         SA: Storage<T, D, U1>,
         SB: StorageMut<T, D, U1>;
@@ -118,7 +116,7 @@ where
         del: &Matrix<T, D, U1, SB>,
         tol: T,
         ewt: &Matrix<T, D, U1, SC>,
-    ) -> Result<bool, Error>
+    ) -> Result<bool, crate::Error>
     where
         NLS: NLSolver<T, D>,
         SA: Storage<T, D, U1>,
@@ -146,7 +144,7 @@ pub trait NLSolver<T: Scalar, D: Dim> {
     ///
     /// The return value retval (of type int) is zero for a successful call and a negative value for a failure.
     /// Notes sundials integrators call SUNonlinSolSetup before each step attempt. sunnonlinsol implementations that do not require setup may set this operation to NULL.
-    fn setup<S>(&self, _y: &mut Matrix<T, D, U1, S>) -> Result<(), Error>
+    fn setup<S>(&self, _y: &mut Matrix<T, D, U1, S>) -> Result<(), crate::Error>
     where
         S: StorageMut<T, D, U1>,
     {
@@ -187,7 +185,7 @@ pub trait NLSolver<T: Scalar, D: Dim> {
         w: &Matrix<T, D, U1, SC>,
         tol: T,
         call_lsetup: bool,
-    ) -> Result<(), Error>
+    ) -> Result<(), crate::Error>
     where
         NLP: NLProblem<T, D>,
         SA: Storage<T, D, U1>,

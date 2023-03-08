@@ -25,11 +25,9 @@ pub enum Error {
     ///SUN_NLS_ILL_INPUT
     #[error("")]
     IllegalInput {},
+
     // failed NVector operation
     //SUN_NLS_VECTOROP_ERR
-    #[error("Linear solver setup failed")]
-    LinearSetupFailed {
-        #[from]
-        source: linear::Error,
-    },
+    #[error(transparent)]
+    Linear(#[from] linear::Error),
 }
