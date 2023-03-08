@@ -1,5 +1,5 @@
-use ida::{Jacobian, Residual, Root};
-use nalgebra::{Matrix, Storage, StorageMut, U1, U3};
+use ida::IdaProblem;
+use nalgebra::{Matrix, Storage, StorageMut, U1, U2, U3};
 
 #[cfg(feature = "data_trace")]
 use serde::Serialize;
@@ -24,39 +24,40 @@ use serde::Serialize;
 #[cfg_attr(feature = "data_trace", derive(Serialize))]
 pub struct Roberts {}
 
-impl Residual<f64, U3> for Roberts {
+impl IdaProblem<f64> for Roberts {
+    type D = U3;
+    type R = U2;
+
     fn res<SA, SB, SC>(
         &self,
-        _tt: f64,
-        yy: &Matrix<f64, U3, U1, SA>,
-        yp: &Matrix<f64, U3, U1, SB>,
-        rr: &mut Matrix<f64, U3, U1, SC>,
+        tt: f64,
+        yy: &Matrix<f64, Self::D, U1, SA>,
+        yp: &Matrix<f64, Self::D, U1, SB>,
+        rr: &mut Matrix<f64, Self::D, U1, SC>,
     ) where
-        SA: Storage<f64, U3>,
-        SB: Storage<f64, U3>,
-        SC: StorageMut<f64, U3>,
+        SA: Storage<f64, Self::D>,
+        SB: Storage<f64, Self::D>,
+        SC: StorageMut<f64, Self::D>,
     {
         rr[0] = -0.04 * yy[0] + 1.0e4 * yy[1] * yy[2];
         rr[1] = -rr[0] - 3.0e7 * yy[1] * yy[1] - yp[1];
         rr[0] -= yp[0];
         rr[2] = yy[0] + yy[1] + yy[2] - 1.0;
     }
-}
 
-impl Jacobian<f64, U3> for Roberts {
     fn jac<SA, SB, SC, SD>(
         &self,
-        _tt: f64,
+        tt: f64,
         cj: f64,
-        yy: &Matrix<f64, U3, U1, SA>,
-        _yp: &Matrix<f64, U3, U1, SB>,
-        _rr: &Matrix<f64, U3, U1, SC>,
-        jac: &mut Matrix<f64, U3, U3, SD>,
+        yy: &Matrix<f64, Self::D, U1, SA>,
+        yp: &Matrix<f64, Self::D, U1, SB>,
+        rr: &Matrix<f64, Self::D, U1, SC>,
+        jac: &mut Matrix<f64, Self::D, Self::D, SD>,
     ) where
-        SA: Storage<f64, U3>,
-        SB: Storage<f64, U3>,
-        SC: Storage<f64, U3>,
-        SD: StorageMut<f64, U3, U3>,
+        SA: Storage<f64, Self::D>,
+        SB: Storage<f64, Self::D>,
+        SC: Storage<f64, Self::D>,
+        SD: StorageMut<f64, Self::D, Self::D>,
     {
         // (row, col)
         jac[(0, 0)] = -0.04 - cj;
@@ -71,22 +72,17 @@ impl Jacobian<f64, U3> for Roberts {
         jac[(2, 1)] = 1.0;
         jac[(2, 2)] = 1.0;
     }
-}
 
-impl Root<f64, U3> for Roberts {
-    const NROOTS: usize = 2;
-
-    /// Root function routine. Compute functions g_i(t,y) for i = 0,1.
     fn root<SA, SB, SC>(
         &self,
-        _t: f64,
-        y: &Matrix<f64, U3, U1, SA>,
-        _yp: &Matrix<f64, U3, U1, SB>,
-        gout: &mut Matrix<f64, U3, U1, SC>,
+        t: f64,
+        y: &Matrix<f64, Self::D, U1, SA>,
+        yp: &Matrix<f64, Self::D, U1, SB>,
+        gout: &mut Matrix<f64, Self::R, U1, SC>,
     ) where
-        SA: Storage<f64, U3>,
-        SB: Storage<f64, U3>,
-        SC: StorageMut<f64, U3>,
+        SA: Storage<f64, Self::D>,
+        SB: Storage<f64, Self::D>,
+        SC: StorageMut<f64, Self::R>,
     {
         gout[0] = y[0] - 0.0001;
         gout[1] = y[2] - 0.01;

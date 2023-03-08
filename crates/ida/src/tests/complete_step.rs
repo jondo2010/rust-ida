@@ -4,11 +4,10 @@ use super::*;
 
 #[test]
 fn test_kused1() {
-    let problem = Dummy {};
-
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
-        problem,
+    let mut ida = Ida::new(
+        Dummy {},
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
@@ -56,9 +55,9 @@ fn test_kused1() {
         ida.ida_kused = kused;
         ida.ida_hused = hused;
         ida.ida_knew = knew;
-        ida.ida_maxord = maxord;
+        ida.limits.ida_maxord = maxord;
         ida.ida_phase = phase;
-        ida.ida_hmax_inv = hmax_inv;
+        ida.limits.ida_hmax_inv = hmax_inv;
         ida.ida_ee.copy_from(&ida_ee);
         ida.ida_phi.copy_from(&ida_phi);
         ida.nlp.ida_ewt.copy_from(&ida_ewt);
@@ -103,9 +102,9 @@ fn test_kused1() {
     assert_eq!(ida.ida_kused, kused);
     assert_eq!(ida.ida_hused, hused);
     assert_eq!(ida.ida_knew, knew);
-    assert_eq!(ida.ida_maxord, maxord);
+    assert_eq!(ida.limits.ida_maxord, maxord);
     assert_eq!(ida.ida_phase, phase);
-    assert_eq!(ida.ida_hmax_inv, hmax_inv);
+    assert_eq!(ida.limits.ida_hmax_inv, hmax_inv);
     assert_eq!(ida.ida_ee, ida_ee);
     assert_eq!(ida.nlp.ida_ewt, ida_ewt);
     assert_eq!(ida.ida_phi, ida_phi);
@@ -113,10 +112,10 @@ fn test_kused1() {
 
 #[test]
 fn test_kused2() {
-    let problem = Dummy {};
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
-        problem,
+    let mut ida = Ida::new(
+        Dummy {},
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
@@ -156,9 +155,9 @@ fn test_kused2() {
         ida.ida_hh = 4.3299105720961540e-05;
         ida.ida_hused = 2.1649552860480770e-05;
         ida.ida_rr = 0.0000000000000000e+00;
-        ida.ida_hmax_inv = 0.0000000000000000e+00;
+        ida.limits.ida_hmax_inv = 0.0000000000000000e+00;
         ida.counters.ida_nst = 2;
-        ida.ida_maxord = 5;
+        ida.limits.ida_maxord = 5;
     }
 
     ida.complete_step(err_k, err_km1);
@@ -200,9 +199,9 @@ fn test_kused2() {
     assert_eq!(ida.ida_kused, kused);
     assert_eq!(ida.ida_hused, hused);
     assert_eq!(ida.ida_knew, knew);
-    assert_eq!(ida.ida_maxord, maxord);
+    assert_eq!(ida.limits.ida_maxord, maxord);
     assert_eq!(ida.ida_phase, phase);
-    assert_eq!(ida.ida_hmax_inv, hmax_inv);
+    assert_eq!(ida.limits.ida_hmax_inv, hmax_inv);
     assert_eq!(ida.ida_ee, ida_ee);
     assert_eq!(ida.ida_phi, ida_phi);
     assert_eq!(ida.nlp.ida_ewt, ida_ewt);
@@ -210,10 +209,10 @@ fn test_kused2() {
 
 #[test]
 fn test3() {
-    let problem = Dummy {};
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
-        problem,
+    let mut ida = Ida::new(
+        Dummy {},
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
@@ -260,9 +259,9 @@ fn test3() {
         ida.ida_kused = kused;
         ida.ida_hused = hused;
         ida.ida_knew = knew;
-        ida.ida_maxord = maxord;
+        ida.limits.ida_maxord = maxord;
         ida.ida_phase = phase;
-        ida.ida_hmax_inv = hmax_inv;
+        ida.limits.ida_hmax_inv = hmax_inv;
         ida.ida_ee.copy_from(&ida_ee);
         ida.ida_phi.copy_from(&ida_phi);
         ida.nlp.ida_ewt.copy_from(&ida_ewt);
@@ -307,9 +306,9 @@ fn test3() {
     assert_eq!(ida.ida_kused, kused);
     assert_eq!(ida.ida_hused, hused);
     assert_eq!(ida.ida_knew, knew);
-    assert_eq!(ida.ida_maxord, maxord);
+    assert_eq!(ida.limits.ida_maxord, maxord);
     assert_eq!(ida.ida_phase, phase);
-    assert_eq!(ida.ida_hmax_inv, hmax_inv);
+    assert_eq!(ida.limits.ida_hmax_inv, hmax_inv);
     assert_eq!(ida.ida_ee, ida_ee);
     assert_eq!(ida.ida_phi, ida_phi);
     assert_eq!(ida.nlp.ida_ewt, ida_ewt);

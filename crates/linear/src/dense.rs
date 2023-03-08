@@ -1,7 +1,7 @@
 //! Linear solver for dense matrices, ported from the SUNDIALS suite.
 //!
 use nalgebra::{
-    allocator::Allocator, DefaultAllocator, Dim, DimName, Matrix, OVector, RealField, Scalar,
+    allocator::Allocator, DefaultAllocator, Dim, DimName, Dyn, Matrix, OVector, RealField, Scalar,
     Storage, StorageMut, U1,
 };
 
@@ -29,14 +29,26 @@ where
     pivots: OVector<usize, D>,
 }
 
-impl<D: DimName> Dense<D>
+impl<D> Dense<D>
 where
+    D: Dim,
     DefaultAllocator: Allocator<usize, D>,
 {
     /// Creates a new dense linear solver.
-    pub fn new() -> Self {
+    pub fn new() -> Self
+    where
+        D: DimName,
+    {
         Dense {
             pivots: OVector::<usize, D>::zeros(),
+        }
+    }
+}
+
+impl Dense<Dyn> {
+    pub fn new_dynamic(dim: usize) -> Self {
+        Dense {
+            pivots: OVector::<usize, Dyn>::zeros(dim),
         }
     }
 }
@@ -44,7 +56,7 @@ where
 impl<T, D> LSolver<T, D> for Dense<D>
 where
     T: RealField + Copy,
-    D: DimName,
+    D: Dim,
     DefaultAllocator: Allocator<T, D> + Allocator<usize, D>,
 {
     fn get_type(&self) -> LSolverType {

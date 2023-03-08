@@ -64,9 +64,10 @@ fn test1() {
     let cj = 2.2429958724574930e-09;
     let cjlast = 2.4672954597032423e-09;
 
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
+    let mut ida = Ida::new(
         Dummy {},
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
@@ -168,9 +169,10 @@ fn test1() {
 #[test]
 fn test2() {
     let problem = Dummy {};
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
+    let mut ida = Ida::new(
         problem,
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),

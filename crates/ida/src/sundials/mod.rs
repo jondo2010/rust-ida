@@ -1,18 +1,22 @@
 //! Build a `rust-ida` solver using a previously initialized solver from `sundials-sys`.
 
 use nalgebra::{
-    allocator::Allocator, Const, DefaultAllocator, DimName, DimNameAdd, Matrix, Storage,
-    StorageMut, Vector, U1,
+    allocator::Allocator, Const, DVector, DefaultAllocator, Dyn, Matrix, Storage, StorageMut,
+    Vector, U1,
 };
-use nonlinear::NLSolver;
 
 use crate::{
     constants::{MAXNLSIT, MXORDP1},
-    ida_ls::{IdaLProblem, IdaLProblemCounters},
-    ida_nls::IdaNLProblem,
+    private::{IdaLProblem, IdaLProblemCounters, IdaNLProblem},
+    //ida_ls::{IdaLProblem, IdaLProblemCounters},
+    //ida_nls::IdaNLProblem,
     tol_control::TolControl,
-    traits::{Jacobian, Residual, Root},
-    Ida, IdaCounters, IdaTask,
+    Ida,
+    IdaCounters,
+    IdaLimits,
+    IdaProblem,
+    IdaRootData,
+    IdaTask,
 };
 
 mod adapter;
@@ -22,52 +26,51 @@ mod roberts;
 #[derive(Debug)]
 struct SundialsProblem {}
 
-impl<D: DimName> Residual<f64, D> for SundialsProblem {
+impl IdaProblem<f64> for SundialsProblem {
+    type D = Dyn;
+    type R = Dyn;
+
     fn res<SA, SB, SC>(
         &self,
         tt: f64,
-        yy: &Matrix<f64, D, U1, SA>,
-        yp: &Matrix<f64, D, U1, SB>,
-        rr: &mut Matrix<f64, D, U1, SC>,
+        yy: &Matrix<f64, Self::D, U1, SA>,
+        yp: &Matrix<f64, Self::D, U1, SB>,
+        rr: &mut Matrix<f64, Self::D, U1, SC>,
     ) where
-        SA: Storage<f64, D>,
-        SB: Storage<f64, D>,
-        SC: StorageMut<f64, D>,
+        SA: Storage<f64, Self::D>,
+        SB: Storage<f64, Self::D>,
+        SC: StorageMut<f64, Self::D>,
     {
         todo!()
     }
-}
 
-impl<D: DimName> Jacobian<f64, D> for SundialsProblem {
     fn jac<SA, SB, SC, SD>(
         &self,
         tt: f64,
         cj: f64,
-        yy: &Matrix<f64, D, U1, SA>,
-        yp: &Matrix<f64, D, U1, SB>,
-        rr: &Matrix<f64, D, U1, SC>,
-        jac: &mut Matrix<f64, D, D, SD>,
+        yy: &Matrix<f64, Self::D, U1, SA>,
+        yp: &Matrix<f64, Self::D, U1, SB>,
+        rr: &Matrix<f64, Self::D, U1, SC>,
+        jac: &mut Matrix<f64, Self::D, Self::D, SD>,
     ) where
-        SA: Storage<f64, D>,
-        SB: Storage<f64, D>,
-        SC: Storage<f64, D>,
-        SD: StorageMut<f64, D, D>,
+        SA: Storage<f64, Self::D>,
+        SB: Storage<f64, Self::D>,
+        SC: Storage<f64, Self::D>,
+        SD: StorageMut<f64, Self::D, Self::D>,
     {
         todo!()
     }
-}
 
-impl<D: DimName> Root<f64, D> for SundialsProblem {
     fn root<SA, SB, SC>(
         &self,
         t: f64,
-        y: &Matrix<f64, D, U1, SA>,
-        yp: &Matrix<f64, D, U1, SB>,
-        gout: &mut Matrix<f64, D, U1, SC>,
+        y: &Matrix<f64, Self::D, U1, SA>,
+        yp: &Matrix<f64, Self::D, U1, SB>,
+        gout: &mut Matrix<f64, Self::R, U1, SC>,
     ) where
-        SA: Storage<f64, D>,
-        SB: Storage<f64, D>,
-        SC: StorageMut<f64, D>,
+        SA: Storage<f64, Self::D>,
+        SB: Storage<f64, Self::D>,
+        SC: StorageMut<f64, Self::R>,
     {
         todo!()
     }
@@ -76,14 +79,10 @@ impl<D: DimName> Root<f64, D> for SundialsProblem {
 const IDA_SS: i32 = 1;
 const IDA_SV: i32 = 2;
 
-impl<D> Ida<f64, D, SundialsProblem, linear::Dense<D>, nonlinear::Newton<f64, D>>
+impl Ida<f64, SundialsProblem, linear::Dense<Dyn>, nonlinear::Newton<f64, Dyn>>
 where
-    D: DimName + DimNameAdd<D>,
-    DefaultAllocator: Allocator<f64, D, D>
-        + Allocator<f64, D, Const<MXORDP1>>
-        + Allocator<f64, D>
-        + Allocator<u8, D>
-        + Allocator<usize, D>,
+    DefaultAllocator:
+        Allocator<f64, Dyn, Dyn> + Allocator<f64, Dyn, Const<MXORDP1>> + Allocator<f64, Dyn>,
 {
     pub fn from_sundials(mem: sundials_sys::IDAMem) -> Self {
         unsafe {
@@ -91,14 +90,71 @@ where
 
             let phi_views = (&(*mem).ida_phi)
                 .iter()
-                .map(|row| adapter::vector_view::<D>(*row))
+                .map(|row| adapter::vector_view_dynamic(*row))
                 .collect::<Vec<_>>();
 
             let nlp = nlproblem(mem);
 
             let ida_constraints = ((*mem).ida_constraintsSet > 0)
-                .then(|| adapter::vector_view::<D>((*mem).ida_constraints).clone_owned());
+                .then(|| adapter::vector_view_dynamic((*mem).ida_constraints).clone_owned());
 
+            //TODO: pull this data out of mem
+            let neq = sundials_sys::N_VGetLength((*mem).ida_yy) as usize;
+            let nls = nonlinear::Newton::new_dynamic(neq, MAXNLSIT);
+
+            let limits = IdaLimits {
+                ida_maxncf: (*mem).ida_maxncf as u64,
+                ida_maxnef: (*mem).ida_maxnef as u64,
+                ida_maxord: (*mem).ida_maxord as usize,
+                ida_mxstep: (*mem).ida_mxstep as u64,
+                ida_hmax_inv: (*mem).ida_hmax_inv,
+            };
+            let counters = IdaCounters {
+                ida_nst: (*mem).ida_nst as usize,
+                ida_nre: (*mem).ida_nre as usize,
+                ida_ncfn: (*mem).ida_ncfn as usize,
+                ida_netf: (*mem).ida_netf as usize,
+                ida_nni: (*mem).ida_nni as usize,
+            };
+            let num_roots = (*mem).ida_nrtfn as usize;
+
+            let iroots = DVector::from_column_slice(std::slice::from_raw_parts(
+                (*mem).ida_iroots,
+                num_roots,
+            ));
+            let rootdir = DVector::from_column_slice(std::slice::from_raw_parts(
+                (*mem).ida_rootdir,
+                num_roots,
+            ));
+            let glo =
+                DVector::from_column_slice(std::slice::from_raw_parts((*mem).ida_glo, num_roots));
+            let ghi =
+                DVector::from_column_slice(std::slice::from_raw_parts((*mem).ida_ghi, num_roots));
+            let grout =
+                DVector::from_column_slice(std::slice::from_raw_parts((*mem).ida_grout, num_roots));
+
+            let roots = IdaRootData::<f64, Dyn> {
+                ida_iroots: nalgebra::convert(iroots),
+                ida_rootdir: nalgebra::convert(rootdir),
+                ida_tlo: (*mem).ida_tlo,
+                ida_thi: (*mem).ida_thi,
+                ida_trout: (*mem).ida_trout,
+                ida_glo: glo,
+                ida_ghi: ghi,
+                ida_grout: grout,
+                ida_toutc: (*mem).ida_toutc,
+                ida_ttol: (*mem).ida_ttol,
+                ida_taskc: match (*mem).ida_taskc {
+                    sundials_sys::IDA_NORMAL => IdaTask::Normal,
+                    sundials_sys::IDA_ONE_STEP => IdaTask::OneStep,
+                    _ => {
+                        panic!("Unknown ida_taskc: {}", (*mem).ida_taskc);
+                    }
+                },
+                ida_irfnd: (*mem).ida_irfnd > 0,
+                ida_nge: (*mem).ida_nge as usize,
+                ida_mxgnull: (*mem).ida_mxgnull as usize,
+            };
             Self {
                 ida_setup_done: (*mem).ida_SetupDone > 0,
                 tol_control,
@@ -109,10 +165,10 @@ where
                 ida_beta: Vector::from((*mem).ida_beta),
                 ida_sigma: Vector::from((*mem).ida_sigma),
                 ida_gamma: Vector::from((*mem).ida_gamma),
-                ida_delta: adapter::vector_view::<D>((*mem).ida_delta).clone_owned(),
+                ida_delta: adapter::vector_view_dynamic((*mem).ida_delta).clone_owned(),
                 ida_id: None,
                 ida_constraints,
-                ida_ee: adapter::vector_view::<D>((*mem).ida_ee).clone_owned(),
+                ida_ee: adapter::vector_view_dynamic((*mem).ida_ee).clone_owned(),
                 ida_tstop: ((*mem).ida_tstopset > 0).then(|| (*mem).ida_tstop),
                 ida_kk: (*mem).ida_kk as usize,
                 ida_kused: (*mem).ida_kused as usize,
@@ -128,60 +184,35 @@ where
                 ida_cjlast: (*mem).ida_cjlast,
                 ida_eps_newt: (*mem).ida_epsNewt,
                 ida_epcon: (*mem).ida_epcon,
-                ida_maxncf: (*mem).ida_maxncf as u64,
-                ida_maxnef: (*mem).ida_maxnef as u64,
-                ida_maxord: (*mem).ida_maxord as usize,
-                ida_mxstep: (*mem).ida_mxstep as u64,
-                ida_hmax_inv: (*mem).ida_hmax_inv,
-                counters: IdaCounters {
-                    ida_nst: (*mem).ida_nst as usize,
-                    ida_nre: (*mem).ida_nre as usize,
-                    ida_ncfn: (*mem).ida_ncfn as usize,
-                    ida_netf: (*mem).ida_netf as usize,
-                    ida_nni: (*mem).ida_nni as usize,
-                },
+                limits,
+                counters,
                 ida_cvals: Vector::from((*mem).ida_cvals),
                 ida_dvals: Vector::from((*mem).ida_dvals),
                 ida_tolsf: (*mem).ida_tolsf,
-                ida_tlo: (*mem).ida_tlo,
-                ida_thi: (*mem).ida_thi,
-                ida_trout: (*mem).ida_trout,
-                ida_toutc: (*mem).ida_toutc,
-                ida_ttol: (*mem).ida_ttol,
-                ida_taskc: match (*mem).ida_taskc {
-                    sundials_sys::IDA_NORMAL => IdaTask::Normal,
-                    sundials_sys::IDA_ONE_STEP => IdaTask::OneStep,
-                    _ => {
-                        panic!("Unknown ida_taskc: {}", (*mem).ida_taskc);
-                    }
-                },
-                ida_irfnd: (*mem).ida_irfnd > 0,
-                ida_nge: (*mem).ida_nge as usize,
-                ida_mxgnull: (*mem).ida_mxgnull as usize,
-                nls: nonlinear::Newton::new(MAXNLSIT),
+                roots,
+                nls,
                 nlp,
             }
         }
     }
 }
 
-fn nlproblem<D>(
+fn nlproblem(
     mem: *mut sundials_sys::IDAMemRec,
-) -> IdaNLProblem<f64, D, SundialsProblem, linear::Dense<D>>
+) -> IdaNLProblem<f64, SundialsProblem, linear::Dense<Dyn>>
 where
-    D: DimName + DimNameAdd<D>,
-    DefaultAllocator: Allocator<f64, D> + Allocator<f64, D, D> + Allocator<usize, D>,
+    DefaultAllocator: Allocator<f64, Dyn> + Allocator<f64, Dyn, Dyn> + Allocator<usize, Dyn>,
 {
     assert_ne!(mem, std::ptr::null_mut());
     let lp = lproblem(mem);
     unsafe {
         IdaNLProblem {
-            ida_yy: adapter::vector_view::<D>((*mem).ida_yy).clone_owned(),
-            ida_yp: adapter::vector_view::<D>((*mem).ida_yp).clone_owned(),
-            ida_yypredict: adapter::vector_view::<D>((*mem).ida_yypredict).clone_owned(),
-            ida_yppredict: adapter::vector_view::<D>((*mem).ida_yppredict).clone_owned(),
-            ida_ewt: adapter::vector_view::<D>((*mem).ida_ewt).clone_owned(),
-            ida_savres: adapter::vector_view::<D>((*mem).ida_savres).clone_owned(),
+            ida_yy: adapter::vector_view_dynamic((*mem).ida_yy).clone_owned(),
+            ida_yp: adapter::vector_view_dynamic((*mem).ida_yp).clone_owned(),
+            ida_yypredict: adapter::vector_view_dynamic((*mem).ida_yypredict).clone_owned(),
+            ida_yppredict: adapter::vector_view_dynamic((*mem).ida_yppredict).clone_owned(),
+            ida_ewt: adapter::vector_view_dynamic((*mem).ida_ewt).clone_owned(),
+            ida_savres: adapter::vector_view_dynamic((*mem).ida_savres).clone_owned(),
             ida_tn: (*mem).ida_tn,
             ida_ss: (*mem).ida_ss,
             ida_oldnrm: (*mem).ida_oldnrm,
@@ -193,22 +224,25 @@ where
     }
 }
 
-fn lproblem<D>(
+fn lproblem(
     mem: *mut sundials_sys::IDAMemRec,
-) -> IdaLProblem<f64, D, SundialsProblem, linear::Dense<D>>
+) -> IdaLProblem<f64, SundialsProblem, linear::Dense<Dyn>>
 where
-    D: DimName + DimNameAdd<D>,
-    DefaultAllocator: Allocator<f64, D> + Allocator<f64, D, D> + Allocator<usize, D>,
+    DefaultAllocator: Allocator<f64, Dyn> + Allocator<f64, Dyn, Dyn> + Allocator<usize, Dyn>,
 {
     assert_ne!(mem, std::ptr::null_mut());
     unsafe {
         let lmem = (*mem).ida_lmem as sundials_sys::IDALsMem;
         assert_ne!(lmem, std::ptr::null_mut());
 
+        //TODO: pull this out of the mem
+        let neq = sundials_sys::N_VGetLength((*mem).ida_yy) as usize;
+        let ls = linear::Dense::new_dynamic(neq);
+
         IdaLProblem {
-            ls: linear::Dense::<D>::new(),
-            mat_j: adapter::dense_matrix_view::<D, D>((*lmem).J).clone_owned(),
-            x: adapter::vector_view::<D>((*lmem).x).clone_owned(),
+            ls,
+            mat_j: adapter::dense_matrix_view_dynamic((*lmem).J).clone_owned(),
+            x: adapter::vector_view_dynamic((*lmem).x).clone_owned(),
             eplifac: (*lmem).eplifac,
             nrmfac: (*lmem).nrmfac,
             ida_cj: (*mem).ida_cj,
@@ -234,10 +268,9 @@ where
     }
 }
 
-fn tol_control<D>(mem: *mut sundials_sys::IDAMemRec) -> TolControl<f64, D>
+fn tol_control(mem: *mut sundials_sys::IDAMemRec) -> TolControl<f64, Dyn>
 where
-    D: DimName + DimNameAdd<D>,
-    DefaultAllocator: Allocator<f64, D>,
+    DefaultAllocator: Allocator<f64, Dyn>,
 {
     assert_ne!(mem, std::ptr::null_mut());
     unsafe {
@@ -249,7 +282,7 @@ where
             }
             IDA_SV => {
                 let rtol = (*mem).ida_rtol;
-                let atol = adapter::vector_view::<D>((*mem).ida_Vatol);
+                let atol = adapter::vector_view_dynamic((*mem).ida_Vatol);
                 TolControl::new_sv(rtol, atol.clone_owned())
             }
             _ => {
@@ -261,9 +294,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use nalgebra::{Vector3, U3};
+    use nalgebra::DVector;
 
-    use crate::sundials::adapter::vector_view;
+    use crate::sundials::adapter::vector_view_dynamic;
 
     #[test]
     fn test_get_dky() {
@@ -282,15 +315,14 @@ mod tests {
                 sundials_sys::IDA_NORMAL,
             );
 
-            let ida = crate::Ida::<f64, U3, _, _, _>::from_sundials(mem);
+            let ida = crate::Ida::from_sundials(mem);
             let dky_expect = sundials_sys::N_VNew_Serial(3);
-            let mut dky = Vector3::zeros();
+            let mut dky = DVector::zeros(3);
 
             for k in 0..=ida.ida_kused {
                 sundials_sys::IDAGetDky(mem as _, tret, k as _, dky_expect);
                 ida.get_dky(tret, k, &mut dky).expect("get_dky failed");
-
-                assert_eq!(dky, vector_view::<U3>(dky_expect));
+                assert_eq!(dky, vector_view_dynamic(dky_expect));
             }
         }
     }

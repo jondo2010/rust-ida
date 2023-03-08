@@ -6,9 +6,10 @@ use super::*;
 
 #[test]
 fn test_restore1() {
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
+    let mut ida = Ida::new(
         Dummy {},
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),

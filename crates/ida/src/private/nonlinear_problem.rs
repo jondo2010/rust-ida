@@ -1,18 +1,16 @@
-use std::sync::Arc;
+//! Interfaces the IDA nonlinear problem to the nonlinear solver
 
 use linear::LSolver;
 use nalgebra::{
-    allocator::Allocator, DefaultAllocator, Dim, DimName, Matrix, OVector, Storage, StorageMut, U1,
+    allocator::Allocator, DefaultAllocator, DimName, OVector, Storage, StorageMut, Vector,
 };
 use nonlinear::{norm_wrms::NormWRMS, NLProblem, NLSolver};
 
-use crate::{
-    ida_ls::IdaLProblem,
-    traits::{IdaProblem, IdaReal},
-};
-
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};
+
+use super::linear_problem::IdaLProblem;
+use crate::traits::{IdaProblem, IdaReal};
 
 // nonlinear solver parameters
 /// max convergence rate used in divergence check
@@ -23,76 +21,75 @@ const RATEMAX: f64 = 0.9;
 #[cfg_attr(
     feature = "serde-serialize",
     serde(bound(
-        serialize = "T: Serialize, OVector<T, D>: Serialize, IdaLProblem<T, D, P, LS>: Serialize"
+        serialize = "T: Serialize, OVector<T, P::D>: Serialize, IdaLProblem<T, P, LS>: Serialize"
     ))
 )]
 #[cfg_attr(
     feature = "serde-serialize",
     serde(bound(
-        deserialize = "T: Deserialize<'de>,  OVector<T, D>: Deserialize<'de>, IdaLProblem<T, D, P, LS>: Deserialize<'de>"
+        deserialize = "T: Deserialize<'de>,  OVector<T, P::D>: Deserialize<'de>, IdaLProblem<T, P, LS>: Deserialize<'de>"
     ))
 )]
 #[derive(Debug, Clone)]
-pub struct IdaNLProblem<T, D, P, LS>
+pub struct IdaNLProblem<T, P, LS>
 where
     T: IdaReal,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: LSolver<T, D>,
-    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
+    P: IdaProblem<T>,
+    LS: LSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D> + Allocator<T, P::D, P::D>,
 {
     // Vectors
     /// work space for y vector (= user's yret)
-    pub(super) ida_yy: OVector<T, D>,
-    /// work space for y' vector (= user's ypret)
-    pub(super) ida_yp: OVector<T, D>,
-    /// predicted y vector
-    pub(super) ida_yypredict: OVector<T, D>,
-    /// predicted y' vector
-    pub(super) ida_yppredict: OVector<T, D>,
+    pub ida_yy: OVector<T, P::D>,
+    /// cratespace for y' vector (= user's ypret)
+    pub ida_yp: OVector<T, P::D>,
+    /// cratected y vector
+    pub ida_yypredict: OVector<T, P::D>,
+    /// cratected y' vector
+    pub ida_yppredict: OVector<T, P::D>,
 
-    /// error weight vector
-    pub(super) ida_ewt: OVector<T, D>,
+    /// crate weight vector
+    pub ida_ewt: OVector<T, P::D>,
 
-    /// saved residual vector
-    pub(super) ida_savres: OVector<T, D>,
-    /// current internal value of t
-    pub(super) ida_tn: T,
+    /// crate residual vector
+    pub ida_savres: OVector<T, P::D>,
+    /// cratent internal value of t
+    pub ida_tn: T,
 
-    /// scalar used in Newton iteration convergence test
-    pub(super) ida_ss: T,
-    /// norm of previous nonlinear solver update
-    pub(super) ida_oldnrm: T,
-    /// tolerance in direct test on Newton corrections
-    pub(super) ida_toldel: T,
+    /// crater used in Newton iteration convergence test
+    pub ida_ss: T,
+    /// crateof previous nonlinear solver update
+    pub ida_oldnrm: T,
+    /// crateance in direct test on Newton corrections
+    pub ida_toldel: T,
 
-    /// number of function (res) calls
-    pub(super) ida_nre: usize,
+    /// crater of function (res) calls
+    pub ida_nre: usize,
 
-    /// number of lsetup calls
-    pub(super) ida_nsetups: usize,
+    /// crater of lsetup calls
+    pub ida_nsetups: usize,
 
-    /// Linear Problem
-    pub(super) lp: IdaLProblem<T, D, P, LS>,
+    /// crater Problem
+    pub lp: IdaLProblem<T, P, LS>,
 }
 
-impl<T, D, P, LS> IdaNLProblem<T, D, P, LS>
+impl<T, P, LS> IdaNLProblem<T, P, LS>
 where
     T: IdaReal,
-    D: DimName,
-    P: IdaProblem<T, D>,
-    LS: LSolver<T, D>,
-    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
+    P: IdaProblem<T>,
+    P::D: DimName,
+    LS: LSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D> + Allocator<T, P::D, P::D>,
 {
     pub fn new<SA, SB>(
         problem: P,
         ls: LS,
-        yy0: &Matrix<T, D, U1, SA>,
-        yp0: &Matrix<T, D, U1, SB>,
+        yy0: &Vector<T, P::D, SA>,
+        yp0: &Vector<T, P::D, SB>,
     ) -> Self
     where
-        SA: Storage<T, D, U1>,
-        SB: Storage<T, D, U1>,
+        SA: Storage<T, P::D>,
+        SB: Storage<T, P::D>,
     {
         IdaNLProblem {
             ida_yy: yy0.clone_owned(),
@@ -116,23 +113,22 @@ where
     }
 }
 
-impl<T, D, P, LS> NLProblem<T, D> for IdaNLProblem<T, D, P, LS>
+impl<T, P, LS> NLProblem<T, P::D> for IdaNLProblem<T, P, LS>
 where
     T: IdaReal,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: LSolver<T, D>,
-    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
+    P: IdaProblem<T>,
+    LS: LSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D> + Allocator<T, P::D, P::D>,
 {
     /// idaNlsResidual
     fn sys<SA, SB>(
         &mut self,
-        ycor: &Matrix<T, D, U1, SA>,
-        res: &mut Matrix<T, D, U1, SB>,
+        ycor: &Vector<T, P::D, SA>,
+        res: &mut Vector<T, P::D, SB>,
     ) -> Result<(), nonlinear::Error>
     where
-        SA: Storage<T, D, U1>,
-        SB: StorageMut<T, D, U1>,
+        SA: Storage<T, P::D>,
+        SB: StorageMut<T, P::D>,
     {
         tracing::trace!("idaNlsResidual");
         // update yy and yp based on the current correction
@@ -164,13 +160,13 @@ where
     /// idaNlsLSetup
     fn setup<SA, SB>(
         &mut self,
-        _ycor: &Matrix<T, D, U1, SA>,
-        res: &Matrix<T, D, U1, SB>,
+        _ycor: &Vector<T, P::D, SA>,
+        res: &Vector<T, P::D, SB>,
         _jbad: bool,
     ) -> Result<bool, nonlinear::Error>
     where
-        SA: Storage<T, D, U1>,
-        SB: Storage<T, D, U1>,
+        SA: Storage<T, P::D>,
+        SB: Storage<T, P::D>,
     {
         tracing::trace!("idaNlsLSetup");
         self.ida_nsetups += 1;
@@ -189,12 +185,12 @@ where
     /// idaNlsLSolve
     fn solve<SA, SB>(
         &mut self,
-        _ycor: &Matrix<T, D, U1, SA>,
-        delta: &mut Matrix<T, D, U1, SB>,
+        _ycor: &Vector<T, P::D, SA>,
+        delta: &mut Vector<T, P::D, SB>,
     ) -> Result<(), nonlinear::Error>
     where
-        SA: Storage<T, D, U1>,
-        SB: StorageMut<T, D, U1>,
+        SA: Storage<T, P::D>,
+        SB: StorageMut<T, P::D>,
     {
         self.lp.solve(
             delta,
@@ -218,16 +214,16 @@ where
     fn ctest<NLS, SA, SB, SC>(
         &mut self,
         solver: &NLS,
-        _y: &Matrix<T, D, U1, SA>,
-        del: &Matrix<T, D, U1, SB>,
+        _y: &Vector<T, P::D, SA>,
+        del: &Vector<T, P::D, SB>,
         tol: T,
-        ewt: &Matrix<T, D, U1, SC>,
+        ewt: &Vector<T, P::D, SC>,
     ) -> Result<bool, nonlinear::Error>
     where
-        NLS: NLSolver<T, D>,
-        SA: Storage<T, D, U1>,
-        SB: Storage<T, D, U1>,
-        SC: Storage<T, D, U1>,
+        NLS: NLSolver<T, P::D>,
+        SA: Storage<T, P::D>,
+        SB: Storage<T, P::D>,
+        SC: Storage<T, P::D>,
     {
         // compute the norm of the correction
 

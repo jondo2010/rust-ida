@@ -1,26 +1,217 @@
-use std::{fmt::LowerExp, sync::Arc};
+use std::fmt::LowerExp;
 
 use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Dim, Storage, Vector};
 use nonlinear::norm_wrms::NormWRMS;
 
 use crate::{
     constants::{MXORDP1, XRATE},
+    error::RecoverableKind,
     traits::{IdaProblem, IdaReal},
     Error, Ida,
 };
 
 mod complete_step;
+mod linear_problem;
+mod nonlinear_problem;
+mod root_finding;
 mod stop_test;
 
-impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
+pub(crate) use linear_problem::{IdaLProblem, IdaLProblemCounters};
+pub(crate) use nonlinear_problem::IdaNLProblem;
+
+impl<T, P, LS, NLS> Ida<T, P, LS, NLS>
 where
     T: IdaReal + LowerExp,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: linear::LSolver<T, D>,
-    NLS: nonlinear::NLSolver<T, D>,
-    DefaultAllocator: Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D>,
+    P: IdaProblem<T>,
+    LS: linear::LSolver<T, P::D>,
+    NLS: nonlinear::NLSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D>
+        + Allocator<T, P::R>
+        + Allocator<i8, P::R>
+        + Allocator<T, P::D, P::D>
+        + Allocator<T, P::D, Const<MXORDP1>>,
 {
+    /// IDAInitialSetup
+    ///
+    /// This routine is called by `solve` once at the first step. It performs all checks on optional inputs and inputs
+    /// to `init`/`reinit` that could not be done before.
+    ///
+    /// If no error is encountered, IDAInitialSetup returns IDA_SUCCESS. Otherwise, it returns an error flag and
+    /// reported to the error handler function.
+    fn initial_setup(&mut self) {
+        //booleantype conOK;
+        //int ier;
+
+        // Initial error weight vector
+        self.tol_control
+            .ewt_set(&self.ida_phi.column(0), &mut self.nlp.ida_ewt);
+
+        /*
+        // Check to see if y0 satisfies constraints.
+        if (IDA_mem->ida_constraintsSet) {
+          conOK = N_VConstrMask(IDA_mem->ida_constraints, IDA_mem->ida_phi[0], IDA_mem->ida_tempv2);
+          if (!conOK) {
+            IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_Y0_FAIL_CONSTR);
+            return(IDA_ILL_INPUT);
+          }
+        }
+
+        // Call linit function if it exists.
+        if (IDA_mem->ida_linit != NULL) {
+          ier = IDA_mem->ida_linit(IDA_mem);
+          if (ier != 0) {
+            IDAProcessError(IDA_mem, IDA_ILL_INPUT, "IDA", "IDAInitialSetup", MSG_LINIT_FAIL);
+            return(IDA_LINIT_FAIL);
+          }
+        }
+        */
+
+        //return(IDA_SUCCESS);
+    }
+
+    /// This routine performs one internal IDA step, from `tn` to `tn + hh`. It calls other
+    /// routines to do all the work.
+    ///
+    /// It solves a system of differential/algebraic equations of the form `F(t,y,y') = 0`, for
+    /// one step.
+    /// In IDA, `tt` is used for `t`, `yy` is used for `y`, and `yp` is used for `y'`. The function
+    /// F is supplied as 'res' by the user.
+    ///
+    /// The methods used are modified divided difference, fixed leading coefficient forms of
+    /// backward differentiation formulas. The code adjusts the stepsize and order to control the
+    /// local error per step.
+    ///
+    /// The main operations done here are as follows:
+    /// * initialize various quantities;
+    /// * setting of multistep method coefficients;
+    /// * solution of the nonlinear system for yy at t = tn + hh;
+    /// * deciding on order reduction and testing the local error;
+    /// * attempting to recover from failure in nonlinear solver or error test;
+    /// * resetting stepsize and order for the next step.
+    /// * updating phi and other state data if successful;
+    ///
+    /// On a failure in the nonlinear system solution or error test, the step may be reattempted,
+    /// depending on the nature of the failure.
+    ///
+    /// Variables or arrays (all in the IDAMem structure) used in IDAStep are:
+    ///
+    /// tt -- Independent variable.
+    /// yy -- Solution vector at tt.
+    /// yp -- Derivative of solution vector after successful stelp.
+    /// res -- User-supplied function to evaluate the residual. See the description given in file ida.h
+    /// lsetup -- Routine to prepare for the linear solver call. It may either save or recalculate
+    ///   quantities used by lsolve. (Optional)
+    /// lsolve -- Routine to solve a linear system. A prior call to lsetup may be required.
+    /// hh  -- Appropriate step size for next step.
+    /// ewt -- Vector of weights used in all convergence tests.
+    /// phi -- Array of divided differences used by IDAStep. This array is composed of (maxord+1)
+    ///   nvectors (each of size Neq). (maxord+1) is the maximum order for the problem, maxord, plus 1.
+    ///
+    /// Return values are:
+    ///       IDA_SUCCESS   IDA_RES_FAIL      LSETUP_ERROR_NONRTolCVR
+    ///                     IDA_LSOLVE_FAIL   IDA_ERR_FAIL
+    ///                     IDA_CONSTR_FAIL   IDA_CONV_FAIL
+    ///                     IDA_REP_RES_ERR
+    fn step(&mut self) -> Result<(), Error> {
+        #[cfg(feature = "profiler")]
+        profile_scope!(format!("step(), nst={}", self.counters.ida_nst));
+
+        let saved_t = self.nlp.ida_tn;
+
+        if self.counters.ida_nst == 0 {
+            self.ida_kk = 1;
+            self.ida_kused = 0;
+            self.ida_hused = T::zero();
+            self.ida_psi[0] = self.ida_hh;
+            self.nlp.lp.ida_cj = self.ida_hh.recip();
+            self.ida_phase = 0;
+            self.ida_ns = 0;
+        }
+
+        let mut ncf = 0; // local counter for convergence failures
+        let mut nef = 0; // local counter for error test failures
+
+        // Looping point for attempts to take a step
+
+        let (ck, err_k, err_km1) = loop {
+            #[cfg(feature = "data_trace")]
+            {
+                serde_json::to_writer(&self.data_trace, self).unwrap();
+                self.data_trace.write_all(b",\n").unwrap();
+            }
+
+            //-----------------------
+            // Set method coefficients
+            //-----------------------
+
+            let ck = self.set_coeffs();
+
+            //kflag = IDA_SUCCESS;
+
+            //----------------------------------------------------
+            // If tn is past tstop (by roundoff), reset it to tstop.
+            //-----------------------------------------------------
+
+            self.nlp.ida_tn += self.ida_hh;
+            if let Some(tstop) = self.ida_tstop {
+                if ((self.nlp.ida_tn - tstop) * self.ida_hh) > T::one() {
+                    self.nlp.ida_tn = tstop;
+                }
+            }
+
+            //-----------------------
+            // Advance state variables
+            //-----------------------
+
+            // Compute predicted values for yy and yp
+            self.predict();
+
+            // Nonlinear system solution
+            let (err_k, err_km1, converged) = self
+                .nonlinear_solve()
+                .map_err(|err| (T::zero(), T::zero(), err))
+                .and_then(|_| {
+                    // If NLS was successful, perform error test
+                    self.test_error(ck)
+                })
+                // Test for convergence or error test failures
+                .or_else(|(err_k, err_km1, err)| {
+                    // restore and decide what to do
+                    self.restore(saved_t);
+
+                    self.handle_n_flag(err, err_k, err_km1, &mut ncf, &mut nef)
+                        .map(|_| {
+                            // recoverable error; predict again
+                            if self.counters.ida_nst == 0 {
+                                self.reset();
+                            }
+
+                            (err_k, err_km1, false)
+                        })
+                })?;
+
+            if converged {
+                break (ck, err_k, err_km1);
+            }
+        };
+
+        // Nonlinear system solve and error test were both successful;
+        // update data, and consider change of step and/or order
+
+        self.complete_step(err_k, err_km1);
+
+        //  Rescale ee vector to be the estimated local error
+        //  Notes:
+        //    (1) altering the value of ee is permissible since it will be overwritten by
+        //        solve()->step()->nonlinear_solve() before it is needed again
+        //    (2) the value of ee is only valid if IDAHandleNFlag() returns either
+        //        PREDICT_AGAIN or IDA_SUCCESS
+
+        self.ida_ee *= ck;
+
+        Ok(())
+    }
+
     /// This routine computes the coefficients relevant to the current step.
     ///
     /// The counter ns counts the number of consecutive steps taken at constant stepsize h and order k, up to a maximum
@@ -323,6 +514,142 @@ where
         }
     }
 
+    /// IDAHandleNFlag
+    ///
+    /// This routine handles failures indicated by the input variable nflag. Positive values
+    /// indicate various recoverable failures while negative values indicate nonrecoverable
+    /// failures. This routine adjusts the step size for recoverable failures.
+    ///
+    ///  Possible nflag values (input):
+    ///
+    ///   --convergence failures--
+    ///   IDA_RES_RTolCVR              > 0
+    ///   IDA_LSOLVE_RTolCVR           > 0
+    ///   IDA_CONSTR_RTolCVR           > 0
+    ///   SUN_NLS_CONV_RTolCV          > 0
+    ///   IDA_RES_FAIL               < 0
+    ///   IDA_LSOLVE_FAIL            < 0
+    ///   IDA_LSETUP_FAIL            < 0
+    ///
+    ///   --error test failure--
+    ///   ERROR_TEST_FAIL            > 0
+    ///
+    /// # Returns
+    /// * Ok(()), Recoverable, PREDICT_AGAIN
+    /// * Error
+    ///
+    ///   --nonrecoverable--
+    ///   IDA_CONSTR_FAIL
+    ///   IDA_REP_RES_ERR
+    ///   IDA_ERR_FAIL
+    ///   IDA_CONV_FAIL
+    ///   IDA_RES_FAIL
+    ///   IDA_LSETUP_FAIL
+    ///   IDA_LSOLVE_FAIL
+    fn handle_n_flag(
+        &mut self,
+        error: Error,
+        err_k: T,
+        err_km1: T,
+        ncf_ptr: &mut u64,
+        nef_ptr: &mut u64,
+    ) -> Result<(), Error> {
+        self.ida_phase = 1;
+
+        match error {
+            Error::RecoverableFail(recoverable) => {
+                //-----------------------
+                // Nonlinear solver failed
+                //-----------------------
+
+                // recoverable failure
+                *ncf_ptr += 1; // local counter for convergence failures
+                self.counters.ida_ncfn += 1; // global counter for convergence failures
+
+                // Reduce step size for a new prediction
+                if !matches!(recoverable, RecoverableKind::Constraint) {
+                    // If nflag=IDA_CONSTR_RECVR then rr was already set in IDANls
+                    self.ida_rr = T::quarter();
+                }
+                self.ida_hh *= self.ida_rr;
+
+                // Test if there were too many convergence failures
+                if *ncf_ptr < self.limits.ida_maxncf {
+                    Ok(())
+                } else {
+                    match recoverable {
+                        // return (IDA_REP_RES_ERR);
+                        RecoverableKind::Residual => Err(Error::ResidualFail),
+
+                        // return (IDA_CONSTR_FAIL);
+                        RecoverableKind::Constraint => Err(Error::ConstraintFail),
+
+                        // return (IDA_CONV_FAIL);
+                        _ => Err(Error::ConvergenceFail),
+                    }
+                }
+            }
+
+            Error::TestFail => {
+                // -----------------
+                // Error Test failed
+                //------------------
+
+                *nef_ptr += 1; // local counter for error test failures
+                self.counters.ida_netf += 1; // global counter for error test failures
+
+                if *nef_ptr == 1 {
+                    // On first error test failure, keep current order or lower order by one. Compute new stepsize
+                    // based on differences of the solution.
+
+                    let err_knew = if self.ida_kk == self.ida_knew {
+                        err_k
+                    } else {
+                        err_km1
+                    };
+
+                    self.ida_kk = self.ida_knew;
+                    // rr = 0.9 * (2 * err_knew + 0.0001)^(-1/(kk+1))
+                    self.ida_rr = {
+                        let base = T::two() * err_knew + T::pt0001();
+                        let arg = T::from(self.ida_kk + 1).unwrap().recip();
+                        T::pt9() * base.powf(-arg)
+                    };
+                    self.ida_rr = T::quarter().max(T::pt9().min(self.ida_rr));
+                    self.ida_hh *= self.ida_rr;
+                    Ok(())
+                } else if *nef_ptr == 2 {
+                    // On second error test failure, use current order or decrease by one.  Reduce stepsize by factor of 1/4.
+                    self.ida_kk = self.ida_knew;
+                    self.ida_rr = T::quarter();
+                    self.ida_hh *= self.ida_rr;
+                    Ok(())
+                } else if *nef_ptr < self.limits.ida_maxnef {
+                    // On third and subsequent error test failures, set order to 1. Reduce stepsize by factor of 1/4.
+                    self.ida_kk = 1;
+                    self.ida_rr = T::quarter();
+                    self.ida_hh *= self.ida_rr;
+                    Ok(())
+                } else {
+                    // Too many error test failures
+                    Err(Error::ErrFail)
+                }
+            }
+
+            _ => {
+                panic!("Should never happen");
+            }
+        }
+    }
+
+    /// IDAReset
+    /// This routine is called only if we need to predict again at the very first step. In such a case,
+    /// reset phi[1] and psi[0].
+    pub(crate) fn reset(&mut self) -> () {
+        self.ida_psi[0] = self.ida_hh;
+        self.ida_phi *= self.ida_rr;
+    }
+
     /// This routine evaluates `y(t)` and `y'(t)` as the value and derivative of the interpolating polynomial at the
     /// independent variable `t`, and stores the results in the vectors `yret` and `ypret`.
     /// It uses the current independent variable value, `tn`, and the method order last used, `kused`.
@@ -383,9 +710,9 @@ where
     }
 
     /// Returns the WRMS norm of vector x with weights w.
-    pub(crate) fn wrms_norm<S>(&self, x: &Vector<T, D, S>) -> T
+    pub(crate) fn wrms_norm<S>(&self, x: &Vector<T, P::D, S>) -> T
     where
-        S: Storage<T, D>,
+        S: Storage<T, P::D>,
     {
         match self.ida_id {
             Some(ref ida_id) if self.ida_suppressalg => {

@@ -4,14 +4,17 @@ use crate::{IdaSolveStatus, IdaTask};
 
 use super::*;
 
-impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
+impl<T, P, LS, NLS> Ida<T, P, LS, NLS>
 where
     T: IdaReal + LowerExp,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: linear::LSolver<T, D>,
-    NLS: nonlinear::NLSolver<T, D>,
-    DefaultAllocator: Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D>,
+    P: IdaProblem<T>,
+    LS: linear::LSolver<T, P::D>,
+    NLS: nonlinear::NLSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D>
+        + Allocator<T, P::R>
+        + Allocator<i8, P::R>
+        + Allocator<T, P::D, P::D>
+        + Allocator<T, P::D, Const<MXORDP1>>,
 {
     /// IDAStopTest1
     ///

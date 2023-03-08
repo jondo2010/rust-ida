@@ -125,14 +125,6 @@ where
 }
 
 pub trait NLSolver<T: Scalar, D: Dim> {
-    /// Create a new NLSolver
-    ///
-    /// # Arguments
-    ///
-    /// * `size` - The problem size
-    /// * `maxiters` - The maximum number of iterations per solve attempt
-    fn new(maxiters: usize) -> Self;
-
     /// Description
     /// The optional function SUNNonlinSolSetup performs any solver setup needed for a nonlinear solve.
     ///

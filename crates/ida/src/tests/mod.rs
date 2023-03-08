@@ -3,7 +3,7 @@ use nalgebra::*;
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};
 
-use crate::traits::{Jacobian, Residual, Root};
+use crate::IdaProblem;
 
 mod complete_step;
 mod get_dky;
@@ -18,7 +18,10 @@ mod test_error;
 #[derive(Clone, Copy, Debug)]
 pub struct Dummy {}
 
-impl Residual<f64, Const<3>> for Dummy {
+impl IdaProblem<f64> for Dummy {
+    type D = U3;
+    type R = U3;
+
     fn res<SA, SB, SC>(
         &self,
         tt: f64,
@@ -31,9 +34,7 @@ impl Residual<f64, Const<3>> for Dummy {
         SC: StorageMut<f64, Const<3>>,
     {
     }
-}
 
-impl Jacobian<f64, Const<3>> for Dummy {
     fn jac<SA, SB, SC, SD>(
         &self,
         tt: f64,
@@ -49,9 +50,7 @@ impl Jacobian<f64, Const<3>> for Dummy {
         SD: StorageMut<f64, Const<3>, Const<3>>,
     {
     }
-}
 
-impl Root<f64, Const<3>> for Dummy {
     fn root<SA, SB, SC>(
         &self,
         t: f64,

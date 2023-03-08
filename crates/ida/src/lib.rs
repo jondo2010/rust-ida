@@ -3,14 +3,13 @@ use nalgebra::{
     StorageMut, Vector, U1,
 };
 
+use private::IdaNLProblem;
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod constants;
 mod error;
 mod ida_io;
-pub mod ida_ls;
-pub mod ida_nls;
 mod impl_new;
 pub(crate) mod private;
 pub mod sundials;
@@ -23,7 +22,7 @@ use constants::*;
 pub use error::Error;
 pub use impl_new::*;
 use tol_control::TolControl;
-pub use traits::{IdaProblem, IdaReal, Jacobian, Residual, Root};
+pub use traits::{IdaProblem, IdaReal};
 
 /// Counters
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
@@ -61,39 +60,126 @@ enum IdaConverged {
     NotConverged,
 }
 
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+#[derive(Debug)]
+struct IdaLimits<T> {
+    /// max numer of convergence failures
+    ida_maxncf: u64,
+    /// max number of error test failures
+    ida_maxnef: u64,
+    /// max value of method order k:
+    ida_maxord: usize,
+    /// max number of internal steps for one user call
+    ida_mxstep: u64,
+    /// inverse of max. step size hmax (default = 0.0)
+    ida_hmax_inv: T,
+}
+
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde-serialize",
+    serde(bound(serialize = "
+        T: Serialize,
+        OVector<T, R>: Serialize,
+        OVector<i8, R>: Serialize"))
+)]
+#[cfg_attr(
+    feature = "serde-serialize",
+    serde(bound(deserialize = "
+        T: Deserialize<'de>,
+        OVector<T, R>: Deserialize<'de>,
+        OVector<i8, R>: Deserialize<'de>"))
+)]
+#[derive(Debug)]
+struct IdaRootData<T, R: Dim>
+where
+    DefaultAllocator: Allocator<T, R> + Allocator<i8, R>,
+{
+    /// number of components of g
+    //ida_nrtfn: usize,
+    /// array for root information
+    ida_iroots: OVector<i8, R>,
+    /// array specifying direction of zero-crossing
+    ida_rootdir: OVector<i8, R>,
+    /// nearest endpoint of interval in root search
+    ida_tlo: T,
+    /// farthest endpoint of interval in root search
+    ida_thi: T,
+    /// t return value from rootfinder routine
+    ida_trout: T,
+    /// saved array of g values at t = tlo
+    ida_glo: OVector<T, R>,
+    /// saved array of g values at t = thi
+    ida_ghi: OVector<T, R>,
+    /// array of g values at t = trout
+    ida_grout: OVector<T, R>,
+    /// copy of tout (if NORMAL mode)
+    ida_toutc: T,
+    /// tolerance on root location
+    ida_ttol: T,
+    /// copy of parameter itask
+    ida_taskc: IdaTask,
+    /// flag showing whether last step had a root
+    ida_irfnd: bool,
+    /// counter for g evaluations
+    ida_nge: usize,
+
+    /// array with active/inactive event functions
+    //ida_gactive: Array1<bool>,
+    /// number of warning messages about possible g==0
+    ida_mxgnull: usize,
+}
+
 /// This structure contains fields to keep track of problem state.
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(
-        serialize = "T: Serialize, OVector<T, D>: Serialize, OMatrix<T, D, Const<MXORDP1>>: Serialize, ida_nls::IdaNLProblem<T, D, P, LS>: Serialize, NLS: Serialize, LS: Serialize, P: Serialize"
-    ))
+    serde(bound(serialize = "
+        T: Serialize,
+        OVector<T, P::D>: Serialize,
+        OVector<T, P::R>: Serialize,
+        OVector<i8, P::R>: Serialize,
+        OMatrix<T, P::D, Const<MXORDP1>>: Serialize,
+        IdaNLProblem<T, P, LS>: Serialize,
+        NLS: Serialize,
+        LS: Serialize,
+        P: Serialize"))
 )]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(
-        deserialize = "T: Deserialize<'de>, OVector<T, D>: Deserialize<'de>, OMatrix<T, D, Const<MXORDP1>>: Deserialize<'de>, ida_nls::IdaNLProblem<T, D, P, LS>: Deserialize<'de>, NLS: Deserialize<'de>, LS: Deserialize<'de>, P: Deserialize<'de>"
-    ))
+    serde(bound(deserialize = "
+        T: Deserialize<'de>,
+        OVector<T, P::D>: Deserialize<'de>,
+        OVector<T, P::R>: Deserialize<'de>,
+        OVector<i8, P::R>: Deserialize<'de>,
+        OMatrix<T, P::D, Const<MXORDP1>>: Deserialize<'de>,
+        IdaNLProblem<T, P, LS>: Deserialize<'de>,
+        NLS: Deserialize<'de>,
+        LS: Deserialize<'de>,
+        P: Deserialize<'de>"))
 )]
 #[derive(Debug)]
-pub struct Ida<T, D, P, LS, NLS>
+pub struct Ida<T, P, LS, NLS>
 where
     T: IdaReal,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: linear::LSolver<T, D>,
-    NLS: nonlinear::NLSolver<T, D>,
-    DefaultAllocator: Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D>,
+    P: IdaProblem<T>,
+    LS: linear::LSolver<T, P::D>,
+    NLS: nonlinear::NLSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D>
+        + Allocator<T, P::R>
+        + Allocator<i8, P::R>
+        + Allocator<T, P::D, P::D>
+        + Allocator<T, P::D, Const<MXORDP1>>,
 {
     ida_setup_done: bool,
-    tol_control: TolControl<T, D>,
+    tol_control: TolControl<T, P::D>,
 
-    /// SUNTRUE means suppress algebraic vars in local error tests
+    /// Suppress algebraic vars in local error tests
     ida_suppressalg: bool,
 
-    // Divided differences array and associated minor arrays
+    // # Divided differences array and associated minor arrays
     /// phi = (maxord+1) arrays of divided differences
-    ida_phi: OMatrix<T, D, Const<MXORDP1>>,
+    ida_phi: OMatrix<T, P::D, Const<MXORDP1>>,
     /// differences in t (sums of recent step sizes)
     ida_psi: OVector<T, Const<MXORDP1>>,
     /// ratios of current stepsize to psi values
@@ -105,15 +191,15 @@ where
     /// sum of reciprocals of psi values
     ida_gamma: OVector<T, Const<MXORDP1>>,
 
-    // Vectors
+    // # Vectors
     /// residual vector
-    ida_delta: OVector<T, D>,
+    ida_delta: OVector<T, P::D>,
     /// bit vector for diff./algebraic components
-    ida_id: Option<OVector<T, D>>,
+    ida_id: Option<OVector<T, P::D>>,
     /// vector of inequality constraint options
-    ida_constraints: Option<OVector<T, D>>,
+    ida_constraints: Option<OVector<T, P::D>>,
     /// accumulated corrections to y vector, but set equal to estimated local errors upon successful return
-    ida_ee: OVector<T, D>,
+    ida_ee: OVector<T, P::D>,
 
     //ida_mm;          /* mask vector in constraints tests (= tempv2)    */
     //ida_tempv1;      /* work space vector                              */
@@ -127,7 +213,7 @@ where
     // Tstop information
     ida_tstop: Option<T>,
 
-    // Step Data
+    // # Step Data
     /// current BDF method order
     ida_kk: usize,
     /// method order used on last successful step
@@ -162,16 +248,7 @@ where
     ida_epcon: T,
 
     // Limits
-    /// max numer of convergence failures
-    ida_maxncf: u64,
-    /// max number of error test failures
-    ida_maxnef: u64,
-    /// max value of method order k:
-    ida_maxord: usize,
-    /// max number of internal steps for one user call
-    ida_mxstep: u64,
-    /// inverse of max. step size hmax (default = 0.0)
-    ida_hmax_inv: T,
+    limits: IdaLimits<T>,
 
     //// Counters
     counters: IdaCounters,
@@ -184,60 +261,30 @@ where
     ida_tolsf: T,
 
     // Rootfinding Data
-    /// number of components of g
-    //ida_nrtfn: usize,
-    /// array for root information
-    //ida_iroots: OVector<T, Const<{ P::NROOTS }>>,
-    /// array specifying direction of zero-crossing
-    //ida_rootdir: Array1<u8>,
-    /// nearest endpoint of interval in root search
-    ida_tlo: T,
-    /// farthest endpoint of interval in root search
-    ida_thi: T,
-    /// t return value from rootfinder routine
-    ida_trout: T,
-
-    /// saved array of g values at t = tlo
-    //ida_glo: Array1<T>,
-    /// saved array of g values at t = thi
-    //ida_ghi: Array1<T>,
-    /// array of g values at t = trout
-    //ida_grout: Array1<T>,
-    /// copy of tout (if NORMAL mode)
-    ida_toutc: T,
-    /// tolerance on root location
-    ida_ttol: T,
-    /// copy of parameter itask
-    ida_taskc: IdaTask,
-    /// flag showing whether last step had a root
-    ida_irfnd: bool,
-    /// counter for g evaluations
-    ida_nge: usize,
-
-    /// array with active/inactive event functions
-    //ida_gactive: Array1<bool>,
-    /// number of warning messages about possible g==0
-    ida_mxgnull: usize,
+    roots: IdaRootData<T, P::R>,
 
     /// Nonlinear Solver
     nls: NLS,
 
     /// Nonlinear problem
-    nlp: ida_nls::IdaNLProblem<T, D, P, LS>,
+    nlp: IdaNLProblem<T, P, LS>,
 
     #[cfg(feature = "data_trace")]
     data_trace: std::fs::File,
 }
 
 /// # Interpolated output and extraction functions
-impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
+impl<T, P, LS, NLS> Ida<T, P, LS, NLS>
 where
     T: IdaReal,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: linear::LSolver<T, D>,
-    NLS: nonlinear::NLSolver<T, D>,
-    DefaultAllocator: Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D>,
+    P: IdaProblem<T>,
+    LS: linear::LSolver<T, P::D>,
+    NLS: nonlinear::NLSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D>
+        + Allocator<T, P::R>
+        + Allocator<i8, P::R>
+        + Allocator<T, P::D, P::D>
+        + Allocator<T, P::D, Const<MXORDP1>>,
 {
     /// IDAGetDky
     ///
@@ -254,9 +301,9 @@ where
     /// * `Ok(())` - if successful
     /// * `Err(Error::BadTimeValue)` - if `t` is not within the interval of the last step taken
     /// * `Err(Error::BadK)` - if the requested `k` is not in the range `[0,order used]`
-    pub fn get_dky<S>(&self, t: T, k: usize, dky: &mut Vector<T, D, S>) -> Result<(), Error>
+    pub fn get_dky<S>(&self, t: T, k: usize, dky: &mut Vector<T, P::D, S>) -> Result<(), Error>
     where
-        S: StorageMut<T, D, U1>,
+        S: StorageMut<T, P::D, U1>,
     {
         if k > self.ida_kused {
             Err(Error::BadK {
@@ -345,10 +392,10 @@ where
     /// # Arguments
     /// * `ycor` - the correction to the predicted value of `y`
     /// * `y` - the vector in which to store the result
-    pub fn compute_y<SA, SB>(&self, ycor: &Vector<T, D, SA>, y: &mut Vector<T, D, SB>)
+    pub fn compute_y<SA, SB>(&self, ycor: &Vector<T, P::D, SA>, y: &mut Vector<T, P::D, SB>)
     where
-        SA: Storage<T, D, U1>,
-        SB: StorageMut<T, D, U1>,
+        SA: Storage<T, P::D>,
+        SB: StorageMut<T, P::D>,
     {
         y.copy_from(&self.nlp.ida_yypredict);
         y.axpy(T::one(), ycor, T::one());
@@ -359,10 +406,10 @@ where
     /// # Arguments
     /// * `ycor` - the correction to the predicted value of `y`
     /// * `yp` - the vector in which to store the result
-    pub fn compute_yp<SA, SB>(&self, ycor: &Vector<T, D, SA>, yp: &mut Vector<T, D, SB>)
+    pub fn compute_yp<SA, SB>(&self, ycor: &Vector<T, P::D, SA>, yp: &mut Vector<T, P::D, SB>)
     where
-        SA: Storage<T, D, U1>,
-        SB: StorageMut<T, D, U1>,
+        SA: Storage<T, P::D>,
+        SB: StorageMut<T, P::D>,
     {
         yp.copy_from(&self.nlp.ida_yppredict);
         yp.axpy(T::one(), ycor, T::one());

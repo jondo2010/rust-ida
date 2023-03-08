@@ -36,9 +36,10 @@ fn test1() {
     let err_k = 29.10297975314245;
     let err_km1 = 3.531162835377502;
 
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
+    let mut ida = Ida::new(
         Dummy {},
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
@@ -95,9 +96,10 @@ fn test2() {
     let err_km1 = 0.455601916633899;
     let nflag = true;
 
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
+    let mut ida = Ida::new(
         Dummy {},
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),

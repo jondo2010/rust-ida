@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug)]
-pub enum Recoverable {
+pub enum RecoverableKind {
     /// IDA_RES_RECVR
     Residual,
     /// IDA_LSETUP_RECVR
@@ -22,6 +22,9 @@ pub enum Error {
 
     // LSETUP_ERROR_NONRECVR
     // IDA_ERR_FAIL
+    #[error("Error test failures occurred too many times during one internal time step or minimum step size was reached.")]
+    ErrFail,
+
     /// IDA_REP_RES_ERR:
     #[error("The user's residual function repeatedly returned a recoverable error flag, but the solver was unable to recover")]
     RepeatedResidualError {},
@@ -40,7 +43,7 @@ pub enum Error {
 
     /// IDA_RES_FAIL
     #[error("The user's residual routine returned a non-recoverable error flag")]
-    ResidualFail {},
+    ResidualFail,
 
     /// IDA_FIRST_RES_FAIL
     #[error( "The user's residual routine returned a recoverable error flag on the first call, but IDACalcIC was unable to recover")]
@@ -62,12 +65,12 @@ pub enum Error {
     NoRecovery {},
 
     #[error("Recoverable failure")]
-    RecoverableFail { rec_type: Recoverable },
+    RecoverableFail(RecoverableKind),
 
     /// IDA_CONSTR_FAIL
     /// The inequality constraints were violated, and the solver was unable to recover.
     #[error("IDACalcIC was unable to find a solution satisfying the inequality constraints")]
-    ConstraintFail {},
+    ConstraintFail,
 
     /// IDA_LINESEARCH_FAIL
     #[error(
@@ -78,7 +81,7 @@ pub enum Error {
 
     /// IDA_CONV_FAIL
     #[error("IDACalcIC failed to get convergence of the Newton iterations")]
-    ConvergenceFail {},
+    ConvergenceFail,
 
     ///MSG_BAD_K
     #[error("Illegal value for k, should be 0 <= k <= {kused}.")]

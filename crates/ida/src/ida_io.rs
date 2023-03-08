@@ -1,4 +1,4 @@
-use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Dim, OVector};
+use nalgebra::{allocator::Allocator, Const, DefaultAllocator, OVector};
 
 use crate::{
     constants::MXORDP1,
@@ -6,23 +6,25 @@ use crate::{
     Ida,
 };
 
-impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
+impl<T, P, LS, NLS> Ida<T, P, LS, NLS>
 where
     T: IdaReal,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: linear::LSolver<T, D>,
-    NLS: nonlinear::NLSolver<T, D>,
-    DefaultAllocator:
-        Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D> + Allocator<u8, D>,
+    P: IdaProblem<T>,
+    LS: linear::LSolver<T, P::D>,
+    NLS: nonlinear::NLSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D>
+        + Allocator<T, P::R>
+        + Allocator<i8, P::R>
+        + Allocator<T, P::D, P::D>
+        + Allocator<T, P::D, Const<MXORDP1>>,
 {
     /// Return a view of the y vector
-    pub fn get_yy(&self) -> &OVector<T, D> {
+    pub fn get_yy(&self) -> &OVector<T, P::D> {
         &self.nlp.ida_yy
     }
 
     /// Return a view of the y' vector
-    pub fn get_yp(&self) -> &OVector<T, D> {
+    pub fn get_yp(&self) -> &OVector<T, P::D> {
         &self.nlp.ida_yp
     }
 
@@ -115,7 +117,7 @@ where
 
     /// returns the cumulative number of calls to the user root function.
     pub fn get_num_g_evals(&self) -> usize {
-        self.ida_nge
+        self.roots.ida_nge
     }
 
     /// returns an array showing which functions were found to have a root.

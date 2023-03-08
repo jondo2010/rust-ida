@@ -1,18 +1,18 @@
-use std::{
-    fmt::LowerExp,
-    ops::{Add, AddAssign},
-};
+use std::{fmt::LowerExp, ops::AddAssign};
 
 use super::*;
 
-impl<T, D, P, LS, NLS> Ida<T, D, P, LS, NLS>
+impl<T, P, LS, NLS> Ida<T, P, LS, NLS>
 where
     T: IdaReal + LowerExp,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: linear::LSolver<T, D>,
-    NLS: nonlinear::NLSolver<T, D>,
-    DefaultAllocator: Allocator<T, D, D> + Allocator<T, D, Const<MXORDP1>> + Allocator<T, D>,
+    P: IdaProblem<T>,
+    LS: linear::LSolver<T, P::D>,
+    NLS: nonlinear::NLSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D>
+        + Allocator<T, P::R>
+        + Allocator<i8, P::R>
+        + Allocator<T, P::D, P::D>
+        + Allocator<T, P::D, Const<MXORDP1>>,
 {
     /// IDACompleteStep
     /// This routine completes a successful step.  It increments nst, saves the stepsize and order
@@ -27,7 +27,7 @@ where
         self.ida_kused = self.ida_kk;
         self.ida_hused = self.ida_hh;
 
-        if (self.ida_knew == self.ida_kk - 1) || (self.ida_kk == self.ida_maxord) {
+        if (self.ida_knew == self.ida_kk - 1) || (self.ida_kk == self.limits.ida_maxord) {
             self.ida_phase = 1;
         }
 
@@ -43,7 +43,7 @@ where
             if self.counters.ida_nst > 1 {
                 self.ida_kk += 1;
                 let mut hnew = T::two() * self.ida_hh;
-                let tmp = hnew.abs() * self.ida_hmax_inv;
+                let tmp = hnew.abs() * self.limits.ida_hmax_inv;
                 if tmp > T::one() {
                     hnew /= tmp;
                 }
@@ -61,7 +61,7 @@ where
 
             let (action, err_kp1) = if self.ida_knew == (self.ida_kk - 1) {
                 (Action::Lower, T::zero())
-            } else if self.ida_kk == self.ida_maxord {
+            } else if self.ida_kk == self.limits.ida_maxord {
                 (Action::Maintain, T::zero())
             } else if (self.ida_kk + 1) >= self.ida_ns || (kdiff == 1) {
                 (Action::Maintain, T::zero())
@@ -129,7 +129,7 @@ where
 
             if self.ida_rr >= T::two() {
                 hnew = T::two() * self.ida_hh;
-                let tmp = hnew.abs() * self.ida_hmax_inv;
+                let tmp = hnew.abs() * self.limits.ida_hmax_inv;
                 if tmp > T::one() {
                     hnew /= tmp;
                 }
@@ -145,7 +145,7 @@ where
         // end of phase if block
 
         // Save ee for possible order increase on next step
-        if self.ida_kused < self.ida_maxord {
+        if self.ida_kused < self.limits.ida_maxord {
             self.ida_phi
                 .column_mut(self.ida_kused + 1)
                 .copy_from(&self.ida_ee);

@@ -5,9 +5,10 @@ use super::*;
 #[ignore = "nonlinear_solve() depends on a valid problem, which Dummy doesn't implement"]
 #[test_log::test]
 fn test1() {
-    let mut ida = Ida::<f64, U3, _, _, nonlinear::Newton<f64, _>>::new(
+    let mut ida = Ida::new(
         Dummy {},
         linear::Dense::new(),
+        nonlinear::Newton::new(0),
         &vector![0., 0., 0.],
         &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),

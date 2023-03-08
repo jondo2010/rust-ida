@@ -1,12 +1,14 @@
+//! Interfaces the IDA linear problem with the `linear` crate
+
 use linear::{LSolver, LSolverType};
 use nalgebra::{
-    allocator::Allocator, DefaultAllocator, Dim, DimName, Matrix, OMatrix, OVector, Storage,
-    StorageMut, U1,
+    allocator::Allocator, DefaultAllocator, Dim, DimName, OMatrix, OVector, Storage, StorageMut,
+    Vector,
 };
 
 use crate::{
     traits::{IdaProblem, IdaReal},
-    Error, IdaCounters,
+    IdaCounters,
 };
 //use super::IdaCounters;
 
@@ -52,35 +54,34 @@ pub struct IdaLProblemCounters {
 #[cfg_attr(
     feature = "serde-serialize",
     serde(bound(
-        serialize = "T: Serialize, OVector<T, D>: Serialize, OMatrix<T, D, D>: Serialize, LS: Serialize, P: Serialize"
+        serialize = "T: Serialize, OVector<T, P::D>: Serialize, OMatrix<T, P::D, P::D>: Serialize, LS: Serialize, P: Serialize"
     ))
 )]
 #[cfg_attr(
     feature = "serde-serialize",
     serde(bound(
-        deserialize = "T: Deserialize<'de>, OVector<T, D>: Deserialize<'de>, OMatrix<T, D, D>: Deserialize<'de>, LS: Deserialize<'de>, P: Deserialize<'de>"
+        deserialize = "T: Deserialize<'de>, OVector<T, P::D>: Deserialize<'de>, OMatrix<T, P::D, P::D>: Deserialize<'de>, LS: Deserialize<'de>, P: Deserialize<'de>"
     ))
 )]
 #[derive(Clone, Debug)]
-pub struct IdaLProblem<T, D, P, LS>
+pub struct IdaLProblem<T, P, LS>
 where
     T: IdaReal,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: LSolver<T, D>,
-    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
+    P: IdaProblem<T>,
+    LS: LSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D> + Allocator<T, P::D, P::D>,
 {
     // Linear solver, matrix and vector objects/pointers
     /// generic linear solver object
-    pub(crate) ls: LS,
+    pub ls: LS,
 
     /// J = dF/dy + cj*dF/dy'
-    pub(crate) mat_j: OMatrix<T, D, D>,
+    pub mat_j: OMatrix<T, P::D, P::D>,
 
     //ytemp;       /// temp vector used by IDAAtimesDQ
     //yptemp;      /// temp vector used by IDAAtimesDQ
     /// temp vector used by the solve function        
-    pub(crate) x: OVector<T, D>,
+    pub x: OVector<T, P::D>,
     //ycur;        /// current y vector in Newton iteration
     //ypcur;       /// current yp vector in Newton iteration
     //rcur;        /// rcur = F(tn, ycur, ypcur)
@@ -92,27 +93,29 @@ where
     pub nrmfac: T,
 
     /// current value of scalar (-alphas/hh) in Jacobian
-    pub(super) ida_cj: T,
+    pub ida_cj: T,
     /// cj value saved from last call to lsetup
-    pub(super) ida_cjold: T,
+    pub ida_cjold: T,
     /// ratio of cj values: cj/cjold
-    pub(super) ida_cjratio: T,
+    pub ida_cjratio: T,
 
     /// IDA problem
-    pub(super) problem: P,
+    pub problem: P,
     /// Statistics and associated parameters for the linear solver
-    pub(super) counters: IdaLProblemCounters,
+    pub counters: IdaLProblemCounters,
 }
 
-impl<T, D, P, LS> IdaLProblem<T, D, P, LS>
+impl<T, P, LS> IdaLProblem<T, P, LS>
 where
     T: IdaReal,
-    D: DimName,
-    P: IdaProblem<T, D>,
-    LS: LSolver<T, D>,
-    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
+    P: IdaProblem<T>,
+    LS: LSolver<T, P::D>,
+    DefaultAllocator: Allocator<T, P::D> + Allocator<T, P::D, P::D>,
 {
-    pub fn new(problem: P, ls: LS) -> Self {
+    pub fn new(problem: P, ls: LS) -> Self
+    where
+        P::D: DimName,
+    {
         // Retrieve the LS type */
         //LSType = SUNLinSolGetType(LS);
 
@@ -185,14 +188,16 @@ where
             // Set default values for the rest of the Ls parameters
             eplifac: T::pt05(),
             //last_flag : IDALS_SUCCESS
-            nrmfac: T::from(D::try_to_usize().unwrap() as u32).unwrap().sqrt(),
+            nrmfac: T::from(P::D::try_to_usize().unwrap() as u32)
+                .unwrap()
+                .sqrt(),
 
             ida_cj: T::zero(),
             ida_cjold: T::zero(),
             ida_cjratio: T::zero(),
 
-            mat_j: OMatrix::<T, D, D>::zeros(),
-            x: OVector::<T, D>::zeros(),
+            mat_j: OMatrix::<T, P::D, P::D>::zeros(),
+            x: OVector::<T, P::D>::zeros(),
 
             problem,
 
@@ -201,29 +206,20 @@ where
             counters: IdaLProblemCounters::default(),
         }
     }
-}
 
-impl<T, D, P, LS> IdaLProblem<T, D, P, LS>
-where
-    T: IdaReal,
-    D: Dim,
-    P: IdaProblem<T, D>,
-    LS: LSolver<T, D>,
-    DefaultAllocator: Allocator<T, D> + Allocator<T, D, D>,
-{
     /// idaLsSetup
     ///
     /// This calls the Jacobian evaluation routine, updates counters, and calls the LS `setup` routine to prepare for subsequent calls to the LS 'solve' routine.
     pub fn setup<SA, SB, SC>(
         &mut self,
-        y: &Matrix<T, D, U1, SA>,
-        yp: &Matrix<T, D, U1, SB>,
-        r: &Matrix<T, D, U1, SC>,
+        y: &Vector<T, P::D, SA>,
+        yp: &Vector<T, P::D, SB>,
+        r: &Vector<T, P::D, SC>,
     ) -> Result<(), linear::Error>
     where
-        SA: Storage<T, D>,
-        SB: Storage<T, D>,
-        SC: Storage<T, D>,
+        SA: Storage<T, P::D>,
+        SB: Storage<T, P::D>,
+        SC: Storage<T, P::D>,
     {
         // Set IDALs N_Vector pointers to inputs
         //self.ycur  = y;
@@ -273,17 +269,17 @@ where
     /// cjratio does not equal one.
     pub fn solve<SA, SB, SC, SD, SE>(
         &mut self,
-        b: &mut Matrix<T, D, U1, SA>,
-        weight: &Matrix<T, D, U1, SB>,
-        _ycur: &Matrix<T, D, U1, SC>,
-        _ypcur: &Matrix<T, D, U1, SD>,
-        _rescur: &Matrix<T, D, U1, SE>,
+        b: &mut Vector<T, P::D, SA>,
+        weight: &Vector<T, P::D, SB>,
+        _ycur: &Vector<T, P::D, SC>,
+        _ypcur: &Vector<T, P::D, SD>,
+        _rescur: &Vector<T, P::D, SE>,
     ) where
-        SA: StorageMut<T, D>,
-        SB: Storage<T, D>,
-        SC: Storage<T, D>,
-        SD: Storage<T, D>,
-        SE: Storage<T, D>,
+        SA: StorageMut<T, P::D>,
+        SB: Storage<T, P::D>,
+        SC: Storage<T, P::D>,
+        SD: Storage<T, P::D>,
+        SE: Storage<T, P::D>,
     {
         // Retrieve the LS type
         let ls_type = self.ls.get_type();

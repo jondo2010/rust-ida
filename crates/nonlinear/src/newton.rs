@@ -1,8 +1,8 @@
 //! Nonlinear solver using Newton's method, with a user-supplied Jacobian. Ported from SUNDIALS.
 
 use nalgebra::{
-    allocator::Allocator, DefaultAllocator, Dim, DimName, DimNameAdd, Matrix, OVector, RealField,
-    Scalar, Storage, StorageMut, U1,
+    allocator::Allocator, DefaultAllocator, Dim, DimName, DimNameAdd, Dyn, Matrix, OVector,
+    RealField, Scalar, Storage, StorageMut, U1,
 };
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,6 @@ use crate::{Error, NLProblem, NLSolver};
 #[derive(Debug, Clone)]
 pub struct Newton<T, D>
 where
-    T: Scalar,
     D: Dim,
     DefaultAllocator: Allocator<T, D>,
 {
@@ -41,13 +40,20 @@ where
     nconvfails: usize,
 }
 
-impl<T, D> NLSolver<T, D> for Newton<T, D>
+impl<T, D> Newton<T, D>
 where
-    T: Scalar + RealField + Copy,
-    D: DimName + DimNameAdd<D>,
+    D: Dim,
     DefaultAllocator: Allocator<T, D>,
 {
-    fn new(maxiters: usize) -> Self {
+    /// Create a new Newton solver, statically sized
+    ///
+    /// # Arguments
+    /// * `maxiters` - The maximum number of iterations per solve attempt
+    pub fn new(maxiters: usize) -> Self
+    where
+        T: Scalar + RealField,
+        D: DimName,
+    {
         Newton {
             delta: OVector::zeros(),
             jcur: false,
@@ -57,7 +63,38 @@ where
             nconvfails: 0,
         }
     }
+}
 
+impl<T> Newton<T, Dyn>
+where
+    DefaultAllocator: Allocator<T, Dyn>,
+{
+    /// Create a new Newton solver, dynamically sized
+    ///
+    /// # Arguments
+    /// * `size` - The problem size
+    /// * `maxiters` - The maximum number of iterations per solve attempt
+    pub fn new_dynamic(size: usize, maxiters: usize) -> Self
+    where
+        T: Scalar + RealField,
+    {
+        Newton {
+            delta: OVector::<T, Dyn>::zeros(size),
+            jcur: false,
+            curiter: 0,
+            maxiters,
+            niters: 0,
+            nconvfails: 0,
+        }
+    }
+}
+
+impl<T, D> NLSolver<T, D> for Newton<T, D>
+where
+    T: Scalar + RealField + Copy,
+    D: Dim,
+    DefaultAllocator: Allocator<T, D>,
+{
     fn solve<NLP, SA, SB, SC>(
         &mut self,
         problem: &mut NLP,

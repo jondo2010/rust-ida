@@ -1,9 +1,15 @@
 //! Basic traits for problem specification
 
-use nalgebra::{Dim, Matrix, RealField, Scalar, Storage, StorageMut, U1};
+use nalgebra::{Const, Dim, Matrix, RealField, Scalar, Storage, StorageMut, U1};
 use num_traits::NumCast;
 
-pub trait Residual<T, D: Dim> {
+/// Core implementation for explicit schemes
+pub trait IdaProblem<T> {
+    /// The dimension of the problem
+    type D: Dim;
+    /// The number of roots
+    type R: Dim;
+
     /// This function computes the problem residual for given values of the independent variable `tt`, state vector `yy`, and derivative `yp`.
     ///
     /// # Arguments
@@ -17,16 +23,14 @@ pub trait Residual<T, D: Dim> {
     fn res<SA, SB, SC>(
         &self,
         tt: T,
-        yy: &Matrix<T, D, U1, SA>,
-        yp: &Matrix<T, D, U1, SB>,
-        rr: &mut Matrix<T, D, U1, SC>,
+        yy: &Matrix<T, Self::D, U1, SA>,
+        yp: &Matrix<T, Self::D, U1, SB>,
+        rr: &mut Matrix<T, Self::D, U1, SC>,
     ) where
-        SA: Storage<T, D>,
-        SB: Storage<T, D>,
-        SC: StorageMut<T, D>;
-}
+        SA: Storage<T, Self::D>,
+        SB: Storage<T, Self::D>,
+        SC: StorageMut<T, Self::D>;
 
-pub trait Jacobian<T, D: Dim> {
     /// This function computes the Jacobian matrix J of the DAE system (or an approximation to it)
     ///
     /// # Arguments
@@ -47,36 +51,27 @@ pub trait Jacobian<T, D: Dim> {
         &self,
         tt: T,
         cj: T,
-        yy: &Matrix<T, D, U1, SA>,
-        yp: &Matrix<T, D, U1, SB>,
-        rr: &Matrix<T, D, U1, SC>,
-        jac: &mut Matrix<T, D, D, SD>,
+        yy: &Matrix<T, Self::D, U1, SA>,
+        yp: &Matrix<T, Self::D, U1, SB>,
+        rr: &Matrix<T, Self::D, U1, SC>,
+        jac: &mut Matrix<T, Self::D, Self::D, SD>,
     ) where
-        SA: Storage<T, D>,
-        SB: Storage<T, D>,
-        SC: Storage<T, D>,
-        SD: StorageMut<T, D, D>;
-}
-
-pub trait Root<T, D: Dim> {
-    const NROOTS: usize = 0;
+        SA: Storage<T, Self::D>,
+        SB: Storage<T, Self::D>,
+        SC: Storage<T, Self::D>,
+        SD: StorageMut<T, Self::D, Self::D>;
 
     fn root<SA, SB, SC>(
         &self,
         t: T,
-        y: &Matrix<T, D, U1, SA>,
-        yp: &Matrix<T, D, U1, SB>,
-        gout: &mut Matrix<T, D, U1, SC>,
+        y: &Matrix<T, Self::D, U1, SA>,
+        yp: &Matrix<T, Self::D, U1, SB>,
+        gout: &mut Matrix<T, Self::R, U1, SC>,
     ) where
-        SA: Storage<T, D>,
-        SB: Storage<T, D>,
-        SC: StorageMut<T, D>;
+        SA: Storage<T, Self::D>,
+        SB: Storage<T, Self::D>,
+        SC: StorageMut<T, Self::R>;
 }
-
-/// Core implementation for explicit schemes
-pub trait IdaProblem<T, D: Dim>: Residual<T, D> + Jacobian<T, D> + Root<T, D> {}
-
-impl<Q, T, D: Dim> IdaProblem<T, D> for Q where Q: Residual<T, D> + Jacobian<T, D> + Root<T, D> {}
 
 /// Trait for real numbers in IDA
 pub trait IdaReal: Scalar + RealField + Copy + NumCast {
