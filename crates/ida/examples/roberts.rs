@@ -1,15 +1,14 @@
-use ida::{linear::*, nonlinear::*, tol_control::*, *};
-
-use ndarray::{array, prelude::*};
-
-use prettytable::{cell, row, table, Table};
+use ida::{Ida, IdaSolveStatus, IdaTask, TolControl};
+use nalgebra::{vector, Storage, Vector, Vector3, U3};
+use nonlinear::norm_wrms::NormWRMS;
+use prettytable::{row, table, Table};
 
 /// compare the solution at the final time 4e10s to a reference solution computed using a relative
 /// tolerance of 1e-8 and absoltue tolerance of 1e-14
-fn check_ans<S1, S2>(y: ArrayBase<S1, Ix1>, _t: f64, rtol: f64, atol: ArrayBase<S2, Ix1>)
+fn check_ans<SA, SB>(y: &Vector<f64, U3, SA>, _t: f64, rtol: f64, atol: &Vector<f64, U3, SB>)
 where
-    S1: ndarray::Data<Elem = f64>,
-    S2: ndarray::Data<Elem = f64>,
+    SA: Storage<f64, U3>,
+    SB: Storage<f64, U3>,
 {
     //int      passfail=0;        /* answer pass (0) or fail (1) retval */
     //N_Vector ref;               /* reference solution vector        */
@@ -18,16 +17,15 @@ where
     // create reference solution and error weight vectors
 
     // set the reference solution data
-    let reference = array![
+    let reference = vector![
         5.2083474251394888e-08,
         2.0833390772616859e-13,
         9.9999994791631752e-01
     ];
 
-    // compute the error weight vector, loosen atol
-    // ewt = rtol*ewt + 10.0*atol
-    let mut ewt = rtol * &reference.mapv(f64::abs);
-    ewt.scaled_add(10.0, &atol);
+    // compute the error weight vector, loosen atol; ewt = rtol*ewt + 10.0*atol
+    let mut ewt = rtol * &reference;
+    ewt.axpy(10.0, atol, 1.0);
 
     dbg!(&ewt);
 
@@ -36,10 +34,10 @@ where
     //  return(-1);
     //}
     //N_VInv(ewt, ewt);
-    let ewt = ewt.mapv(f64::recip);
+    ewt.iter_mut().for_each(|x| *x = 1.0 / *x);
 
     // compute the solution error
-    let diff = &y - &reference;
+    let diff = y - &reference;
     let err = diff.norm_wrms(&ewt);
 
     // is the solution within the tolerances?
@@ -50,13 +48,8 @@ where
     }
 }
 
-type MyIda = ida::Ida<
-    ida::sample_problems::Roberts,
-    ida::linear::Dense<f64>,
-    ida::nonlinear::newton::Newton<ida::sample_problems::Roberts>, ida::tol_control::TolControlSV<f64>>;
-
 fn main() {
-    pretty_env_logger::init();
+    tracing_subscriber::fmt::init();
 
     #[cfg(feature = "profiler")]
     profiler::register_thread_with_profiler();
@@ -64,12 +57,13 @@ fn main() {
     const RTOL: f64 = 1.0e-4;
     const ATOL: [f64; 3] = [1.0e-8, 1.0e-6, 1.0e-6];
 
-    let problem = ida::sample_problems::Roberts {};
+    let problem = sample_problems::Roberts {};
 
-    let yy0 = array![1.0, 0.0, 0.0];
-    let yp0 = array![-0.04, 0.04, 0.0];
+    let yy0 = vector![1.0, 0.0, 0.0];
+    let yp0 = vector![-0.04, 0.04, 0.0];
 
-    let ec = TolControlSV::new(RTOL, ndarray::Array1::from_iter(ATOL.iter().cloned()));
+    let atol = Vector3::from(ATOL);
+    let ec = TolControl::new_sv(RTOL, atol);
     //let t0 = 0.0;
 
     let header = &[
@@ -87,7 +81,9 @@ fn main() {
     table_out.set_titles(row!["t", "y1", "y2", "y3", "nst", "k", "h"]);
     table_out.set_format(*prettytable::format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
 
-    let mut ida: Ida<_, Dense<_>, Newton<_>, _> = Ida::new(problem, yy0, yp0, ec);
+    let ls = ida::linear::Dense::new();
+    let nls = ida::nonlinear::newton::Newton::new(4);
+    let mut ida = Ida::new(problem, ls, nls, &yy0, &yp0, ec);
 
     // In loop, call IDASolve, print results, and test for error.
     // Break out of loop when NOUT preset output times have been reached.
@@ -136,7 +132,10 @@ fn main() {
     };
 
     table_out.printstd();
-    dbg!(retval.unwrap());
+
+    if let Err(e) = retval {
+        println!("Error: {e}");
+    }
 
     let mut stats = table!(
         ["Number of steps:", ida.get_num_steps()],
@@ -164,12 +163,7 @@ fn main() {
     stats.set_titles(row![bFgH2->"Final Run Statistics:"]);
     stats.printstd();
 
-    check_ans(
-        ida.get_yy(),
-        tret,
-        RTOL,
-        ndarray::Array1::from_iter(ATOL.iter().cloned()),
-    );
+    check_ans(ida.get_yy(), tret, RTOL, &Vector3::from(ATOL));
 
     #[cfg(feature = "profiler")]
     profiler::write_profile("profile.json");

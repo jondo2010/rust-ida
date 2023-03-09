@@ -14,6 +14,7 @@ mod complete_step;
 mod linear_problem;
 mod nonlinear_problem;
 mod root_finding;
+mod solve;
 mod stop_test;
 
 pub(crate) use linear_problem::{IdaLProblem, IdaLProblemCounters};
@@ -551,8 +552,8 @@ where
         error: Error,
         err_k: T,
         err_km1: T,
-        ncf_ptr: &mut u64,
-        nef_ptr: &mut u64,
+        ncf_ptr: &mut usize,
+        nef_ptr: &mut usize,
     ) -> Result<(), Error> {
         self.ida_phase = 1;
 

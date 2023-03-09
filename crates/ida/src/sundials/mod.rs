@@ -103,10 +103,10 @@ where
             let nls = nonlinear::Newton::new_dynamic(neq, MAXNLSIT);
 
             let limits = IdaLimits {
-                ida_maxncf: (*mem).ida_maxncf as u64,
-                ida_maxnef: (*mem).ida_maxnef as u64,
+                ida_maxncf: (*mem).ida_maxncf as usize,
+                ida_maxnef: (*mem).ida_maxnef as usize,
                 ida_maxord: (*mem).ida_maxord as usize,
-                ida_mxstep: (*mem).ida_mxstep as u64,
+                ida_mxstep: (*mem).ida_mxstep as usize,
                 ida_hmax_inv: (*mem).ida_hmax_inv,
             };
             let counters = IdaCounters {
@@ -132,6 +132,10 @@ where
                 DVector::from_column_slice(std::slice::from_raw_parts((*mem).ida_ghi, num_roots));
             let grout =
                 DVector::from_column_slice(std::slice::from_raw_parts((*mem).ida_grout, num_roots));
+            let gactive = DVector::from_column_slice(std::slice::from_raw_parts(
+                (*mem).ida_gactive,
+                num_roots,
+            ));
 
             let roots = IdaRootData::<f64, Dyn> {
                 ida_iroots: nalgebra::convert(iroots),
@@ -153,6 +157,7 @@ where
                 },
                 ida_irfnd: (*mem).ida_irfnd > 0,
                 ida_nge: (*mem).ida_nge as usize,
+                ida_gactive: nalgebra::convert(gactive),
                 ida_mxgnull: (*mem).ida_mxgnull as usize,
             };
             Self {

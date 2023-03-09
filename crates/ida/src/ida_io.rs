@@ -123,8 +123,7 @@ where
     /// returns an array showing which functions were found to have a root.
     ///
     /// Note that, for the components gi for which a root was found, the sign of rootsfound[i] indicates the direction of zero-crossing. A value of +1 indicates that gi is increasing, while a value of −1 indicates a decreasing gi.
-    #[cfg(feature = "disabled")]
-    pub fn get_root_info(&self) {
-        self.ida_iroots.view()
+    pub fn get_root_info(&self) -> &OVector<i8, P::R> {
+        &self.roots.ida_iroots
     }
 }

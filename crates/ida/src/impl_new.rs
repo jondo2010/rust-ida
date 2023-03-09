@@ -42,10 +42,10 @@ where
 
         // Initialize all the counters and other optional output values
         let limits = IdaLimits {
-            ida_maxncf: MXNCF as u64,
-            ida_maxnef: MXNEF as u64,
+            ida_maxncf: MXNCF as usize,
+            ida_maxnef: MXNEF as usize,
             ida_maxord: MAXORD_DEFAULT as usize,
-            ida_mxstep: MXSTEP_DEFAULT as u64,
+            ida_mxstep: MXSTEP_DEFAULT as usize,
             ida_hmax_inv: T::from(HMAX_INV_DEFAULT).unwrap(),
         };
 
@@ -74,6 +74,7 @@ where
             ida_taskc: IdaTask::Normal,
             ida_irfnd: false,
             ida_nge: 0,
+            ida_gactive: OVector::<i8, P::R>::zeros(),
             ida_mxgnull: 1,
         };
 

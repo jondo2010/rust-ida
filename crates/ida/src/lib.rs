@@ -1,6 +1,11 @@
+//! The `ida` crate is a pure Rust port of the Implicit Differential-Algebraic solver from the Sundials suite.
+//!
+//! IDA is a general purpose solver for the initial value problem (IVP) for systems of differential-algebraic equations
+//! (DAEs). The name IDA stands for Implicit Differential-Algebraic solver.
+
 use nalgebra::{
-    allocator::Allocator, Const, DefaultAllocator, Dim, DimName, Matrix, OMatrix, OVector, Storage,
-    StorageMut, Vector, U1,
+    allocator::Allocator, Const, DefaultAllocator, Dim, OMatrix, OVector, Storage, StorageMut,
+    Vector, U1,
 };
 
 use private::IdaNLProblem;
@@ -19,9 +24,13 @@ mod tol_control;
 mod traits;
 
 use constants::*;
+
+// Re-exports
 pub use error::Error;
 pub use impl_new::*;
-use tol_control::TolControl;
+pub use linear;
+pub use nonlinear;
+pub use tol_control::TolControl;
 pub use traits::{IdaProblem, IdaReal};
 
 /// Counters
@@ -64,13 +73,13 @@ enum IdaConverged {
 #[derive(Debug)]
 struct IdaLimits<T> {
     /// max numer of convergence failures
-    ida_maxncf: u64,
+    ida_maxncf: usize,
     /// max number of error test failures
-    ida_maxnef: u64,
+    ida_maxnef: usize,
     /// max value of method order k:
     ida_maxord: usize,
     /// max number of internal steps for one user call
-    ida_mxstep: u64,
+    ida_mxstep: usize,
     /// inverse of max. step size hmax (default = 0.0)
     ida_hmax_inv: T,
 }
@@ -123,11 +132,19 @@ where
     ida_irfnd: bool,
     /// counter for g evaluations
     ida_nge: usize,
-
     /// array with active/inactive event functions
-    //ida_gactive: Array1<bool>,
+    ida_gactive: OVector<i8, R>,
     /// number of warning messages about possible g==0
     ida_mxgnull: usize,
+}
+
+impl<T, R: Dim> IdaRootData<T, R>
+where
+    DefaultAllocator: Allocator<T, R> + Allocator<i8, R>,
+{
+    pub fn num_roots(&self) -> usize {
+        self.ida_iroots.len()
+    }
 }
 
 /// This structure contains fields to keep track of problem state.

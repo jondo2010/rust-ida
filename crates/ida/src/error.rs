@@ -101,7 +101,13 @@ pub enum Error {
     )]
     BadStopTime { tstop: f64, t: f64 },
 
-    ///MSG_TOO_MUCH_ACC
+    /// IDA_TOO_MUCH_WORK
+    /// The solver took mxstep internal steps but could not reach tout.
+    #[error("At t = {t:.5e}, the solver took mxstep internal steps ({mxstep}) but could not reach tout.")]
+    TooMuchWork { t: f64, mxstep: usize },
+
+    /// MSG_TOO_MUCH_ACC
+    /// The solver could not satisfy the accuracy demanded by the user for some internal step.
     #[error("At t = {t} too much accuracy requested.")]
     TooMuchAccuracy { t: f64 },
 

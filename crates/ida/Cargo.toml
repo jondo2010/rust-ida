@@ -28,6 +28,7 @@ nalgebra.workspace = true
 num-traits.workspace = true
 simba.workspace = true
 thiserror.workspace = true
+itertools = "0.10"
 
 linear.workspace = true
 nonlinear.workspace = true
@@ -39,7 +40,9 @@ sundials-sys = { version = "0.2", path = "../../../sundials-sys", default-featur
 ], optional = true }
 
 [dev-dependencies]
+prettytable = "0.10"
 approx.workspace = true
+sample_problems.workspace = true
 
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",

@@ -42,14 +42,6 @@ sample_problems = { path = "crates/sample_problems" }
 
 #[workspace.dev-dependencies]
 #criterion           = { version = "0.2.11" }
-#pretty_env_logger   = { version = "0.3" }
-#prettytable-rs      = { version = "0.8.0" }
-#nearly_eq           = { version = "0.2.4", features = ["ndarray"] }
-##approx              = { version = "0.3.2" }
-#ndarray-rand        = { version = "0.9.0" }
-#rand                = { version = "0.6.5" }
-#sundials-sys        = { version = "0.2" }
-#
 #[[bench]]
 #name = "dense"
 #harness = false
