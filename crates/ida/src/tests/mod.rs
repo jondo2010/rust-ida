@@ -1,9 +1,13 @@
+use std::{fs::File, io::Read, path::Path};
+
+use linear::Dense;
 use nalgebra::*;
 
+use nonlinear::Newton;
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};
 
-use crate::IdaProblem;
+use crate::{sundials::SundialsProblem, Ida, IdaProblem};
 
 mod complete_step;
 mod get_dky;
@@ -11,8 +15,18 @@ mod get_solution;
 mod nonlinear_solve;
 mod predict;
 mod restore;
+mod root_finding;
 mod set_coeffs;
 mod test_error;
+
+fn get_serialized_ida(test_name: &str) -> Ida<f64, SundialsProblem, Dense<Dyn>, Newton<f64, Dyn>> {
+    let loc = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let mut file =
+        File::open(Path::new(&loc).join(format!("src/tests/data/{test_name}.json"))).unwrap();
+    let mut s = String::new();
+    file.read_to_string(&mut s).unwrap();
+    serde_json::from_str(&s).unwrap()
+}
 
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[derive(Clone, Copy, Debug)]

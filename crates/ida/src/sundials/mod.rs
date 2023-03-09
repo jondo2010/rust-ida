@@ -4,27 +4,21 @@ use nalgebra::{
     allocator::Allocator, Const, DVector, DefaultAllocator, Dyn, Matrix, Storage, StorageMut,
     Vector, U1,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     constants::{MAXNLSIT, MXORDP1},
     private::{IdaLProblem, IdaLProblemCounters, IdaNLProblem},
-    //ida_ls::{IdaLProblem, IdaLProblemCounters},
-    //ida_nls::IdaNLProblem,
     tol_control::TolControl,
-    Ida,
-    IdaCounters,
-    IdaLimits,
-    IdaProblem,
-    IdaRootData,
-    IdaTask,
+    Ida, IdaCounters, IdaLimits, IdaProblem, IdaRootData, IdaTask,
 };
 
 mod adapter;
 mod roberts;
 
 /// Implements `IdaProblem` for a solver initialized by the `sundials-sys` crate.
-#[derive(Debug)]
-struct SundialsProblem {}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SundialsProblem {}
 
 impl IdaProblem<f64> for SundialsProblem {
     type D = Dyn;
@@ -41,7 +35,10 @@ impl IdaProblem<f64> for SundialsProblem {
         SB: Storage<f64, Self::D>,
         SC: StorageMut<f64, Self::D>,
     {
-        todo!()
+        rr[0] = -0.04 * yy[0] + 1.0e4 * yy[1] * yy[2];
+        rr[1] = -rr[0] - 3.0e7 * yy[1] * yy[1] - yp[1];
+        rr[0] -= yp[0];
+        rr[2] = yy[0] + yy[1] + yy[2] - 1.0;
     }
 
     fn jac<SA, SB, SC, SD>(
@@ -58,22 +55,42 @@ impl IdaProblem<f64> for SundialsProblem {
         SC: Storage<f64, Self::D>,
         SD: StorageMut<f64, Self::D, Self::D>,
     {
-        todo!()
+        jac[(0, 0)] = -0.04 - cj;
+        jac[(0, 1)] = 1.0e4 * yy[2];
+        jac[(0, 2)] = 1.0e4 * yy[1];
+
+        jac[(1, 0)] = 0.04;
+        jac[(1, 1)] = -1.0e4 * yy[2] - 6.0e7 * yy[1] - cj;
+        jac[(1, 2)] = -1.0e4 * yy[1];
+
+        jac[(2, 0)] = 1.0;
+        jac[(2, 1)] = 1.0;
+        jac[(2, 2)] = 1.0;
     }
 
     fn root<SA, SB, SC>(
         &self,
-        t: f64,
+        _t: f64,
         y: &Matrix<f64, Self::D, U1, SA>,
-        yp: &Matrix<f64, Self::D, U1, SB>,
+        _yp: &Matrix<f64, Self::D, U1, SB>,
         gout: &mut Matrix<f64, Self::R, U1, SC>,
     ) where
         SA: Storage<f64, Self::D>,
         SB: Storage<f64, Self::D>,
         SC: StorageMut<f64, Self::R>,
     {
-        todo!()
+        gout[0] = y[0] - 0.0001;
+        gout[1] = y[2] - 0.01;
     }
+}
+
+extern "C" {
+    fn IDAGetSolution(
+        mem: sundials_sys::IDAMem,
+        t: f64,
+        yref: sundials_sys::N_Vector,
+        ypret: sundials_sys::N_Vector,
+    ) -> std::ffi::c_int;
 }
 
 const IDA_SS: i32 = 1;
@@ -299,9 +316,70 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use nalgebra::DVector;
 
-    use crate::sundials::adapter::vector_view_dynamic;
+    use crate::sundials::adapter::{self, vector_view_dynamic};
+
+    #[test]
+    fn test_get_solution() {
+        unsafe {
+            let (yy, yp, mem) = super::roberts::build_ida();
+            let mut tout1 = 0.4;
+            let mut tret = 0.0;
+            for _ in 0..50 {
+                let ret = sundials_sys::IDASolve(
+                    mem as _,
+                    tout1,
+                    &mut tret,
+                    yy,
+                    yp,
+                    sundials_sys::IDA_NORMAL,
+                );
+                tout1 += 0.2;
+
+                let mut ida = crate::Ida::from_sundials(mem);
+                assert_eq!(
+                    super::IDAGetSolution(mem as _, tout1, yy, yp),
+                    sundials_sys::IDA_SUCCESS
+                );
+
+                ida.get_solution(tout1).unwrap();
+
+                assert_eq!(
+                    ida.nlp.ida_yy,
+                    vector_view_dynamic(yy),
+                    "test get_solution({tout1})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_rcheck() {
+        unsafe {
+            let (yy, yp, mem) = super::roberts::build_ida();
+
+            let tout1 = 0.4;
+            let mut tret = 0.0;
+            let ret = sundials_sys::IDASolve(
+                mem as _,
+                tout1,
+                &mut tret,
+                yy,
+                yp,
+                sundials_sys::IDA_NORMAL,
+            );
+            dbg!(tret);
+            assert_eq!(ret, 666);
+            let ida = crate::Ida::from_sundials(mem);
+
+            let mut file = std::fs::File::create("src/tests/data/rcheck3_pre.json").unwrap();
+            file.write(serde_json::to_string_pretty(&ida).unwrap().as_bytes())
+                .unwrap();
+        }
+    }
 
     #[test]
     fn test_get_dky() {
@@ -319,6 +397,7 @@ mod tests {
                 yp,
                 sundials_sys::IDA_NORMAL,
             );
+            assert_eq!(ret, sundials_sys::IDA_ROOT_RETURN);
 
             let ida = crate::Ida::from_sundials(mem);
             let dky_expect = sundials_sys::N_VNew_Serial(3);

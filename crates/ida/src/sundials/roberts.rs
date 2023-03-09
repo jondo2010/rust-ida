@@ -5,34 +5,38 @@ use std::ffi::{c_int, c_void};
 use super::adapter::{dense_matrix_view, vector_view};
 use nalgebra::*;
 
-unsafe extern "C" fn res(
+unsafe extern "C" fn resrob(
     _t: f64,
-    _yy: sundials_sys::N_Vector,
-    _yp: sundials_sys::N_Vector,
-    _resval: sundials_sys::N_Vector,
+    yy: sundials_sys::N_Vector,
+    yp: sundials_sys::N_Vector,
+    resval: sundials_sys::N_Vector,
     _user_data: *mut c_void,
 ) -> c_int {
+    let yval = std::slice::from_raw_parts(sundials_sys::N_VGetArrayPointer(yy), 3);
+    let ypval = std::slice::from_raw_parts(sundials_sys::N_VGetArrayPointer(yp), 3);
+    let rval = std::slice::from_raw_parts_mut(sundials_sys::N_VGetArrayPointer(resval), 3);
+    rval[0] = -0.04 * yval[0] + 1.0e4 * yval[1] * yval[2];
+    rval[1] = -rval[0] - 3.0e7 * yval[1] * yval[1] - ypval[1];
+    rval[0] -= ypval[0];
+    rval[2] = yval[0] + yval[1] + yval[2] - 1.0;
     0
 }
 
-unsafe extern "C" fn g(
+unsafe extern "C" fn grob(
     _t: f64,
     yy: sundials_sys::N_Vector,
     _yp: sundials_sys::N_Vector,
     gout: *mut f64,
     _user_data: *mut c_void,
 ) -> c_int {
-    let yval = std::slice::from_raw_parts(
-        sundials_sys::N_VGetArrayPointer(yy),
-        sundials_sys::N_VGetLength(yy) as usize,
-    );
-    let gout = std::slice::from_raw_parts_mut(gout, 3);
+    let yval = std::slice::from_raw_parts(sundials_sys::N_VGetArrayPointer(yy), 3);
+    let gout = std::slice::from_raw_parts_mut(gout, 2);
     gout[0] = yval[0] - 0.0001;
     gout[1] = yval[2] - 0.01;
     0
 }
 
-unsafe extern "C" fn jac(
+unsafe extern "C" fn jacrob(
     _tt: f64,
     cj: f64,
     yy: sundials_sys::N_Vector,
@@ -57,6 +61,7 @@ unsafe extern "C" fn jac(
 /// Build an IDA solver for the Roberts problem.
 ///
 /// Returns the initial state vector, the initial derivative vector, and the IDA solver.
+#[allow(unused)]
 pub unsafe fn build_ida() -> (
     sundials_sys::N_Vector,
     sundials_sys::N_Vector,
@@ -79,13 +84,13 @@ pub unsafe fn build_ida() -> (
     let t0 = 0.0;
 
     let mem = sundials_sys::IDACreate();
-    assert_eq!(sundials_sys::IDAInit(mem, Some(res), t0, yy, yp), 0);
+    assert_eq!(sundials_sys::IDAInit(mem, Some(resrob), t0, yy, yp), 0);
 
     // Set tolerances
     assert_eq!(sundials_sys::IDASVtolerances(mem, rtol, avtol), 0);
 
     // Call IDARootInit to specify the root function g with 2 components
-    assert_eq!(sundials_sys::IDARootInit(mem, 2, Some(g)), 0);
+    assert_eq!(sundials_sys::IDARootInit(mem, 2, Some(grob)), 0);
 
     // Create dense SUNMatrix for use in linear solves
     let A = sundials_sys::SUNDenseMatrix(3, 3);
@@ -97,7 +102,7 @@ pub unsafe fn build_ida() -> (
     assert_eq!(sundials_sys::IDASetLinearSolver(mem, LS, A), 0);
 
     // Set the user-supplied Jacobian routine
-    assert_eq!(sundials_sys::IDASetJacFn(mem, Some(jac)), 0);
+    assert_eq!(sundials_sys::IDASetJacFn(mem, Some(jacrob)), 0);
 
     // Create Newton SUNNonlinearSolver object. IDA uses a Newton SUNNonlinearSolver by default, so it is unecessary to create it and attach it. It is done in this example code solely for demonstration purposes.
     let NLS = sundials_sys::SUNNonlinSol_Newton(yy);

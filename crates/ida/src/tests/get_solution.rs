@@ -1,10 +1,10 @@
-use super::Dummy;
+use super::{get_serialized_ida, Dummy};
 use crate::{tol_control::TolControl, Ida};
-use approx::assert_relative_eq;
+use approx::assert_ulps_eq;
 use nalgebra::{matrix, vector};
 
 #[test]
-fn test_get_solution() {
+fn test1() {
     // --- IDAGetSolution Before:
     let t = 3623118336.24244;
     let hh = 857870592.1885694;
@@ -48,9 +48,10 @@ fn test_get_solution() {
         problem,
         linear::Dense::new(),
         nonlinear::Newton::new(0),
-        &vector![0., 0., 0.],
-        &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
+        0.0,
+        &vector![0., 0., 0.],
+        &vector![0., 0., 0.],
     );
 
     ida.ida_hh = hh;
@@ -60,10 +61,20 @@ fn test_get_solution() {
     ida.ida_phi.copy_from(&ida_phi);
     ida.ida_psi.copy_from(&ida_psi);
 
-    println!("{}", serde_json::to_string(&ida).unwrap());
-
     ida.get_solution(t).unwrap();
 
-    assert_relative_eq!(ida.get_yy(), &yret_expect, epsilon = 1e-8);
-    assert_relative_eq!(ida.get_yp(), &ypret_expect, epsilon = 1e-8);
+    assert_eq!(ida.get_yy(), &yret_expect);
+    assert_eq!(ida.get_yp(), &ypret_expect);
+}
+
+#[test]
+fn test2() {
+    let mut ida_pre = get_serialized_ida("get_solution_pre");
+    ida_pre.get_solution(ida_pre.roots.ida_thi).unwrap();
+    let ida_post = get_serialized_ida("get_solution_post");
+
+    assert_eq!(ida_pre.ida_cvals, ida_post.ida_cvals);
+    assert_eq!(ida_pre.ida_dvals, ida_post.ida_dvals);
+    assert_ulps_eq!(ida_pre.nlp.ida_yy, ida_post.nlp.ida_yy);
+    assert_ulps_eq!(ida_pre.nlp.ida_yp, ida_post.nlp.ida_yp);
 }

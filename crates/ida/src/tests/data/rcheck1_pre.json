@@ -1,0 +1,344 @@
+{
+  "ida_setup_done": true,
+  "tol_control": {
+    "SV": {
+      "ida_rtol": 0.0001,
+      "ida_atol": [
+        [
+          1e-8,
+          1e-6,
+          1e-6
+        ],
+        3,
+        null
+      ]
+    }
+  },
+  "ida_suppressalg": false,
+  "ida_phi": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      -0.04,
+      0.04,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    3,
+    null
+  ],
+  "ida_psi": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "ida_alpha": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "ida_beta": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "ida_sigma": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "ida_gamma": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "ida_delta": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    3,
+    null
+  ],
+  "ida_id": null,
+  "ida_constraints": null,
+  "ida_ee": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    3,
+    null
+  ],
+  "ida_tstop": null,
+  "ida_kk": 0,
+  "ida_kused": 0,
+  "ida_knew": 0,
+  "ida_phase": 0,
+  "ida_ns": 0,
+  "ida_hin": 0.0,
+  "ida_h0u": 0.00002164955286048077,
+  "ida_hh": 0.00002164955286048077,
+  "ida_hused": 0.0,
+  "ida_rr": 0.0,
+  "ida_tretlast": 0.0,
+  "ida_cjlast": 0.0,
+  "ida_eps_newt": 0.0,
+  "ida_epcon": 0.33,
+  "limits": {
+    "ida_maxncf": 10,
+    "ida_maxnef": 10,
+    "ida_maxord": 5,
+    "ida_mxstep": 500,
+    "ida_hmax_inv": 0.0
+  },
+  "counters": {
+    "ida_nst": 0,
+    "ida_nre": 0,
+    "ida_ncfn": 0,
+    "ida_netf": 0,
+    "ida_nni": 0
+  },
+  "ida_cvals": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "ida_dvals": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "ida_tolsf": 1.0,
+  "roots": {
+    "ida_iroots": [
+      [
+        0,
+        0
+      ],
+      2,
+      null
+    ],
+    "ida_rootdir": [
+      [
+        0,
+        0
+      ],
+      2,
+      null
+    ],
+    "ida_tlo": 0.0,
+    "ida_thi": 0.0,
+    "ida_trout": 0.0,
+    "ida_glo": [
+      [
+        0.0,
+        0.0
+      ],
+      2,
+      null
+    ],
+    "ida_ghi": [
+      [
+        0.0,
+        0.0
+      ],
+      2,
+      null
+    ],
+    "ida_grout": [
+      [
+        0.0,
+        0.0
+      ],
+      2,
+      null
+    ],
+    "ida_toutc": 0.4,
+    "ida_ttol": 0.0,
+    "ida_taskc": {
+      "type": "Normal"
+    },
+    "ida_irfnd": false,
+    "ida_nge": 0,
+    "ida_gactive": [
+      [
+        1,
+        1
+      ],
+      2,
+      null
+    ],
+    "ida_mxgnull": 1
+  },
+  "nls": {
+    "delta": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      3,
+      null
+    ],
+    "jcur": false,
+    "curiter": 0,
+    "maxiters": 4,
+    "niters": 0,
+    "nconvfails": 0
+  },
+  "nlp": {
+    "ida_yy": [
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      3,
+      null
+    ],
+    "ida_yp": [
+      [
+        -0.04,
+        0.04,
+        0.0
+      ],
+      3,
+      null
+    ],
+    "ida_yypredict": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      3,
+      null
+    ],
+    "ida_yppredict": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      3,
+      null
+    ],
+    "ida_ewt": [
+      [
+        9999.00009999,
+        1000000.0,
+        1000000.0
+      ],
+      3,
+      null
+    ],
+    "ida_savres": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      3,
+      null
+    ],
+    "ida_tn": 0.0,
+    "ida_ss": 0.0,
+    "ida_oldnrm": 0.0,
+    "ida_toldel": 0.0,
+    "ida_nre": 0,
+    "ida_nsetups": 0,
+    "lp": {
+      "ls": {
+        "pivots": [
+          [
+            0,
+            0,
+            0
+          ],
+          3,
+          null
+        ]
+      },
+      "mat_j": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        3,
+        3
+      ],
+      "x": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        3,
+        null
+      ],
+      "eplifac": 0.05,
+      "nrmfac": 0.0,
+      "ida_cj": 0.0,
+      "ida_cjold": 0.0,
+      "ida_cjratio": 0.0,
+      "problem": {},
+      "counters": {
+        "nje": 0,
+        "npe": 0,
+        "nli": 0,
+        "nps": 0,
+        "ncfl": 0,
+        "nre_dq": 0,
+        "njtsetup": 0,
+        "njtimes": 0,
+        "nst0": 0,
+        "nni0": 0,
+        "ncfn0": 0,
+        "ncfl0": 0,
+        "nwarn": 0
+      }
+    }
+  }
+}

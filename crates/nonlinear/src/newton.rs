@@ -1,8 +1,8 @@
 //! Nonlinear solver using Newton's method, with a user-supplied Jacobian. Ported from SUNDIALS.
 
 use nalgebra::{
-    allocator::Allocator, DefaultAllocator, Dim, DimName, DimNameAdd, Dyn, Matrix, OVector,
-    RealField, Scalar, Storage, StorageMut, U1,
+    allocator::Allocator, DefaultAllocator, Dim, DimName, Dyn, Matrix, OVector, RealField, Scalar,
+    Storage, StorageMut, U1,
 };
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};

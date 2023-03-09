@@ -231,7 +231,6 @@ where
         profile_scope!(format!("solve loop"));
         loop {
             // Check for too many steps taken.
-
             if (self.limits.ida_mxstep > 0) && (nstloc >= self.limits.ida_mxstep) {
                 *tret = self.nlp.ida_tn;
                 self.ida_tretlast = self.nlp.ida_tn;
@@ -266,9 +265,7 @@ where
             }
 
             // Check for too much accuracy requested.
-
             let nrm = self.wrms_norm(&self.ida_phi.column(0));
-
             self.ida_tolsf = T::epsilon() * nrm;
             if self.ida_tolsf > T::one() {
                 self.ida_tolsf *= T::ten();
@@ -310,6 +307,9 @@ where
             // First check for root in the last step taken.
 
             if self.roots.num_roots() > 0 {
+                if (nstloc == 173) {
+                    println!("nstloc: {}", nstloc);
+                }
                 let ier = self.r_check3()?;
 
                 if let RootStatus::RootFound = ier {

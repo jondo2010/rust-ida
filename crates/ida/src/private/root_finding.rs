@@ -1,14 +1,13 @@
 //! Functions for root finding.
 
-use std::sync::Arc;
-
 use itertools::{izip, FoldWhile, Itertools};
 
 use crate::IdaTask;
 
 use super::*;
 
-pub(super) enum RootStatus {
+#[derive(Debug, PartialEq)]
+pub(crate) enum RootStatus {
     RootFound,
     Continue,
 }
@@ -30,10 +29,10 @@ where
     /// This routine completes the initialization of rootfinding memory information, and checks whether g has a zero
     /// both at and very near the initial point of the IVP.
     ///
-    /// This routine returns an int equal to:
-    ///  IDA_RTFUNC_FAIL < 0 if the g function failed, or
-    ///  IDA_SUCCESS     = 0 otherwise.
-    pub(super) fn r_check1(&mut self) -> Result<(), Error> {
+    /// # Return
+    /// - `Ok(())` if successful
+    /// - `Err(Error::RootFunctionFailed)` if the g function failed
+    pub(crate) fn r_check1(&mut self) -> Result<(), Error> {
         self.roots.ida_iroots.fill(0);
         self.roots.ida_tlo = self.nlp.ida_tn;
         self.roots.ida_ttol =
@@ -225,7 +224,7 @@ where
     ///    IDA_RTFUNC_FAIL < 0 if the g function failed, or
     ///    RTFOUND         = 1 if a root of g was found, or
     ///    IDA_SUCCESS     = 0 otherwise.
-    pub(super) fn r_check3(&mut self) -> Result<RootStatus, Error> {
+    pub(crate) fn r_check3(&mut self) -> Result<RootStatus, Error> {
         // Set thi = tn or tout, whichever comes first.
         match self.roots.ida_taskc {
             IdaTask::OneStep => self.roots.ida_thi = self.nlp.ida_tn,
@@ -240,7 +239,8 @@ where
         }
 
         // Get y and y' at thi.
-        self.get_solution(self.roots.ida_thi);
+        dbg!(&self.roots.ida_thi);
+        self.get_solution(self.roots.ida_thi).unwrap();
 
         // Set ghi = g(thi) and call IDARootfind to search (tlo,thi) for roots.
         self.nlp.lp.problem.root(
@@ -297,13 +297,10 @@ where
     ///            if g_i is increasing; if rootdir[i] < 0, search for roots of g_i only if g_i is decreasing; otherwise
     ///            always search for roots of g_i.
     ///
-    /// gactive  = array specifying whether a component of g should
-    ///            or should not be monitored. gactive[i] is initially
-    ///            set to SUNTRUE for all i=0,...,nrtfn-1, but it may be
-    ///            reset to false if at the first step g[i] is 0.0
-    ///            both at the I.C. and at a small perturbation of them.
-    ///            gactive[i] is then set back on SUNTRUE only after the
-    ///            corresponding g function moves away from 0.0.
+    /// gactive  = array specifying whether a component of g should or should not be monitored. gactive[i] is initially
+    ///            set to SUNTRUE for all i=0,...,nrtfn-1, but it may be reset to false if at the first step g[i] is 0.0
+    ///            both at the I.C. and at a small perturbation of them.  gactive[i] is then set back on SUNTRUE only
+    ///            after the corresponding g function moves away from 0.0.
     ///
     /// nge      = cumulative counter for gfun calls.
     ///
@@ -343,8 +340,6 @@ where
     ///      RTFOUND         = 1 if a root of g was found, or
     ///      IDA_SUCCESS     = 0 otherwise.
     fn root_find(&mut self) -> Result<RootStatus, Error> {
-        let mut imax_loop = 0;
-
         // First check for change in sign in ghi or for a zero in ghi.
         let (zroot, sgnchg, _maxfrac, imax) = izip!(
             self.roots.ida_gactive.iter(),
@@ -358,29 +353,23 @@ where
             |(mut zroot, mut sgnchg, mut maxfrac, mut imax),
              (i, (&gactive, &ghi, &rootdir, &glo))| {
                 if gactive > 0 {
-                    let rootdir_glo_neg =
-                        T::from(rootdir.signum()).unwrap() * glo.signum() < T::zero();
+                    let rootdir_glo_neg = T::from(rootdir).unwrap() * glo <= T::zero();
 
-                    if ghi.abs() == T::zero() {
-                        if rootdir_glo_neg {
-                            zroot = true;
-                        }
-                    } else {
-                        if (glo * ghi < T::zero()) && rootdir_glo_neg {
-                            let gfrac = (ghi / (ghi - glo)).abs();
-                            if gfrac > maxfrac {
-                                sgnchg = true;
-                                maxfrac = gfrac;
-                                imax = i;
-                            }
+                    if ghi.abs() == T::zero() && rootdir_glo_neg {
+                        zroot = true;
+                    } else if (glo * ghi < T::zero()) && rootdir_glo_neg {
+                        let gfrac = (ghi / (ghi - glo)).abs();
+                        if gfrac > maxfrac {
+                            sgnchg = true;
+                            maxfrac = gfrac;
+                            imax = i;
                         }
                     }
                 }
                 (zroot, sgnchg, maxfrac, imax)
             },
         );
-
-        imax_loop = imax;
+        dbg!(zroot, sgnchg, _maxfrac, imax);
 
         // If no sign change was found, reset trout and grout. Then return IDA_SUCCESS if no zero was found, or set
         // iroots and return RTFOUND.
@@ -417,6 +406,7 @@ where
 
         let mut side = 0;
         let mut sideprev = -1;
+        let mut imax_loop = imax;
 
         // Looping point
         loop {
@@ -470,10 +460,10 @@ where
                 tmid = self.roots.ida_thi - fracsub * (self.roots.ida_thi - self.roots.ida_tlo);
             }
 
-            self.get_solution(tmid);
+            self.get_solution(tmid).unwrap();
             self.nlp.lp.problem.root(
                 tmid,
-                &self.nlp.ida_yy,
+                dbg!(&self.nlp.ida_yy),
                 &self.nlp.ida_yp,
                 &mut self.roots.ida_grout,
             );
@@ -498,7 +488,7 @@ where
                     if gactive > 0 {
                         let rootdir_glo_neg = T::from(rootdir).unwrap() * glo <= T::zero();
 
-                        if grout.abs() == T::zero() && rootdir_glo_neg {
+                        if dbg!(grout.abs()) == T::zero() && rootdir_glo_neg {
                             zroot = true;
                         } else {
                             if (glo * grout) < T::zero() && rootdir_glo_neg {
@@ -530,7 +520,7 @@ where
                 continue;
             }
 
-            if zroot {
+            if dbg!(zroot) {
                 // No sign change in (tlo,tmid), but g = 0 at tmid; return root tmid.
                 self.roots.ida_thi = tmid;
                 self.roots.ida_ghi.copy_from(&self.roots.ida_grout);

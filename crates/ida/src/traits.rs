@@ -1,6 +1,6 @@
 //! Basic traits for problem specification
 
-use nalgebra::{Const, Dim, Matrix, RealField, Scalar, Storage, StorageMut, U1};
+use nalgebra::{Dim, Matrix, RealField, Scalar, Storage, StorageMut, U1};
 use num_traits::NumCast;
 
 /// Core implementation for explicit schemes

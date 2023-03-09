@@ -8,9 +8,10 @@ fn test_kused1() {
         Dummy {},
         linear::Dense::new(),
         nonlinear::Newton::new(0),
-        &vector![0., 0., 0.],
-        &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
+        0.0,
+        &vector![0., 0., 0.],
+        &vector![0., 0., 0.],
     );
 
     let err_k = 0.0001987733462845937;
@@ -116,9 +117,10 @@ fn test_kused2() {
         Dummy {},
         linear::Dense::new(),
         nonlinear::Newton::new(0),
-        &vector![0., 0., 0.],
-        &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
+        0.0,
+        &vector![0., 0., 0.],
+        &vector![0., 0., 0.],
     );
 
     let err_k = 0.001339349356604325;
@@ -213,9 +215,10 @@ fn test3() {
         Dummy {},
         linear::Dense::new(),
         nonlinear::Newton::new(0),
-        &vector![0., 0., 0.],
-        &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
+        0.0,
+        &vector![0., 0., 0.],
+        &vector![0., 0., 0.],
     );
 
     let err_k = 0.04158869255496026;

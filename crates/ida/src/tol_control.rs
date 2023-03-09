@@ -10,17 +10,18 @@ use crate::traits::IdaReal;
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(serialize = "T: Serialize, OVector<T, D>: Serialize"))
+    serde(bound(
+        serialize = "T: Serialize, OVector<T, D>: Serialize",
+        deserialize = "T: Deserialize<'de>, OVector<T, D>: Deserialize<'de>"
+    ))
 )]
-#[cfg_attr(
-    feature = "serde-serialize",
-    serde(bound(deserialize = "T: Deserialize<'de>, OVector<T, D>: Deserialize<'de>"))
-)]
-#[derive(Clone, Debug)]
+//#[serde(tag = "type")]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TolControl<T, D>
 where
     D: Dim,
     DefaultAllocator: Allocator<T, D>,
+    OVector<T, D>: PartialEq,
 {
     /// Specifies scalar relative and absolute tolerances.
     ///

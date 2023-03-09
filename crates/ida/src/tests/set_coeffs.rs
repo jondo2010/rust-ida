@@ -68,9 +68,10 @@ fn test1() {
         Dummy {},
         linear::Dense::new(),
         nonlinear::Newton::new(0),
-        &vector![0., 0., 0.],
-        &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
+        0.0,
+        &vector![0., 0., 0.],
+        &vector![0., 0., 0.],
     );
 
     // Set preconditions:
@@ -173,9 +174,10 @@ fn test2() {
         problem,
         linear::Dense::new(),
         nonlinear::Newton::new(0),
-        &vector![0., 0., 0.],
-        &vector![0., 0., 0.],
         TolControl::new_ss(1e-4, 1e-4),
+        0.0,
+        &vector![0., 0., 0.],
+        &vector![0., 0., 0.],
     );
 
     // Set preconditions:

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 /// Statistics and associated parameters for the linear solver
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct IdaLProblemCounters {
     /// dqincfac = optional increment factor in Jv
     //pub dqincfac: T,
@@ -54,16 +54,11 @@ pub struct IdaLProblemCounters {
 #[cfg_attr(
     feature = "serde-serialize",
     serde(bound(
-        serialize = "T: Serialize, OVector<T, P::D>: Serialize, OMatrix<T, P::D, P::D>: Serialize, LS: Serialize, P: Serialize"
-    ))
-)]
-#[cfg_attr(
-    feature = "serde-serialize",
-    serde(bound(
+        serialize = "T: Serialize, OVector<T, P::D>: Serialize, OMatrix<T, P::D, P::D>: Serialize, LS: Serialize, P: Serialize",
         deserialize = "T: Deserialize<'de>, OVector<T, P::D>: Deserialize<'de>, OMatrix<T, P::D, P::D>: Deserialize<'de>, LS: Deserialize<'de>, P: Deserialize<'de>"
     ))
 )]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct IdaLProblem<T, P, LS>
 where
     T: IdaReal,

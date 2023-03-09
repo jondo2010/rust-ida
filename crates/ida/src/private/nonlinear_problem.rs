@@ -21,16 +21,11 @@ const RATEMAX: f64 = 0.9;
 #[cfg_attr(
     feature = "serde-serialize",
     serde(bound(
-        serialize = "T: Serialize, OVector<T, P::D>: Serialize, IdaLProblem<T, P, LS>: Serialize"
-    ))
-)]
-#[cfg_attr(
-    feature = "serde-serialize",
-    serde(bound(
+        serialize = "T: Serialize, OVector<T, P::D>: Serialize, IdaLProblem<T, P, LS>: Serialize",
         deserialize = "T: Deserialize<'de>,  OVector<T, P::D>: Deserialize<'de>, IdaLProblem<T, P, LS>: Deserialize<'de>"
     ))
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IdaNLProblem<T, P, LS>
 where
     T: IdaReal,

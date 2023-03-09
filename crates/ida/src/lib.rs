@@ -4,28 +4,30 @@
 //! (DAEs). The name IDA stands for Implicit Differential-Algebraic solver.
 
 use nalgebra::{
-    allocator::Allocator, Const, DefaultAllocator, Dim, OMatrix, OVector, Storage, StorageMut,
-    Vector, U1,
+    allocator::Allocator, Const, DefaultAllocator, Dim, DimName, OMatrix, OVector, Storage,
+    StorageMut, Vector, U1,
 };
 
-use private::IdaNLProblem;
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};
 
-pub(crate) mod constants;
+#[cfg(feature = "serde-serialize")]
+mod sundials;
+
+mod constants;
 mod error;
 mod ida_io;
 mod impl_new;
-pub(crate) mod private;
-pub mod sundials;
+mod private;
 #[cfg(test)]
 mod tests;
 mod tol_control;
 mod traits;
 
-use constants::*;
+use private::IdaNLProblem;
 
 // Re-exports
+pub use constants::*;
 pub use error::Error;
 pub use impl_new::*;
 pub use linear;
@@ -35,7 +37,7 @@ pub use traits::{IdaProblem, IdaReal};
 
 /// Counters
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IdaCounters {
     /// number of internal steps taken
     ida_nst: usize,
@@ -50,7 +52,8 @@ pub struct IdaCounters {
 }
 
 #[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize, PartialEq))]
+#[serde(tag = "type")]
 pub enum IdaTask {
     Normal,
     OneStep,
@@ -70,7 +73,7 @@ enum IdaConverged {
 }
 
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct IdaLimits<T> {
     /// max numer of convergence failures
     ida_maxncf: usize,
@@ -87,22 +90,16 @@ struct IdaLimits<T> {
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(serialize = "
-        T: Serialize,
-        OVector<T, R>: Serialize,
-        OVector<i8, R>: Serialize"))
+    serde(bound(
+        serialize = "T: Serialize, OVector<T, R>: Serialize, OVector<i8, R>: Serialize",
+        deserialize = "T: Deserialize<'de>, OVector<T, R>: Deserialize<'de>, OVector<i8, R>: Deserialize<'de>"
+    ))
 )]
-#[cfg_attr(
-    feature = "serde-serialize",
-    serde(bound(deserialize = "
-        T: Deserialize<'de>,
-        OVector<T, R>: Deserialize<'de>,
-        OVector<i8, R>: Deserialize<'de>"))
-)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct IdaRootData<T, R: Dim>
 where
     DefaultAllocator: Allocator<T, R> + Allocator<i8, R>,
+    OVector<T, R>: PartialEq,
 {
     /// number of components of g
     //ida_nrtfn: usize,
@@ -141,7 +138,34 @@ where
 impl<T, R: Dim> IdaRootData<T, R>
 where
     DefaultAllocator: Allocator<T, R> + Allocator<i8, R>,
+    OVector<T, R>: PartialEq,
 {
+    pub fn new() -> Self
+    where
+        T: IdaReal,
+        R: DimName,
+    {
+        IdaRootData {
+            ida_iroots: OVector::<i8, R>::zeros(),
+            // Set default values for rootdir (both directions)
+            ida_rootdir: OVector::<i8, R>::zeros(),
+            ida_tlo: T::zero(),
+            ida_thi: T::zero(),
+            ida_trout: T::zero(),
+            ida_glo: OVector::<T, R>::zeros(),
+            ida_ghi: OVector::<T, R>::zeros(),
+            ida_grout: OVector::<T, R>::zeros(),
+            ida_toutc: T::zero(),
+            ida_ttol: T::zero(),
+            ida_taskc: IdaTask::Normal,
+            ida_irfnd: false,
+            ida_nge: 0,
+            // Set default values for gactive (all active)
+            ida_gactive: OVector::<i8, R>::identity(),
+            ida_mxgnull: 1,
+        }
+    }
+
     pub fn num_roots(&self) -> usize {
         self.ida_iroots.len()
     }
@@ -151,31 +175,28 @@ where
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(serialize = "
-        T: Serialize,
-        OVector<T, P::D>: Serialize,
-        OVector<T, P::R>: Serialize,
-        OVector<i8, P::R>: Serialize,
-        OMatrix<T, P::D, Const<MXORDP1>>: Serialize,
-        IdaNLProblem<T, P, LS>: Serialize,
-        NLS: Serialize,
-        LS: Serialize,
-        P: Serialize"))
+    serde(bound(
+        serialize = "T: Serialize,
+            OVector<T, P::D>: Serialize,
+            OVector<T, P::R>: Serialize,
+            OVector<i8, P::R>: Serialize,
+            OMatrix<T, P::D, Const<MXORDP1>>: Serialize,
+            IdaNLProblem<T, P, LS>: Serialize,
+            NLS: Serialize,
+            LS: Serialize,
+            P: Serialize",
+        deserialize = "T: Deserialize<'de>,
+            OVector<T, P::D>: Deserialize<'de>,
+            OVector<T, P::R>: Deserialize<'de>,
+            OVector<i8, P::R>: Deserialize<'de>,
+            OMatrix<T, P::D, Const<MXORDP1>>: Deserialize<'de>,
+            IdaNLProblem<T, P, LS>: Deserialize<'de>,
+            NLS: Deserialize<'de>,
+            LS: Deserialize<'de>,
+            P: Deserialize<'de>"
+    ))
 )]
-#[cfg_attr(
-    feature = "serde-serialize",
-    serde(bound(deserialize = "
-        T: Deserialize<'de>,
-        OVector<T, P::D>: Deserialize<'de>,
-        OVector<T, P::R>: Deserialize<'de>,
-        OVector<i8, P::R>: Deserialize<'de>,
-        OMatrix<T, P::D, Const<MXORDP1>>: Deserialize<'de>,
-        IdaNLProblem<T, P, LS>: Deserialize<'de>,
-        NLS: Deserialize<'de>,
-        LS: Deserialize<'de>,
-        P: Deserialize<'de>"))
-)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Ida<T, P, LS, NLS>
 where
     T: IdaReal,
@@ -364,14 +385,14 @@ where
 
             // update c_j^(i)
             //j does not need to go till kused
-            for j in i + 1..self.ida_kused - k + 1 + 1 {
+            for j in i + 1..=self.ida_kused - k {
                 cjk[j] =
                     (scalar_i * cjk_1[j - 1] + cjk[j - 1] * (delt + psij_1)) / self.ida_psi[j - 1];
                 psij_1 = self.ida_psi[j - 1];
             }
 
             // save existing c_j^(i)'s
-            for j in i + 1..self.ida_kused - k + 1 + 1 {
+            for j in i + 1..=self.ida_kused - k {
                 cjk_1[j] = cjk[j];
             }
         }

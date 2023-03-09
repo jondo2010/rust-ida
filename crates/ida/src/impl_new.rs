@@ -1,6 +1,6 @@
 use crate::{
     constants::*, private::IdaNLProblem, tol_control::TolControl, Ida, IdaCounters, IdaLimits,
-    IdaRootData, IdaTask,
+    IdaRootData,
 };
 use nalgebra::{
     allocator::Allocator, Const, DefaultAllocator, DimName, OMatrix, OVector, Storage, Vector,
@@ -25,9 +25,10 @@ where
         problem: P,
         ls: LS,
         nls: NLS,
+        tol_control: TolControl<T, P::D>,
+        t0: T,
         yy0: &Vector<T, P::D, SA>,
         yp0: &Vector<T, P::D, SB>,
-        tol_control: TolControl<T, P::D>,
     ) -> Self
     where
         SA: Storage<T, P::D>,
@@ -55,27 +56,6 @@ where
             ida_netf: 0,
             ida_nni: 0,
             ida_nre: 0,
-        };
-
-        // Initialize root-finding variables
-        let roots = IdaRootData {
-            ida_iroots: OVector::<i8, P::R>::zeros(),
-            ida_rootdir: OVector::<i8, P::R>::zeros(),
-            //ida_nrtfn: problem.num_roots(),
-            ida_tlo: T::zero(),
-            //ida_gactive: Array::from_elem(problem.num_roots(), false),
-            ida_thi: T::zero(),
-            ida_trout: T::zero(),
-            ida_glo: OVector::<T, P::R>::zeros(),
-            ida_ghi: OVector::<T, P::R>::zeros(),
-            ida_grout: OVector::<T, P::R>::zeros(),
-            ida_toutc: T::zero(),
-            ida_ttol: T::zero(),
-            ida_taskc: IdaTask::Normal,
-            ida_irfnd: false,
-            ida_nge: 0,
-            ida_gactive: OVector::<i8, P::R>::zeros(),
-            ida_mxgnull: 1,
         };
 
         Self {
@@ -139,7 +119,8 @@ where
             ida_cvals: OVector::<T, Const<MXORDP1>>::zeros(),
             ida_dvals: OVector::<T, Const<MAXORD_DEFAULT>>::zeros(),
 
-            roots,
+            // Initialize root-finding variables
+            roots: IdaRootData::new(),
 
             nls: nls,
             nlp: IdaNLProblem::new(problem, ls, yy0, yp0),

@@ -1,6 +1,7 @@
 use std::fmt::LowerExp;
 
-use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Dim, Storage, Vector};
+use itertools::izip;
+use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Storage, Vector};
 use nonlinear::norm_wrms::NormWRMS;
 
 use crate::{
@@ -19,6 +20,7 @@ mod stop_test;
 
 pub(crate) use linear_problem::{IdaLProblem, IdaLProblemCounters};
 pub(crate) use nonlinear_problem::IdaNLProblem;
+pub(crate) use root_finding::RootStatus;
 
 impl<T, P, LS, NLS> Ida<T, P, LS, NLS>
 where

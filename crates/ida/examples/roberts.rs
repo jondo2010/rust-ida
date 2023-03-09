@@ -10,10 +10,6 @@ where
     SA: Storage<f64, U3>,
     SB: Storage<f64, U3>,
 {
-    //int      passfail=0;        /* answer pass (0) or fail (1) retval */
-    //N_Vector ref;               /* reference solution vector        */
-    //N_Vector ewt;               /* error weight vector              */
-    //realtype err;               /* wrms error                       */
     // create reference solution and error weight vectors
 
     // set the reference solution data
@@ -64,7 +60,7 @@ fn main() {
 
     let atol = Vector3::from(ATOL);
     let ec = TolControl::new_sv(RTOL, atol);
-    //let t0 = 0.0;
+    let t0 = 0.0;
 
     let header = &[
         "idaRoberts_dns: Robertson kinetics DAE serial example problem for IDA Three equation chemical kinetics problem.",
@@ -83,7 +79,7 @@ fn main() {
 
     let ls = ida::linear::Dense::new();
     let nls = ida::nonlinear::newton::Newton::new(4);
-    let mut ida = Ida::new(problem, ls, nls, &yy0, &yp0, ec);
+    let mut ida = Ida::new(problem, ls, nls, ec, t0, &yy0, &yp0);
 
     // In loop, call IDASolve, print results, and test for error.
     // Break out of loop when NOUT preset output times have been reached.
@@ -134,7 +130,7 @@ fn main() {
     table_out.printstd();
 
     if let Err(e) = retval {
-        println!("Error: {e}");
+        println!("Error at iout: {iout}, tout: {tout}: {e}");
     }
 
     let mut stats = table!(
