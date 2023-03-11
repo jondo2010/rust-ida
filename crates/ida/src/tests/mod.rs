@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::{fs::File, io::Read, path::Path};
 
 use linear::Dense;
@@ -20,9 +22,12 @@ mod set_coeffs;
 mod test_error;
 
 fn get_serialized_ida(test_name: &str) -> Ida<f64, SundialsProblem, Dense<Dyn>, Newton<f64, Dyn>> {
-    let loc = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let mut file =
-        File::open(Path::new(&loc).join(format!("src/tests/data/{test_name}.json"))).unwrap();
+    let mut file = File::open(
+        std::env::current_dir()
+            .unwrap()
+            .join(format!("src/tests/data/{test_name}.json")),
+    )
+    .unwrap();
     let mut s = String::new();
     file.read_to_string(&mut s).unwrap();
     serde_json::from_str(&s).unwrap()

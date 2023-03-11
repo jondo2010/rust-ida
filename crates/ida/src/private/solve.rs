@@ -307,9 +307,6 @@ where
             // First check for root in the last step taken.
 
             if self.roots.num_roots() > 0 {
-                if (nstloc == 173) {
-                    println!("nstloc: {}", nstloc);
-                }
                 let ier = self.r_check3()?;
 
                 if let RootStatus::RootFound = ier {

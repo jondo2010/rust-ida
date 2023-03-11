@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RecoverableKind {
     /// IDA_RES_RECVR
     Residual,
@@ -14,7 +14,7 @@ pub enum RecoverableKind {
     NLSSetup,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum Error {
     // ERROR_TEST_FAIL
     #[error("Error Test Failed")]

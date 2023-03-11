@@ -26,7 +26,7 @@ where
         ls: LS,
         nls: NLS,
         tol_control: TolControl<T, P::D>,
-        t0: T,
+        _t0: T,
         yy0: &Vector<T, P::D, SA>,
         yp0: &Vector<T, P::D, SB>,
     ) -> Self

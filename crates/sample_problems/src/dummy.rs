@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 use ida::IdaProblem;
 use nalgebra::{Matrix, Storage, StorageMut, U1, U3};
 

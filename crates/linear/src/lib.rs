@@ -6,7 +6,7 @@ pub use traits::{LProblem, LSolver};
 
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum Error {
     #[error("A singular matrix was encountered during a LU factorization (col {col})")]
     LUFactFail { col: usize },

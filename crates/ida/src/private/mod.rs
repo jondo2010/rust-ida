@@ -1,6 +1,5 @@
 use std::fmt::LowerExp;
 
-use itertools::izip;
 use nalgebra::{allocator::Allocator, Const, DefaultAllocator, Storage, Vector};
 use nonlinear::norm_wrms::NormWRMS;
 
@@ -354,7 +353,7 @@ where
         // If otherwise successful, check and enforce inequality constraints.
 
         // Check constraints and get mask vector mm, set where constraints failed
-        if let Some(constraints) = &self.ida_constraints {
+        if let Some(_constraints) = &self.ida_constraints {
             unimplemented!();
             /*
             self.ida_mm = self.ida_tempv2;
@@ -677,11 +676,7 @@ where
         self.check_t(t)?;
 
         // Initialize kord = (kused or 1).
-        let kord = if self.ida_kused == 0 {
-            1
-        } else {
-            self.ida_kused
-        };
+        let kord = self.ida_kused.max(1);
 
         // Accumulate multiples of columns phi[j] into yret and ypret.
         let delt = t - self.nlp.ida_tn;

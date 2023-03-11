@@ -122,7 +122,7 @@ where
             return Ok(RootStatus::Continue);
         }
 
-        self.get_solution(self.roots.ida_tlo);
+        self.get_solution(self.roots.ida_tlo).unwrap();
 
         //retval = self.ida_gfun(self.ida_tlo, self.ida_yy, self.ida_yp, self.ida_glo, self.ida_user_data);
         self.nlp.lp.problem.root(
@@ -239,7 +239,6 @@ where
         }
 
         // Get y and y' at thi.
-        dbg!(&self.roots.ida_thi);
         self.get_solution(self.roots.ida_thi).unwrap();
 
         // Set ghi = g(thi) and call IDARootfind to search (tlo,thi) for roots.
@@ -271,7 +270,7 @@ where
 
         // If a root was found, interpolate to get y(trout) and return.
         if let RootStatus::RootFound = ier {
-            self.get_solution(self.roots.ida_trout);
+            self.get_solution(self.roots.ida_trout).unwrap();
         }
 
         Ok(ier)
@@ -369,7 +368,6 @@ where
                 (zroot, sgnchg, maxfrac, imax)
             },
         );
-        dbg!(zroot, sgnchg, _maxfrac, imax);
 
         // If no sign change was found, reset trout and grout. Then return IDA_SUCCESS if no zero was found, or set
         // iroots and return RTFOUND.
@@ -463,7 +461,7 @@ where
             self.get_solution(tmid).unwrap();
             self.nlp.lp.problem.root(
                 tmid,
-                dbg!(&self.nlp.ida_yy),
+                &self.nlp.ida_yy,
                 &self.nlp.ida_yp,
                 &mut self.roots.ida_grout,
             );
@@ -488,7 +486,7 @@ where
                     if gactive > 0 {
                         let rootdir_glo_neg = T::from(rootdir).unwrap() * glo <= T::zero();
 
-                        if dbg!(grout.abs()) == T::zero() && rootdir_glo_neg {
+                        if grout.abs() == T::zero() && rootdir_glo_neg {
                             zroot = true;
                         } else {
                             if (glo * grout) < T::zero() && rootdir_glo_neg {
@@ -520,7 +518,7 @@ where
                 continue;
             }
 
-            if dbg!(zroot) {
+            if zroot {
                 // No sign change in (tlo,tmid), but g = 0 at tmid; return root tmid.
                 self.roots.ida_thi = tmid;
                 self.roots.ida_ghi.copy_from(&self.roots.ida_grout);

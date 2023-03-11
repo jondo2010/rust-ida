@@ -7,7 +7,7 @@ pub mod traits;
 pub use newton::Newton;
 pub use traits::*;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum Error {
     // Recoverable
     /// SUN_NLS_CONTINUE

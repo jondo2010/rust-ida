@@ -46,6 +46,28 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
-        }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Cargo test root_finding",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--package=ida",
+                    "--no-run",
+                ],
+                "filter": {
+                    "name": "ida",
+                    "kind": "lib",
+                }
+            },
+            "program": "${cargo:program}",
+            "args": [
+                "--nocapture",
+                "tests::root_finding::test_rcheck3",
+            ],
+            "cwd": "${workspaceFolder}/crates/ida"
+        },
     ]
 }

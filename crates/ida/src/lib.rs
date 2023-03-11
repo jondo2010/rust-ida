@@ -67,6 +67,7 @@ pub enum IdaSolveStatus {
     Root,
 }
 
+#[allow(dead_code)]
 enum IdaConverged {
     Converged,
     NotConverged,

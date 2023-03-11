@@ -30,7 +30,7 @@ impl IdaProblem<f64> for Roberts {
 
     fn res<SA, SB, SC>(
         &self,
-        tt: f64,
+        _tt: f64,
         yy: &Matrix<f64, Self::D, U1, SA>,
         yp: &Matrix<f64, Self::D, U1, SB>,
         rr: &mut Matrix<f64, Self::D, U1, SC>,
@@ -47,11 +47,11 @@ impl IdaProblem<f64> for Roberts {
 
     fn jac<SA, SB, SC, SD>(
         &self,
-        tt: f64,
+        _tt: f64,
         cj: f64,
         yy: &Matrix<f64, Self::D, U1, SA>,
-        yp: &Matrix<f64, Self::D, U1, SB>,
-        rr: &Matrix<f64, Self::D, U1, SC>,
+        _yp: &Matrix<f64, Self::D, U1, SB>,
+        _rr: &Matrix<f64, Self::D, U1, SC>,
         jac: &mut Matrix<f64, Self::D, Self::D, SD>,
     ) where
         SA: Storage<f64, Self::D>,
@@ -75,9 +75,9 @@ impl IdaProblem<f64> for Roberts {
 
     fn root<SA, SB, SC>(
         &self,
-        t: f64,
+        _t: f64,
         y: &Matrix<f64, Self::D, U1, SA>,
-        yp: &Matrix<f64, Self::D, U1, SB>,
+        _yp: &Matrix<f64, Self::D, U1, SB>,
         gout: &mut Matrix<f64, Self::R, U1, SC>,
     ) where
         SA: Storage<f64, Self::D>,

@@ -14,7 +14,8 @@ use crate::{
 };
 
 mod adapter;
-mod roberts;
+pub(crate) mod roberts;
+pub(crate) use adapter::*;
 
 /// Implements `IdaProblem` for a solver initialized by the `sundials-sys` crate.
 #[derive(Debug, Serialize, Deserialize)]
@@ -26,7 +27,7 @@ impl IdaProblem<f64> for SundialsProblem {
 
     fn res<SA, SB, SC>(
         &self,
-        tt: f64,
+        _tt: f64,
         yy: &Matrix<f64, Self::D, U1, SA>,
         yp: &Matrix<f64, Self::D, U1, SB>,
         rr: &mut Matrix<f64, Self::D, U1, SC>,
@@ -43,11 +44,11 @@ impl IdaProblem<f64> for SundialsProblem {
 
     fn jac<SA, SB, SC, SD>(
         &self,
-        tt: f64,
+        _tt: f64,
         cj: f64,
         yy: &Matrix<f64, Self::D, U1, SA>,
-        yp: &Matrix<f64, Self::D, U1, SB>,
-        rr: &Matrix<f64, Self::D, U1, SC>,
+        _yp: &Matrix<f64, Self::D, U1, SB>,
+        _rr: &Matrix<f64, Self::D, U1, SC>,
         jac: &mut Matrix<f64, Self::D, Self::D, SD>,
     ) where
         SA: Storage<f64, Self::D>,
@@ -85,12 +86,14 @@ impl IdaProblem<f64> for SundialsProblem {
 }
 
 extern "C" {
-    fn IDAGetSolution(
+    pub fn IDAGetSolution(
         mem: sundials_sys::IDAMem,
         t: f64,
         yref: sundials_sys::N_Vector,
         ypret: sundials_sys::N_Vector,
     ) -> std::ffi::c_int;
+
+    pub fn IDARcheck3(mem: sundials_sys::IDAMem) -> std::ffi::c_int;
 }
 
 const IDA_SS: i32 = 1;
@@ -316,11 +319,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
     use nalgebra::DVector;
 
-    use crate::sundials::adapter::{self, vector_view_dynamic};
+    use crate::sundials::adapter::vector_view_dynamic;
 
     #[test]
     fn test_get_solution() {
@@ -329,7 +330,7 @@ mod tests {
             let mut tout1 = 0.4;
             let mut tret = 0.0;
             for _ in 0..50 {
-                let ret = sundials_sys::IDASolve(
+                let _ret = sundials_sys::IDASolve(
                     mem as _,
                     tout1,
                     &mut tret,
@@ -361,6 +362,8 @@ mod tests {
         unsafe {
             let (yy, yp, mem) = super::roberts::build_ida();
 
+            let mut ida = crate::Ida::from_sundials(mem);
+
             let tout1 = 0.4;
             let mut tret = 0.0;
             let ret = sundials_sys::IDASolve(
@@ -371,13 +374,16 @@ mod tests {
                 yp,
                 sundials_sys::IDA_NORMAL,
             );
-            dbg!(tret);
-            assert_eq!(ret, 666);
-            let ida = crate::Ida::from_sundials(mem);
+            assert_eq!(ret, sundials_sys::IDA_ROOT_RETURN);
+            dbg!((*mem).ida_nst, (*mem).ida_nge);
 
-            let mut file = std::fs::File::create("src/tests/data/rcheck3_pre.json").unwrap();
-            file.write(serde_json::to_string_pretty(&ida).unwrap().as_bytes())
-                .unwrap();
+            //println!("{:X}", ida.nlp.ida_tn.to_bits());
+            ida.solve(tout1, &mut tret, crate::IdaTask::Normal).unwrap();
+            dbg!(ida.counters.ida_nst, ida.roots.ida_nge);
+
+            //let mut file = std::fs::File::create("src/tests/data/rcheck3_post.json").unwrap();
+            //file.write(serde_json::to_string_pretty(&ida).unwrap().as_bytes())
+            //    .unwrap();
         }
     }
 
